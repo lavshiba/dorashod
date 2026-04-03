@@ -195,10 +195,10 @@ export class BotService {
         await this.repo.completeOnboarding(user.id);
         await this.telegram.sendMessage({
           chat_id: user.chatId,
-          text: "Можно добавить доход или расход сейчас, или вернуться на главную.",
+          text: "Можно добавить доход или расход сейчас, или перейти на главную.",
           reply_markup: kb([
             [{ text: BUTTONS.income, action: "add:start", payload: { type: "income" } }, { text: BUTTONS.expense, action: "add:start", payload: { type: "expense" } }],
-            [{ text: BUTTONS.main, action: "nav:home" }]
+            [{ text: BUTTONS.toMain, action: "nav:home" }]
           ])
         });
         return;
@@ -433,7 +433,7 @@ export class BotService {
       rows.push([{ text: BUTTONS.howToUse, callback_data: "a=onboarding%3Ashow&step=0" }]);
       await this.telegram.sendMessage({
         chat_id: user.chatId,
-        text: `${notice ? `${notice}\n\n` : ""}пока записей нет\nможно добавить доход или расход кнопками\nили просто написать запись сообщением\n\nПример:\n-450 продукты пятёрочка хлеб`,
+        text: `${notice ? `${notice}\n\n` : ""}пока записей нет\nможно добавить доход или расход кнопками\nили просто написать запись сообщением\n-450 продукты пятёрочка хлеб`,
         reply_markup: { inline_keyboard: rows }
       });
       return;
@@ -479,34 +479,35 @@ export class BotService {
 
     if (draft.step === "category") {
       payload.categoryName = text.trim();
-      await this.repo.saveDraft(user.id, payload, user.subcategoriesEnabled ? "subcategory-or-description" : "description");
-      if (user.subcategoriesEnabled) {
+      const category = await this.repo.ensureCategory(user.id, payload.type ?? "expense", payload.categoryName);
+      payload.categoryId = category.id;
+      const subcategoryCount = user.subcategoriesEnabled ? await this.repo.getSubcategoryCount(user.id, category.id) : 0;
+      await this.repo.saveDraft(user.id, payload, subcategoryCount > 0 ? "subcategory" : "description");
+      if (subcategoryCount > 0) {
         await this.telegram.sendMessage({
           chat_id: user.chatId,
-          text: "Напиши подкатегорию или описание. Если подкатегория не нужна, можно сразу написать описание или нажать пропустить.",
+          text: "Напиши подкатегорию.",
           reply_markup: kb([[{ text: BUTTONS.skip, action: "add:skip-description" }]])
         });
         return;
       }
       await this.telegram.sendMessage({
         chat_id: user.chatId,
-        text: "Напиши описание или нажми пропустить.",
+        text: "Напиши описание.",
         reply_markup: kb([[{ text: BUTTONS.skip, action: "add:skip-description" }]])
       });
       return;
     }
 
-    if (draft.step === "subcategory-or-description") {
-      if (!payload.subcategoryName) {
-        payload.subcategoryName = text.trim();
-        await this.repo.saveDraft(user.id, payload, "description");
-        await this.telegram.sendMessage({
-          chat_id: user.chatId,
-          text: "Напиши описание или нажми пропустить.",
-          reply_markup: kb([[{ text: BUTTONS.skip, action: "add:skip-description" }]])
-        });
-        return;
-      }
+    if (draft.step === "subcategory") {
+      payload.subcategoryName = text.trim();
+      await this.repo.saveDraft(user.id, payload, "description");
+      await this.telegram.sendMessage({
+        chat_id: user.chatId,
+        text: "Напиши описание.",
+        reply_markup: kb([[{ text: BUTTONS.skip, action: "add:skip-description" }]])
+      });
+      return;
     }
 
     await this.finalizeDraft(user, text);
@@ -591,8 +592,8 @@ export class BotService {
     await this.telegram.sendMessage({
       chat_id: user.chatId,
       text:
-        `Новая запись\n\nИз записи удалось понять:\n${this.describeQueueParsed(item.parsed, user.currencyLabel)}\n\n` +
-        (item.missing.length ? `Не хватает: ${item.missing.map(formatMissingField).join(", ")}.` : "Запись готова к сохранению."),
+        `новые записи\n\nиз записи удалось понять:\n${this.describeQueueParsed(item.parsed, user.currencyLabel)}\n\n` +
+        (item.missing.length ? `не хватает: ${item.missing.map(formatMissingField).join(", ")}.` : "запись готова к сохранению"),
       reply_markup: kb([
         [
           { text: BUTTONS.save, action: "queue:save-current" },
@@ -657,7 +658,7 @@ export class BotService {
     if (items.length === 0) {
       await this.telegram.sendMessage({
         chat_id: user.chatId,
-        text: "Пока записей нет.\n\nМожно добавить доход или расход с главной.",
+        text: "пока записей нет\nможно добавить доход или расход с главной",
         reply_markup: kb([[{ text: BUTTONS.main, action: "nav:home" }]])
       });
       return;
@@ -750,7 +751,7 @@ export class BotService {
 
     await this.telegram.sendMessage({
       chat_id: user.chatId,
-      text: `Запрос: ${query}\nНайдено: ${data.total}\n\n${lines}`,
+      text: `запрос: ${query}\nнайдено: ${data.total}\n\n${lines}`,
       reply_markup: kb([
         numberButtons,
         [{ text: BUTTONS.multipleSelect, action: "noop" }],
@@ -780,7 +781,7 @@ export class BotService {
     const expense = data.items.filter((item) => item.type === "expense").reduce((sum, item) => sum + item.amountMinor, 0);
     await this.telegram.sendMessage({
       chat_id: user.chatId,
-      text: `доход: ${formatAmountByType(income, "income", user.currencyLabel)}\nрасход: ${formatAmountByType(expense, "expense", user.currencyLabel)}\nбаланс: ${formatAmountFromMinor(income - expense, user.currencyLabel)}\nзаписей: ${data.total}`,
+      text: `доход\n${formatAmountByType(income, "income", user.currencyLabel)}\n\nрасход\n${formatAmountByType(expense, "expense", user.currencyLabel)}\n\nбаланс\n${formatAmountFromMinor(income - expense, user.currencyLabel)}\n\nзаписей\n${data.total}`,
       reply_markup: kb([
         [{ text: BUTTONS.expenseBreakdown, action: "noop" }],
         [{ text: BUTTONS.incomeBreakdown, action: "noop" }],
@@ -808,7 +809,7 @@ export class BotService {
     if (categories.length === 0) {
       await this.telegram.sendMessage({
         chat_id: user.chatId,
-        text: "Пока категорий нет.\n\nМожно создать категорию.",
+        text: "пока категорий нет\nможно создать категорию",
         reply_markup: kb([
           [{ text: BUTTONS.addCategory, action: "categories:add", payload: { type } }],
           [{ text: BUTTONS.back, action: "categories:open" }, { text: BUTTONS.main, action: "nav:home" }]
@@ -829,6 +830,7 @@ export class BotService {
       reply_markup: kb([
         numberButtons,
         [{ text: BUTTONS.addCategory, action: "categories:add", payload: { type } }],
+        ...(page === 0 ? [] : [[{ text: BUTTONS.hidden, action: "noop" }]]),
         [{ text: BUTTONS.back, action: "categories:open" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
@@ -879,7 +881,7 @@ export class BotService {
   private async showCurrencySettings(user: UserRecord): Promise<void> {
     await this.telegram.sendMessage({
       chat_id: user.chatId,
-      text: `Текущая валюта: ${user.currencyLabel}`,
+      text: `валюта\n\nтекущее значение: ${user.currencyLabel}`,
       reply_markup: kb([
         [{ text: BUTTONS.ruble, action: "settings:set-currency", payload: { code: "RUB", label: "₽" } }],
         [{ text: BUTTONS.dollar, action: "settings:set-currency", payload: { code: "USD", label: "$" } }],
@@ -893,8 +895,8 @@ export class BotService {
   private async showTimeSettings(user: UserRecord): Promise<void> {
     await this.telegram.sendMessage({
       chat_id: user.chatId,
-      text: `пришли свой город или отправь геопозицию\n\nТекущее значение: ${user.timezoneName}`,
-      reply_markup: kb([[{ text: BUTTONS.back, action: "settings:open" }, { text: BUTTONS.main, action: "nav:home" }], [{ text: BUTTONS.time, action: "settings:time-prompt" }]])
+      text: `пришли свой город или отправь геопозицию\n\nнапример:\nсанкт-петербург\nмосква\nхельсинки\n\nтекущее значение: ${user.timezoneName}`,
+      reply_markup: kb([[{ text: BUTTONS.back, action: "settings:open" }, { text: BUTTONS.main, action: "nav:home" }]])
     });
   }
 

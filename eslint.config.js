@@ -32,6 +32,6 @@ export default [
     }
   },
   {
-    ignores: ["dist/**", "coverage/**", ".wrangler/**"]
+    ignores: ["dist/**", "coverage/**", ".wrangler/**", ".wrangler-dist/**", ".wrangler-version-dist/**"]
   }
 ];

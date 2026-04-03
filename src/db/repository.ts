@@ -538,6 +538,14 @@ export class Repository {
     return (rows.results ?? []).map(mapSubcategory);
   }
 
+  async getSubcategoryCount(userId: number, categoryId: number): Promise<number> {
+    const row = await this.db
+      .prepare("SELECT COUNT(*) as count FROM subcategories WHERE user_id = ? AND category_id = ? AND hidden_at IS NULL")
+      .bind(userId, categoryId)
+      .first<{ count: number }>();
+    return row?.count ?? 0;
+  }
+
   async getCategoryUsageCount(categoryId: number): Promise<number> {
     const row = await this.db.prepare("SELECT COUNT(*) as count FROM entries WHERE category_id = ?").bind(categoryId).first<{ count: number }>();
     return row?.count ?? 0;
