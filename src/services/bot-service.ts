@@ -313,20 +313,58 @@ export class BotService {
         await this.clearBulkSelection(user, String(params.origin), Number(params.page ?? "0"));
         return;
       case "operations:view":
-        await this.showEntryCard(user, Number(params.id), "operations", Number(params.page ?? "0"));
+        await this.showEntryCard(
+          user,
+          Number(params.id),
+          params.source === "report" ? "report" : "operations",
+          Number(params.page ?? "0")
+        );
         return;
       case "entry:edit":
-        await this.startEditEntry(user, Number(params.id), Number(params.page ?? "0"), "operations");
+        await this.startEditEntry(
+          user,
+          Number(params.id),
+          Number(params.page ?? "0"),
+          params.source === "report" ? "report" : params.source === "search" ? "search" : "operations"
+        );
         return;
       case "entry:delete":
         await this.telegram.sendMessage({
           chat_id: user.chatId,
           text: "Удалить запись?",
-          reply_markup: kb([[{ text: BUTTONS.delete, action: "entry:confirm-delete", payload: { id: params.id, page: params.page } }, { text: BUTTONS.back, action: "operations:view", payload: { id: params.id, page: params.page } }]])
+          reply_markup: kb([
+            [
+              { text: BUTTONS.delete, action: "entry:confirm-delete", payload: { id: params.id, page: params.page, source: params.source, query: params.query } },
+              { text: BUTTONS.back, action: "operations:view", payload: { id: params.id, page: params.page, source: params.source, query: params.query } }
+            ]
+          ])
         });
         return;
       case "entry:confirm-delete":
         await this.repo.deleteEntry(user.id, Number(params.id));
+        if (params.source === "report") {
+          await this.showReportEntries(user, {
+            page: Number(params.page ?? "0"),
+            type: typeof session.context.reportEntriesType === "string" ? (String(session.context.reportEntriesType) as EntryType) : undefined,
+            categoryId: typeof session.context.reportEntriesCategoryId === "number" ? (session.context.reportEntriesCategoryId as number) : undefined,
+            subcategoryId: typeof session.context.reportEntriesSubcategoryId === "number" ? (session.context.reportEntriesSubcategoryId as number) : undefined
+          });
+          return;
+        }
+        if (params.source === "search") {
+          if (session.context.searchPeriod) {
+            await this.showSearchPeriodResults(
+              user,
+              String(session.context.searchPeriod),
+              Number(params.page ?? "0"),
+              (session.context.searchFrom as string | null | undefined) ?? null,
+              (session.context.searchTo as string | null | undefined) ?? null
+            );
+            return;
+          }
+          await this.showSearchResults(user, String(params.query ?? session.context.query ?? ""), Number(params.page ?? "0"));
+          return;
+        }
         await this.showOperations(user, Number(params.page ?? "0"));
         return;
       case "search:open":
@@ -347,6 +385,17 @@ export class BotService {
         await this.showSearchResults(user, String(params.query ?? ""), Number(params.page ?? "0"));
         return;
       case "search:select-mode":
+        if (session.context.searchPeriod) {
+          await this.showSearchPeriodResults(
+            user,
+            String(session.context.searchPeriod),
+            Number(params.page ?? "0"),
+            (session.context.searchFrom as string | null | undefined) ?? null,
+            (session.context.searchTo as string | null | undefined) ?? null,
+            true
+          );
+          return;
+        }
         await this.showSearchResults(user, String(params.query ?? ""), Number(params.page ?? "0"), true);
         return;
       case "search:view":
@@ -376,6 +425,41 @@ export class BotService {
         return;
       case "reports:quick":
         await this.showReport(user, String(params.period));
+        return;
+      case "reports:breakdown":
+        await this.showReportBreakdown(user, String(params.type) as EntryType, Number(params.page ?? "0"));
+        return;
+      case "report:category":
+        await this.showReportCategoryCard(user, Number(params.id), String(params.type) as EntryType, Number(params.page ?? "0"));
+        return;
+      case "report:subcategory":
+        await this.showReportSubcategoryCard(
+          user,
+          Number(params.categoryId),
+          Number(params.id),
+          String(params.type) as EntryType,
+          Number(params.page ?? "0")
+        );
+        return;
+      case "report:entries":
+        await this.showReportEntries(user, {
+          page: Number(params.page ?? "0"),
+          type: typeof params.type === "string" ? (String(params.type) as EntryType) : undefined,
+          categoryId: params.categoryId ? Number(params.categoryId) : undefined,
+          subcategoryId: params.subcategoryId ? Number(params.subcategoryId) : undefined
+        });
+        return;
+      case "report:entries-select":
+        await this.showReportEntries(
+          user,
+          {
+            page: Number(params.page ?? "0"),
+            type: typeof params.type === "string" ? (String(params.type) as EntryType) : undefined,
+            categoryId: params.categoryId ? Number(params.categoryId) : undefined,
+            subcategoryId: params.subcategoryId ? Number(params.subcategoryId) : undefined
+          },
+          true
+        );
         return;
       case "reports:custom":
         await this.repo.saveSession(user.id, { mode: "reports", stack: ["home"], context: { awaiting: "custom-period" } });
@@ -854,14 +938,20 @@ export class BotService {
     });
   }
 
-  private async showEntryCard(user: UserRecord, entryId: number, source: "operations" | "search", page: number, query?: string): Promise<void> {
+  private async showEntryCard(user: UserRecord, entryId: number, source: "operations" | "search" | "report", page: number, query?: string): Promise<void> {
     const entry = await this.repo.getEntryById(user.id, entryId);
     if (!entry) {
       await this.showOperations(user, 0);
       return;
     }
     const backText = source === "search" ? BUTTONS.toResults : BUTTONS.back;
-    const backAction = source === "search" ? "search:results" : "operations:list";
+    const backAction = source === "search" ? "search:results" : source === "report" ? "report:entries" : "operations:list";
+    const backPayload =
+      source === "search"
+        ? { query, page }
+        : source === "report"
+          ? { page }
+          : { page };
     await this.telegram.sendMessage({
       chat_id: user.chatId,
       text:
@@ -874,7 +964,7 @@ export class BotService {
         [{ text: BUTTONS.edit, action: "entry:edit", payload: { id: entry.id, page, source, query } }],
         [{ text: BUTTONS.delete, action: "entry:delete", payload: { id: entry.id, page } }],
         [{ text: "◀️", action: "noop" }, { text: "▶️", action: "noop" }],
-        [{ text: backText, action: backAction, payload: { query, page } }, { text: BUTTONS.main, action: "nav:home" }]
+        [{ text: backText, action: backAction, payload: backPayload }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
   }
@@ -883,7 +973,7 @@ export class BotService {
     user: UserRecord,
     entryId: number,
     page: number,
-    source: "operations" | "search"
+    source: "operations" | "search" | "report"
   ): Promise<void> {
     const entry = await this.repo.getEntryById(user.id, entryId);
     if (!entry) {
@@ -1064,14 +1154,15 @@ export class BotService {
     periodLabel: string,
     page: number,
     from: string | null,
-    to: string | null
+    to: string | null,
+    selectMode = false
   ): Promise<void> {
     const title = periodToLabel(periodLabel);
     const currentSession = await this.repo.getSession(user.id);
     await this.repo.saveSession(user.id, {
       ...currentSession,
       mode: "search",
-      context: { ...currentSession.context, query: title }
+      context: { ...currentSession.context, query: title, searchPeriod: periodLabel, searchFrom: from, searchTo: to }
     });
     const data = await this.repo.getEntriesByDateRange({
       userId: user.id,
@@ -1095,9 +1186,9 @@ export class BotService {
     const session = await this.repo.getSession(user.id);
     const selectedIds = new Set<number>(Array.isArray(session.context.selectedIds) ? (session.context.selectedIds as number[]) : []);
     const numberButtons = data.items.map((item, index) => ({
-      text: String(index + 1),
-      action: "search:view",
-      payload: { id: item.id, page, query: title }
+      text: selectedIds.has(item.id) ? `✓${index + 1}` : String(index + 1),
+      action: selectMode ? "select:toggle" : "search:view",
+      payload: { id: item.id, page, query: title, origin: "search" }
     }));
 
     await this.telegram.sendMessage({
@@ -1105,7 +1196,13 @@ export class BotService {
       text: `запрос: ${title}\nнайдено: ${data.total}\n\n${lines}`,
       reply_markup: kb([
         numberButtons,
-        [{ text: BUTTONS.multipleSelect, action: "noop" }],
+        [{ text: BUTTONS.multipleSelect, action: "search:select-mode", payload: { query: title, page } }],
+        ...(selectMode
+          ? [
+              [{ text: BUTTONS.chooseAll, action: "select:all", payload: { origin: "search", page, query: title } }],
+              ...(selectedIds.size > 0 ? [[{ text: `действия: ${selectedIds.size}`, action: "select:actions", payload: { origin: "search", page, query: title } }]] : [])
+            ]
+          : []),
         [{ text: BUTTONS.newSearch, action: "search:open" }],
         [{ text: BUTTONS.back, action: "search:open" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
@@ -1128,16 +1225,239 @@ export class BotService {
 
   private async showReport(user: UserRecord, period: string): Promise<void> {
     const range = parseQuickPeriod(period as "today" | "yesterday" | "week" | "month" | "year" | "all");
+    const title = periodToLabel(period);
+    await this.repo.saveSession(user.id, {
+      mode: "reports",
+      stack: ["home"],
+      context: { reportPeriod: period, reportTitle: title, reportFrom: range.from, reportTo: range.to }
+    });
     const summary = await this.repo.getSummaryByDateRange(user.id, range.from, range.to);
     await this.telegram.sendMessage({
       chat_id: user.chatId,
       text: `доход\n${formatAmountByType(summary.income, "income", user.currencyLabel)}\n\nрасход\n${formatAmountByType(summary.expense, "expense", user.currencyLabel)}\n\nбаланс\n${formatAmountFromMinor(summary.income - summary.expense, user.currencyLabel)}\n\nзаписей\n${summary.entries}`,
       reply_markup: kb([
-        [{ text: BUTTONS.expenseBreakdown, action: "noop" }],
-        [{ text: BUTTONS.incomeBreakdown, action: "noop" }],
-        [{ text: BUTTONS.allEntries, action: "operations:list", payload: { page: 0 } }],
+        [{ text: BUTTONS.expenseBreakdown, action: "reports:breakdown", payload: { type: "expense", page: 0 } }],
+        [{ text: BUTTONS.incomeBreakdown, action: "reports:breakdown", payload: { type: "income", page: 0 } }],
+        [{ text: BUTTONS.allEntries, action: "report:entries", payload: { page: 0 } }],
         [{ text: BUTTONS.anotherPeriod, action: "reports:open" }],
         [{ text: BUTTONS.back, action: "reports:open" }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async showReportBreakdown(user: UserRecord, type: EntryType, page: number): Promise<void> {
+    const session = await this.repo.getSession(user.id);
+    const from = (session.context.reportFrom as string | null | undefined) ?? null;
+    const to = (session.context.reportTo as string | null | undefined) ?? null;
+    const breakdown = await this.repo.getCategoryBreakdownByDateRange({
+      userId: user.id,
+      type,
+      page,
+      from,
+      to
+    });
+
+    if (breakdown.total === 0) {
+      await this.telegram.sendMessage({
+        chat_id: user.chatId,
+        text: `пока записей нет\nможно выбрать другой период`,
+        reply_markup: kb([
+          [{ text: BUTTONS.anotherPeriod, action: "reports:open" }],
+          [{ text: BUTTONS.back, action: "reports:open" }, { text: BUTTONS.main, action: "nav:home" }]
+        ])
+      });
+      return;
+    }
+
+    const lines = breakdown.items
+      .map((item, index) => `${index + 1}. ${item.categoryName} · ${formatAmountByType(item.amountMinor, type, user.currencyLabel)} · записей: ${item.entries}`)
+      .join("\n");
+    const numberButtons = breakdown.items.map((item, index) => ({
+      text: String(index + 1),
+      action: "report:category",
+      payload: { id: item.categoryId, type, page }
+    }));
+
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: `${type === "expense" ? "по расходам" : "по доходам"}\n\n${lines}`,
+      reply_markup: kb([
+        numberButtons,
+        [{ text: BUTTONS.back, action: "reports:quick", payload: { period: String(session.context.reportPeriod ?? "month") } }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async showReportCategoryCard(user: UserRecord, categoryId: number, type: EntryType, page: number): Promise<void> {
+    const session = await this.repo.getSession(user.id);
+    const from = (session.context.reportFrom as string | null | undefined) ?? null;
+    const to = (session.context.reportTo as string | null | undefined) ?? null;
+    const card = await this.repo.getCategoryReportCard({
+      userId: user.id,
+      categoryId,
+      type,
+      from,
+      to
+    });
+
+    if (!card.category) {
+      await this.showReportBreakdown(user, type, page);
+      return;
+    }
+
+    const shareLabel = type === "expense" ? "от всех расходов" : "от всех доходов";
+    const shareText = formatShare(card.amountMinor, card.totalByType);
+    const subcategoryLines = card.subcategories.length
+      ? card.subcategories
+          .map((item, index) => `${index + 1}. ${item.subcategoryName} · ${formatAmountByType(item.amountMinor, type, user.currencyLabel)} · записей: ${item.entries}`)
+          .join("\n")
+      : "подкатегорий пока нет";
+    const subcategoryButtons = card.subcategories.length
+      ? [
+          card.subcategories.map((item, index) => ({
+            text: String(index + 1),
+            action: "report:subcategory",
+            payload: { id: item.subcategoryId, categoryId, type, page }
+          }))
+        ]
+      : [];
+
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text:
+        `${card.category.name}\n\n` +
+        `сумма\n${formatAmountByType(card.amountMinor, type, user.currencyLabel)}\n\n` +
+        `записей\n${card.entries}\n\n` +
+        `${shareLabel}\n${shareText}\n\n` +
+        `${subcategoryLines}`,
+      reply_markup: kb([
+        ...subcategoryButtons,
+        [{ text: BUTTONS.allEntries, action: "report:entries", payload: { page: 0, type, categoryId } }],
+        [{ text: BUTTONS.back, action: "reports:breakdown", payload: { type, page } }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async showReportSubcategoryCard(
+    user: UserRecord,
+    categoryId: number,
+    subcategoryId: number,
+    type: EntryType,
+    page: number
+  ): Promise<void> {
+    const session = await this.repo.getSession(user.id);
+    const from = (session.context.reportFrom as string | null | undefined) ?? null;
+    const to = (session.context.reportTo as string | null | undefined) ?? null;
+    const card = await this.repo.getSubcategoryReportCard({
+      userId: user.id,
+      categoryId,
+      subcategoryId,
+      type,
+      from,
+      to
+    });
+
+    if (!card.category || !card.subcategory) {
+      await this.showReportCategoryCard(user, categoryId, type, page);
+      return;
+    }
+
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text:
+        `${card.subcategory.name}\n\n` +
+        `сумма\n${formatAmountByType(card.amountMinor, type, user.currencyLabel)}\n\n` +
+        `записей\n${card.entries}\n\n` +
+        `внутри категории\n${formatShare(card.amountMinor, card.totalInCategory)}`,
+      reply_markup: kb([
+        [{ text: "записи", action: "report:entries", payload: { page: 0, type, categoryId, subcategoryId } }],
+        [{ text: BUTTONS.back, action: "report:category", payload: { id: categoryId, type, page } }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async showReportEntries(
+    user: UserRecord,
+    input: { page: number; type?: EntryType; categoryId?: number; subcategoryId?: number },
+    selectMode = false
+  ): Promise<void> {
+    const session = await this.repo.getSession(user.id);
+    const from = (session.context.reportFrom as string | null | undefined) ?? null;
+    const to = (session.context.reportTo as string | null | undefined) ?? null;
+    const data = await this.repo.getEntriesByDateRange({
+      userId: user.id,
+      page: input.page,
+      from,
+      to,
+      type: input.type,
+      categoryId: input.categoryId,
+      subcategoryId: input.subcategoryId
+    });
+
+    await this.repo.saveSession(user.id, {
+      ...session,
+      mode: "reports",
+      context: {
+        ...session.context,
+        reportEntriesType: input.type,
+        reportEntriesCategoryId: input.categoryId,
+        reportEntriesSubcategoryId: input.subcategoryId
+      }
+    });
+
+    if (data.total === 0) {
+      await this.telegram.sendMessage({
+        chat_id: user.chatId,
+        text: "пока записей нет\nможно выбрать другой период",
+        reply_markup: kb([
+          [{ text: BUTTONS.anotherPeriod, action: "reports:open" }],
+          [{ text: BUTTONS.back, action: "reports:open" }, { text: BUTTONS.main, action: "nav:home" }]
+        ])
+      });
+      return;
+    }
+
+    const lines = data.items.map((item, index) => `${index + 1}. ${formatEntryLine(item, user.currencyLabel)}`).join("\n");
+    const selectedIds = new Set<number>(Array.isArray(session.context.selectedIds) ? (session.context.selectedIds as number[]) : []);
+    const numberButtons = data.items.map((item, index) => ({
+      text: selectedIds.has(item.id) ? `✓${index + 1}` : String(index + 1),
+      action: selectMode ? "select:toggle" : "operations:view",
+      payload: { id: item.id, page: input.page, origin: "report", source: "report" }
+    }));
+
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: `все записи\n\n${lines}`,
+      reply_markup: kb([
+        numberButtons,
+        [
+          {
+            text: BUTTONS.multipleSelect,
+            action: "report:entries-select",
+            payload: {
+              page: input.page,
+              ...(input.type ? { type: input.type } : {}),
+              ...(typeof input.categoryId === "number" ? { categoryId: input.categoryId } : {}),
+              ...(typeof input.subcategoryId === "number" ? { subcategoryId: input.subcategoryId } : {})
+            }
+          }
+        ],
+        ...(selectMode
+          ? [
+              [
+                {
+                  text: BUTTONS.chooseAll,
+                  action: "select:all",
+                  payload: {
+                    origin: "report",
+                    page: input.page
+                  }
+                }
+              ],
+              ...(selectedIds.size > 0 ? [[{ text: `действия: ${selectedIds.size}`, action: "select:actions", payload: { origin: "report", page: input.page } }]] : [])
+            ]
+          : []),
+        [{ text: BUTTONS.back, action: this.reportEntriesBackAction(session, input), payload: this.reportEntriesBackPayload(session, input) }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
   }
@@ -1345,7 +1665,30 @@ export class BotService {
     });
 
     if (origin === "search") {
+      if (session.context.searchPeriod) {
+        await this.showSearchPeriodResults(
+          user,
+          String(session.context.searchPeriod),
+          page,
+          (session.context.searchFrom as string | null | undefined) ?? null,
+          (session.context.searchTo as string | null | undefined) ?? null
+        );
+        return;
+      }
       await this.showSearchResults(user, String(session.context.query ?? ""), page, true);
+      return;
+    }
+    if (origin === "report") {
+      await this.showReportEntries(
+        user,
+        {
+          page,
+          type: typeof session.context.reportEntriesType === "string" ? (String(session.context.reportEntriesType) as EntryType) : undefined,
+          categoryId: typeof session.context.reportEntriesCategoryId === "number" ? (session.context.reportEntriesCategoryId as number) : undefined,
+          subcategoryId: typeof session.context.reportEntriesSubcategoryId === "number" ? (session.context.reportEntriesSubcategoryId as number) : undefined
+        },
+        true
+      );
       return;
     }
     await this.showOperations(user, page, true);
@@ -1356,8 +1699,29 @@ export class BotService {
     const selectedIds = new Set<number>(Array.isArray(session.context.selectedIds) ? (session.context.selectedIds as number[]) : []);
     const items =
       origin === "search"
-        ? (await this.repo.searchEntries(user.id, String(session.context.query ?? ""), page)).items
-        : await this.repo.getEntryList(user.id, page);
+        ? session.context.searchPeriod
+          ? (
+              await this.repo.getEntriesByDateRange({
+                userId: user.id,
+                page,
+                from: (session.context.searchFrom as string | null | undefined) ?? null,
+                to: (session.context.searchTo as string | null | undefined) ?? null
+              })
+            ).items
+          : (await this.repo.searchEntries(user.id, String(session.context.query ?? ""), page)).items
+        : origin === "report"
+          ? (
+              await this.repo.getEntriesByDateRange({
+                userId: user.id,
+                page,
+                from: (session.context.reportFrom as string | null | undefined) ?? null,
+                to: (session.context.reportTo as string | null | undefined) ?? null,
+                type: typeof session.context.reportEntriesType === "string" ? (String(session.context.reportEntriesType) as EntryType) : undefined,
+                categoryId: typeof session.context.reportEntriesCategoryId === "number" ? (session.context.reportEntriesCategoryId as number) : undefined,
+                subcategoryId: typeof session.context.reportEntriesSubcategoryId === "number" ? (session.context.reportEntriesSubcategoryId as number) : undefined
+              })
+            ).items
+          : await this.repo.getEntryList(user.id, page);
     for (const item of items) {
       selectedIds.add(item.id);
     }
@@ -1367,7 +1731,30 @@ export class BotService {
     });
 
     if (origin === "search") {
+      if (session.context.searchPeriod) {
+        await this.showSearchPeriodResults(
+          user,
+          String(session.context.searchPeriod),
+          page,
+          (session.context.searchFrom as string | null | undefined) ?? null,
+          (session.context.searchTo as string | null | undefined) ?? null
+        );
+        return;
+      }
       await this.showSearchResults(user, String(session.context.query ?? ""), page, true);
+      return;
+    }
+    if (origin === "report") {
+      await this.showReportEntries(
+        user,
+        {
+          page,
+          type: typeof session.context.reportEntriesType === "string" ? (String(session.context.reportEntriesType) as EntryType) : undefined,
+          categoryId: typeof session.context.reportEntriesCategoryId === "number" ? (session.context.reportEntriesCategoryId as number) : undefined,
+          subcategoryId: typeof session.context.reportEntriesSubcategoryId === "number" ? (session.context.reportEntriesSubcategoryId as number) : undefined
+        },
+        true
+      );
       return;
     }
     await this.showOperations(user, page, true);
@@ -1399,10 +1786,52 @@ export class BotService {
       context: { ...session.context, selectedIds: [] }
     });
     if (origin === "search") {
+      if (session.context.searchPeriod) {
+        await this.showSearchPeriodResults(
+          user,
+          String(session.context.searchPeriod),
+          page,
+          (session.context.searchFrom as string | null | undefined) ?? null,
+          (session.context.searchTo as string | null | undefined) ?? null
+        );
+        return;
+      }
       await this.showSearchResults(user, String(session.context.query ?? ""), page);
       return;
     }
+    if (origin === "report") {
+      await this.showReportEntries(user, {
+        page,
+        type: typeof session.context.reportEntriesType === "string" ? (String(session.context.reportEntriesType) as EntryType) : undefined,
+        categoryId: typeof session.context.reportEntriesCategoryId === "number" ? (session.context.reportEntriesCategoryId as number) : undefined,
+        subcategoryId: typeof session.context.reportEntriesSubcategoryId === "number" ? (session.context.reportEntriesSubcategoryId as number) : undefined
+      });
+      return;
+    }
     await this.showOperations(user, page);
+  }
+
+  private reportEntriesBackAction(session: UiSession, input: { type?: EntryType; categoryId?: number; subcategoryId?: number }): string {
+    if (typeof input.subcategoryId === "number" && typeof input.categoryId === "number" && input.type) {
+      return "report:subcategory";
+    }
+    if (typeof input.categoryId === "number" && input.type) {
+      return "report:category";
+    }
+    return "reports:quick";
+  }
+
+  private reportEntriesBackPayload(
+    session: UiSession,
+    input: { type?: EntryType; categoryId?: number; subcategoryId?: number }
+  ): Record<string, string | number | undefined> {
+    if (typeof input.subcategoryId === "number" && typeof input.categoryId === "number" && input.type) {
+      return { id: input.subcategoryId, categoryId: input.categoryId, type: input.type, page: 0 };
+    }
+    if (typeof input.categoryId === "number" && input.type) {
+      return { id: input.categoryId, type: input.type, page: 0 };
+    }
+    return { period: String(session.context.reportPeriod ?? "month") };
   }
 
   private describeDraft(draft: DraftPayload, currencyLabel: string): string {
@@ -1491,4 +1920,11 @@ function periodToLabel(period: string): string {
     return BUTTONS.allTime;
   }
   return period;
+}
+
+function formatShare(part: number, whole: number): string {
+  if (whole <= 0) {
+    return "0%";
+  }
+  return `${Math.round((part / whole) * 100)}%`;
 }

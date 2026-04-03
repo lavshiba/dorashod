@@ -71,6 +71,20 @@ export interface EntryRecord {
   createdAt: string;
 }
 
+export interface ReportCategorySummary {
+  categoryId: number;
+  categoryName: string;
+  amountMinor: number;
+  entries: number;
+}
+
+export interface ReportSubcategorySummary {
+  subcategoryId: number;
+  subcategoryName: string;
+  amountMinor: number;
+  entries: number;
+}
+
 export interface DraftPayload {
   type?: EntryType;
   amountMinor?: number;

@@ -3,6 +3,8 @@ import type {
   DraftPayload,
   EntryRecord,
   EntryType,
+  ReportCategorySummary,
+  ReportSubcategorySummary,
   SubcategoryRecord,
   UiSession,
   UserRecord
@@ -429,6 +431,8 @@ export class Repository {
     from?: string | null;
     to?: string | null;
     type?: EntryType;
+    categoryId?: number;
+    subcategoryId?: number;
   }): Promise<{ total: number; items: EntryRecord[] }> {
     const limit = input.limit ?? 6;
     const offset = input.page * limit;
@@ -439,6 +443,14 @@ export class Repository {
     if (input.type) {
       clauses.push("e.type = ?");
       binds.push(input.type);
+    }
+    if (typeof input.categoryId === "number") {
+      clauses.push("e.category_id = ?");
+      binds.push(input.categoryId);
+    }
+    if (typeof input.subcategoryId === "number") {
+      clauses.push("e.subcategory_id = ?");
+      binds.push(input.subcategoryId);
     }
     if (input.from) {
       clauses.push("e.entry_date >= ?");
@@ -659,6 +671,226 @@ export class Repository {
       income: row?.income ?? 0,
       expense: row?.expense ?? 0,
       entries: row?.entries ?? 0
+    };
+  }
+
+  async getCategoryBreakdownByDateRange(input: {
+    userId: number;
+    type: EntryType;
+    page: number;
+    limit?: number;
+    from?: string | null;
+    to?: string | null;
+  }): Promise<{ total: number; items: ReportCategorySummary[] }> {
+    const limit = input.limit ?? 4;
+    const offset = input.page * limit;
+    const clauses = ["e.user_id = ?", "e.type = ?", "e.is_date_missing = 0"];
+    const binds: Array<string | number> = [input.userId, input.type];
+
+    if (input.from) {
+      clauses.push("e.entry_date >= ?");
+      binds.push(input.from);
+    }
+    if (input.to) {
+      clauses.push("e.entry_date <= ?");
+      binds.push(input.to);
+    }
+
+    const where = clauses.join(" AND ");
+    const groupedSql = `
+      FROM entries e
+      JOIN categories c ON c.id = e.category_id
+      WHERE ${where}
+      GROUP BY c.id, c.name
+    `;
+
+    const total = await this.db
+      .prepare(`SELECT COUNT(*) as count FROM (SELECT c.id ${groupedSql}) grouped`)
+      .bind(...binds)
+      .first<{ count: number }>();
+
+    const rows = await this.db
+      .prepare(
+        `
+        SELECT
+          c.id as category_id,
+          c.name as category_name,
+          SUM(e.amount_minor) as amount_minor,
+          COUNT(*) as entries
+        ${groupedSql}
+        ORDER BY amount_minor DESC, entries DESC, category_name ASC
+        LIMIT ? OFFSET ?
+      `
+      )
+      .bind(...binds, limit, offset)
+      .all<Record<string, D1Value>>();
+
+    return {
+      total: total?.count ?? 0,
+      items: (rows.results ?? []).map((row) => ({
+        categoryId: Number(row.category_id),
+        categoryName: String(row.category_name),
+        amountMinor: Number(row.amount_minor),
+        entries: Number(row.entries)
+      }))
+    };
+  }
+
+  async getCategoryReportCard(input: {
+    userId: number;
+    categoryId: number;
+    type: EntryType;
+    from?: string | null;
+    to?: string | null;
+  }): Promise<{
+    category: CategoryRecord | null;
+    amountMinor: number;
+    entries: number;
+    totalByType: number;
+    subcategories: ReportSubcategorySummary[];
+  }> {
+    const category = await this.getCategory(input.userId, input.categoryId);
+    if (!category) {
+      return {
+        category: null,
+        amountMinor: 0,
+        entries: 0,
+        totalByType: 0,
+        subcategories: []
+      };
+    }
+
+    const clauses = ["e.user_id = ?", "e.type = ?", "e.is_date_missing = 0"];
+    const binds: Array<string | number> = [input.userId, input.type];
+    if (input.from) {
+      clauses.push("e.entry_date >= ?");
+      binds.push(input.from);
+    }
+    if (input.to) {
+      clauses.push("e.entry_date <= ?");
+      binds.push(input.to);
+    }
+
+    const typeWhere = clauses.join(" AND ");
+    const row = await this.db
+      .prepare(
+        `
+        SELECT
+          COALESCE(SUM(CASE WHEN e.category_id = ? THEN e.amount_minor END), 0) as amount_minor,
+          COALESCE(SUM(e.amount_minor), 0) as total_by_type,
+          COALESCE(SUM(CASE WHEN e.category_id = ? THEN 1 ELSE 0 END), 0) as entries
+        FROM entries e
+        WHERE ${typeWhere}
+      `
+      )
+      .bind(input.categoryId, input.categoryId, ...binds)
+      .first<{ amount_minor: number; total_by_type: number; entries: number }>();
+
+    const subcategoryClauses = [...clauses, "e.category_id = ?", "e.subcategory_id IS NOT NULL"];
+    const subcategoryBinds = [...binds, input.categoryId];
+    const subcategoryRows = await this.db
+      .prepare(
+        `
+        SELECT
+          s.id as subcategory_id,
+          s.name as subcategory_name,
+          SUM(e.amount_minor) as amount_minor,
+          COUNT(*) as entries
+        FROM entries e
+        JOIN subcategories s ON s.id = e.subcategory_id
+        WHERE ${subcategoryClauses.join(" AND ")}
+        GROUP BY s.id, s.name
+        ORDER BY amount_minor DESC, entries DESC, subcategory_name ASC
+      `
+      )
+      .bind(...subcategoryBinds)
+      .all<Record<string, D1Value>>();
+
+    return {
+      category,
+      amountMinor: row?.amount_minor ?? 0,
+      entries: row?.entries ?? 0,
+      totalByType: row?.total_by_type ?? 0,
+      subcategories: (subcategoryRows.results ?? []).map((item) => ({
+        subcategoryId: Number(item.subcategory_id),
+        subcategoryName: String(item.subcategory_name),
+        amountMinor: Number(item.amount_minor),
+        entries: Number(item.entries)
+      }))
+    };
+  }
+
+  async getSubcategoryReportCard(input: {
+    userId: number;
+    categoryId: number;
+    subcategoryId: number;
+    type: EntryType;
+    from?: string | null;
+    to?: string | null;
+  }): Promise<{
+    category: CategoryRecord | null;
+    subcategory: SubcategoryRecord | null;
+    amountMinor: number;
+    entries: number;
+    totalInCategory: number;
+  }> {
+    const [category] = await Promise.all([this.getCategory(input.userId, input.categoryId)]);
+    if (!category) {
+      return {
+        category: null,
+        subcategory: null,
+        amountMinor: 0,
+        entries: 0,
+        totalInCategory: 0
+      };
+    }
+
+    const subcategoryRow = await this.db
+      .prepare("SELECT * FROM subcategories WHERE user_id = ? AND id = ? AND category_id = ?")
+      .bind(input.userId, input.subcategoryId, input.categoryId)
+      .first<Record<string, D1Value>>();
+    const subcategory = subcategoryRow ? mapSubcategory(subcategoryRow) : null;
+    if (!subcategory) {
+      return {
+        category,
+        subcategory: null,
+        amountMinor: 0,
+        entries: 0,
+        totalInCategory: 0
+      };
+    }
+
+    const clauses = ["user_id = ?", "type = ?", "is_date_missing = 0"];
+    const binds: Array<string | number> = [input.userId, input.type];
+    if (input.from) {
+      clauses.push("entry_date >= ?");
+      binds.push(input.from);
+    }
+    if (input.to) {
+      clauses.push("entry_date <= ?");
+      binds.push(input.to);
+    }
+
+    const row = await this.db
+      .prepare(
+        `
+        SELECT
+          COALESCE(SUM(CASE WHEN category_id = ? AND subcategory_id = ? THEN amount_minor END), 0) as amount_minor,
+          COALESCE(SUM(CASE WHEN category_id = ? AND subcategory_id = ? THEN 1 ELSE 0 END), 0) as entries,
+          COALESCE(SUM(CASE WHEN category_id = ? THEN amount_minor END), 0) as total_in_category
+        FROM entries
+        WHERE ${clauses.join(" AND ")}
+      `
+      )
+      .bind(input.categoryId, input.subcategoryId, input.categoryId, input.subcategoryId, input.categoryId, ...binds)
+      .first<{ amount_minor: number; entries: number; total_in_category: number }>();
+
+    return {
+      category,
+      subcategory,
+      amountMinor: row?.amount_minor ?? 0,
+      entries: row?.entries ?? 0,
+      totalInCategory: row?.total_in_category ?? 0
     };
   }
 
