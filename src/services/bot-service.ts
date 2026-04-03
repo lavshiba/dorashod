@@ -297,6 +297,21 @@ export class BotService {
       case "operations:list":
         await this.showOperations(user, Number(params.page ?? "0"));
         return;
+      case "operations:select-mode":
+        await this.showOperations(user, Number(params.page ?? "0"), true);
+        return;
+      case "select:toggle":
+        await this.toggleSelection(user, Number(params.id), String(params.origin), Number(params.page ?? "0"));
+        return;
+      case "select:all":
+        await this.selectAllOnPage(user, String(params.origin), Number(params.page ?? "0"));
+        return;
+      case "select:actions":
+        await this.showBulkActions(user, String(params.origin), Number(params.page ?? "0"));
+        return;
+      case "bulk:cancel":
+        await this.clearBulkSelection(user, String(params.origin), Number(params.page ?? "0"));
+        return;
       case "operations:view":
         await this.showEntryCard(user, Number(params.id), "operations", Number(params.page ?? "0"));
         return;
@@ -330,6 +345,9 @@ export class BotService {
         return;
       case "search:results":
         await this.showSearchResults(user, String(params.query ?? ""), Number(params.page ?? "0"));
+        return;
+      case "search:select-mode":
+        await this.showSearchResults(user, String(params.query ?? ""), Number(params.page ?? "0"), true);
         return;
       case "search:view":
         await this.showEntryCard(user, Number(params.id), "search", Number(params.page ?? "0"), String(params.query ?? ""));
@@ -747,7 +765,7 @@ export class BotService {
     await this.showQueue(user);
   }
 
-  private async showOperations(user: UserRecord, page: number): Promise<void> {
+  private async showOperations(user: UserRecord, page: number, selectMode = false): Promise<void> {
     const items = await this.repo.getEntryList(user.id, page);
     if (items.length === 0) {
       await this.telegram.sendMessage({
@@ -759,18 +777,33 @@ export class BotService {
     }
 
     const lines = items.map((item, index) => `${index + 1}. ${formatEntryLine(item, user.currencyLabel)}`).join("\n");
+    const session = await this.repo.getSession(user.id);
+    const selectedIds = new Set<number>(Array.isArray(session.context.selectedIds) ? (session.context.selectedIds as number[]) : []);
     const numberButtons = items.map((item, index) => ({
-      text: String(index + 1),
-      action: "operations:view",
-      payload: { id: item.id, page }
+      text: selectedIds.has(item.id) ? `✓${index + 1}` : String(index + 1),
+      action: selectMode ? "select:toggle" : "operations:view",
+      payload: { id: item.id, page, origin: "operations" }
     }));
+    const hasSelection = selectedIds.size > 0;
 
     await this.telegram.sendMessage({
       chat_id: user.chatId,
       text: `операции\n\n${lines}`,
       reply_markup: kb([
         numberButtons,
-        [{ text: BUTTONS.multipleSelect, action: "noop" }],
+        [
+          {
+            text: BUTTONS.multipleSelect,
+            action: "operations:select-mode",
+            payload: { page }
+          }
+        ],
+        ...(selectMode
+          ? [
+              [{ text: BUTTONS.chooseAll, action: "select:all", payload: { origin: "operations", page } }],
+              ...(hasSelection ? [[{ text: `действия: ${selectedIds.size}`, action: "select:actions", payload: { origin: "operations", page } }]] : [])
+            ]
+          : []),
         [{ text: BUTTONS.search, action: "search:open" }],
         [{ text: BUTTONS.main, action: "nav:home" }]
       ])
@@ -935,7 +968,13 @@ export class BotService {
     await this.showSearchPeriodResults(user, period, 0, range.from, range.to);
   }
 
-  private async showSearchResults(user: UserRecord, query: string, page: number): Promise<void> {
+  private async showSearchResults(user: UserRecord, query: string, page: number, selectMode = false): Promise<void> {
+    const currentSession = await this.repo.getSession(user.id);
+    await this.repo.saveSession(user.id, {
+      ...currentSession,
+      mode: "search",
+      context: { ...currentSession.context, query }
+    });
     const data = await this.repo.searchEntries(user.id, query, page);
     if (data.total === 0) {
       await this.telegram.sendMessage({
@@ -950,10 +989,12 @@ export class BotService {
     }
 
     const lines = data.items.map((item, index) => `${index + 1}. ${formatEntryLine(item, user.currencyLabel)}${item.description ? ` — ${item.description}` : ""}`).join("\n");
+    const session = await this.repo.getSession(user.id);
+    const selectedIds = new Set<number>(Array.isArray(session.context.selectedIds) ? (session.context.selectedIds as number[]) : []);
     const numberButtons = data.items.map((item, index) => ({
-      text: String(index + 1),
-      action: "search:view",
-      payload: { id: item.id, page, query }
+      text: selectedIds.has(item.id) ? `✓${index + 1}` : String(index + 1),
+      action: selectMode ? "select:toggle" : "search:view",
+      payload: { id: item.id, page, query, origin: "search" }
     }));
 
     await this.telegram.sendMessage({
@@ -961,7 +1002,13 @@ export class BotService {
       text: `запрос: ${query}\nнайдено: ${data.total}\n\n${lines}`,
       reply_markup: kb([
         numberButtons,
-        [{ text: BUTTONS.multipleSelect, action: "noop" }],
+        [{ text: BUTTONS.multipleSelect, action: "search:select-mode", payload: { query, page } }],
+        ...(selectMode
+          ? [
+              [{ text: BUTTONS.chooseAll, action: "select:all", payload: { origin: "search", page, query } }],
+              ...(selectedIds.size > 0 ? [[{ text: `действия: ${selectedIds.size}`, action: "select:actions", payload: { origin: "search", page, query } }]] : [])
+            ]
+          : []),
         [{ text: BUTTONS.newSearch, action: "search:open" }],
         [{ text: BUTTONS.back, action: "search:open" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
@@ -975,14 +1022,19 @@ export class BotService {
     from: string | null,
     to: string | null
   ): Promise<void> {
+    const title = periodToLabel(periodLabel);
+    const currentSession = await this.repo.getSession(user.id);
+    await this.repo.saveSession(user.id, {
+      ...currentSession,
+      mode: "search",
+      context: { ...currentSession.context, query: title }
+    });
     const data = await this.repo.getEntriesByDateRange({
       userId: user.id,
       page,
       from,
       to
     });
-
-    const title = periodToLabel(periodLabel);
     if (data.total === 0) {
       await this.telegram.sendMessage({
         chat_id: user.chatId,
@@ -996,6 +1048,8 @@ export class BotService {
     }
 
     const lines = data.items.map((item, index) => `${index + 1}. ${formatEntryLine(item, user.currencyLabel)}`).join("\n");
+    const session = await this.repo.getSession(user.id);
+    const selectedIds = new Set<number>(Array.isArray(session.context.selectedIds) ? (session.context.selectedIds as number[]) : []);
     const numberButtons = data.items.map((item, index) => ({
       text: String(index + 1),
       action: "search:view",
@@ -1231,6 +1285,80 @@ export class BotService {
         [{ text: BUTTONS.back, action: "data:open" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
+  }
+
+  private async toggleSelection(user: UserRecord, entryId: number, origin: string, page: number): Promise<void> {
+    const session = await this.repo.getSession(user.id);
+    const selectedIds = new Set<number>(Array.isArray(session.context.selectedIds) ? (session.context.selectedIds as number[]) : []);
+    if (selectedIds.has(entryId)) {
+      selectedIds.delete(entryId);
+    } else {
+      selectedIds.add(entryId);
+    }
+    await this.repo.saveSession(user.id, {
+      ...session,
+      context: { ...session.context, selectedIds: Array.from(selectedIds) }
+    });
+
+    if (origin === "search") {
+      await this.showSearchResults(user, String(session.context.query ?? ""), page, true);
+      return;
+    }
+    await this.showOperations(user, page, true);
+  }
+
+  private async selectAllOnPage(user: UserRecord, origin: string, page: number): Promise<void> {
+    const session = await this.repo.getSession(user.id);
+    const selectedIds = new Set<number>(Array.isArray(session.context.selectedIds) ? (session.context.selectedIds as number[]) : []);
+    const items =
+      origin === "search"
+        ? (await this.repo.searchEntries(user.id, String(session.context.query ?? ""), page)).items
+        : await this.repo.getEntryList(user.id, page);
+    for (const item of items) {
+      selectedIds.add(item.id);
+    }
+    await this.repo.saveSession(user.id, {
+      ...session,
+      context: { ...session.context, selectedIds: Array.from(selectedIds) }
+    });
+
+    if (origin === "search") {
+      await this.showSearchResults(user, String(session.context.query ?? ""), page, true);
+      return;
+    }
+    await this.showOperations(user, page, true);
+  }
+
+  private async showBulkActions(user: UserRecord, origin: string, page: number): Promise<void> {
+    const session = await this.repo.getSession(user.id);
+    const selectedIds = Array.isArray(session.context.selectedIds) ? (session.context.selectedIds as number[]) : [];
+    const entries = await Promise.all(selectedIds.map((id) => this.repo.getEntryById(user.id, id)));
+    const hasSubcategory = entries.some((entry) => entry?.subcategoryId);
+
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: `действия: ${selectedIds.length}`,
+      reply_markup: kb([
+        [{ text: BUTTONS.transfer, action: "noop" }],
+        [{ text: BUTTONS.delete, action: "noop" }],
+        ...(hasSubcategory ? [[{ text: BUTTONS.removeSubcategory, action: "noop" }]] : []),
+        [{ text: BUTTONS.cancel, action: "bulk:cancel", payload: { origin, page } }],
+        [{ text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async clearBulkSelection(user: UserRecord, origin: string, page: number): Promise<void> {
+    const session = await this.repo.getSession(user.id);
+    await this.repo.saveSession(user.id, {
+      ...session,
+      context: { ...session.context, selectedIds: [] }
+    });
+    if (origin === "search") {
+      await this.showSearchResults(user, String(session.context.query ?? ""), page);
+      return;
+    }
+    await this.showOperations(user, page);
   }
 
   private describeDraft(draft: DraftPayload, currencyLabel: string): string {
