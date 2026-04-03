@@ -1217,6 +1217,13 @@ export class Repository {
     await this.db.prepare("DELETE FROM imports WHERE user_id = ? AND id = ?").bind(userId, importId).run();
   }
 
+  async updateImportPreview(userId: number, importId: number, preview: Record<string, unknown>, status = "preview"): Promise<void> {
+    await this.db
+      .prepare("UPDATE imports SET preview_json = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND id = ?")
+      .bind(json(preview), status, userId, importId)
+      .run();
+  }
+
   async replaceUserDataFromSnapshot(user: UserRecord, snapshot: Record<string, unknown>): Promise<void> {
     const snapUser = snapshot.user as Record<string, unknown> | null;
     const categories = Array.isArray(snapshot.categories) ? (snapshot.categories as Array<Record<string, unknown>>) : [];

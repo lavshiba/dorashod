@@ -143,6 +143,11 @@ export class BotService {
       return;
     }
 
+    if (session.mode === "import" && session.context.awaiting === "fix-line") {
+      await this.handleImportFixInput(user, session, text);
+      return;
+    }
+
     if (session.mode === "reports" && session.context.awaiting === "custom-period") {
       const normalized = text.trim().toLowerCase();
       if (normalized === "сегодня") {
@@ -762,11 +767,25 @@ export class BotService {
         await this.applyEntriesImport(user, Number(params.importId), false);
         return;
       case "data:import-fix-open":
+        await this.showImportFixItem(user, Number(params.importId), 0);
+        return;
+      case "data:import-fix-edit":
+        await this.repo.saveSession(user.id, {
+          mode: "import",
+          stack: ["data"],
+          context: { importId: Number(params.importId), fixIndex: Number(params.index ?? "0"), awaiting: "fix-line" }
+        });
         await this.telegram.sendMessage({
           chat_id: user.chatId,
-          text: "исправить\n\nэта ветка ещё в работе. Сейчас можно добавить уже понятные строки или вернуться назад.",
-          reply_markup: kb([[{ text: BUTTONS.back, action: "data:other-apps" }, { text: BUTTONS.main, action: "nav:home" }]])
+          text: "Пришли исправленную строку.",
+          reply_markup: kb([[{ text: BUTTONS.cancel, action: "data:import-fix-open", payload: { importId: params.importId } }, { text: BUTTONS.main, action: "nav:home" }]])
         });
+        return;
+      case "data:import-fix-save":
+        await this.applyImportFixSave(user, Number(params.importId), Number(params.index ?? "0"));
+        return;
+      case "data:import-fix-skip":
+        await this.showImportFixItem(user, Number(params.importId), Number(params.index ?? "0") + 1);
         return;
       case "data:reset-settings":
         await this.repo.resetUserSettings(user.id);
@@ -2044,6 +2063,148 @@ export class BotService {
     await this.showDataOtherApps(user);
   }
 
+  private async showImportFixItem(user: UserRecord, importId: number, index: number): Promise<void> {
+    const pendingImport = await this.repo.getImport(user.id, importId);
+    if (!pendingImport) {
+      await this.showDataOtherApps(user);
+      return;
+    }
+
+    const errors = Array.isArray(pendingImport.previewJson.errors) ? (pendingImport.previewJson.errors as Array<Record<string, unknown>>) : [];
+    const current = errors[index];
+    if (!current) {
+      await this.telegram.sendMessage({
+        chat_id: user.chatId,
+        text: "проблемных строк больше нет"
+      });
+      await this.showDataOtherApps(user);
+      return;
+    }
+
+    const parsed = parseFixCandidate(String(current.rawText ?? ""));
+    const understood = this.describeQueueParsed(parsed, user.currencyLabel) || "пока ничего не удалось понять";
+    const buttons =
+      parsed.type && parsed.amountMinor && parsed.category
+        ? [
+            [{ text: BUTTONS.save, action: "data:import-fix-save", payload: { importId, index } }],
+            [{ text: BUTTONS.edit, action: "data:import-fix-edit", payload: { importId, index } }],
+            [{ text: BUTTONS.skip, action: "data:import-fix-skip", payload: { importId, index } }],
+            [{ text: BUTTONS.main, action: "nav:home" }]
+          ]
+        : [
+            [{ text: BUTTONS.edit, action: "data:import-fix-edit", payload: { importId, index } }],
+            [{ text: BUTTONS.skip, action: "data:import-fix-skip", payload: { importId, index } }],
+            [{ text: BUTTONS.main, action: "nav:home" }]
+          ];
+
+    await this.repo.saveSession(user.id, {
+      mode: "import",
+      stack: ["data"],
+      context: { importId, fixIndex: index }
+    });
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text:
+        `исправить\n\n` +
+        `строка:\n${String(current.rawText ?? "")}\n\n` +
+        `причина:\n${String(current.reason ?? "")}\n\n` +
+        `из записи удалось понять:\n${understood}` +
+        (!(parsed.type && parsed.amountMinor && parsed.category) ? `\n\nне хватает: ${parsed.missing.map(formatMissingField).join(", ")}` : ""),
+      reply_markup: kb(buttons)
+    });
+  }
+
+  private async handleImportFixInput(user: UserRecord, session: UiSession, text: string): Promise<void> {
+    const importId = Number(session.context.importId);
+    const index = Number(session.context.fixIndex ?? 0);
+    const pendingImport = await this.repo.getImport(user.id, importId);
+    if (!pendingImport) {
+      await this.showDataOtherApps(user);
+      return;
+    }
+    const preview = pendingImport.previewJson;
+    const errors = Array.isArray(preview.errors) ? ([...preview.errors] as Array<Record<string, unknown>>) : [];
+    if (!errors[index]) {
+      await this.showDataOtherApps(user);
+      return;
+    }
+    errors[index] = {
+      ...errors[index],
+      rawText: text
+    };
+    await this.repo.updateImportPreview(user.id, importId, {
+      ...preview,
+      errors
+    });
+    await this.showImportFixItem(user, importId, index);
+  }
+
+  private async applyImportFixSave(user: UserRecord, importId: number, index: number): Promise<void> {
+    const pendingImport = await this.repo.getImport(user.id, importId);
+    if (!pendingImport) {
+      await this.showDataOtherApps(user);
+      return;
+    }
+    const preview = pendingImport.previewJson;
+    const errors = Array.isArray(preview.errors) ? ([...preview.errors] as Array<Record<string, unknown>>) : [];
+    const entries = Array.isArray(preview.entries) ? ([...preview.entries] as Array<Record<string, unknown>>) : [];
+    const current = errors[index];
+    if (!current) {
+      await this.showDataOtherApps(user);
+      return;
+    }
+    const parsed = parseFixCandidate(String(current.rawText ?? ""));
+    if (!(parsed.type && parsed.amountMinor && parsed.category)) {
+      await this.showImportFixItem(user, importId, index);
+      return;
+    }
+
+    const entry = {
+      type: parsed.type,
+      amountMinor: parsed.amountMinor,
+      categoryName: parsed.category,
+      subcategoryName: parsed.subcategory ?? null,
+      description: parsed.description ?? null,
+      entryDate: null,
+      entryTime: null,
+      isTimeAuto: true,
+      isDateMissing: true
+    };
+
+    await this.repo.createEntry({
+      user,
+      type: entry.type,
+      amountMinor: entry.amountMinor,
+      categoryName: entry.categoryName,
+      subcategoryName: entry.subcategoryName ?? undefined,
+      description: entry.description ?? undefined,
+      entryDate: null,
+      entryTime: null,
+      isTimeAuto: true,
+      isDateMissing: true,
+      source: "import-fix"
+    });
+
+    entries.push(entry);
+    errors.splice(index, 1);
+    await this.repo.updateImportPreview(user.id, importId, {
+      ...preview,
+      entries,
+      errors
+    });
+
+    if (errors.length === 0) {
+      await this.telegram.sendMessage({
+        chat_id: user.chatId,
+        text: "проблемных строк больше нет"
+      });
+      await this.showDataOtherApps(user);
+      return;
+    }
+
+    await this.showImportFixItem(user, importId, Math.min(index, errors.length - 1));
+  }
+
   private async toggleSelection(user: UserRecord, entryId: number, origin: string, page: number): Promise<void> {
     const session = await this.repo.getSession(user.id);
     const selectedIds = new Set<number>(Array.isArray(session.context.selectedIds) ? (session.context.selectedIds as number[]) : []);
@@ -2502,18 +2663,38 @@ function parseFullSnapshot(content: string):
 
 function parseEntriesImport(content: string): {
   entries: Array<Record<string, unknown>>;
-  errors: string[];
+  errors: Array<Record<string, unknown>>;
 } {
+  const jsonParsed = parseEntriesImportJson(content);
+  if (jsonParsed) {
+    return jsonParsed;
+  }
+  const csvParsed = parseEntriesImportCsv(content);
+  if (csvParsed) {
+    return csvParsed;
+  }
+  return { entries: [], errors: [{ rawText: "", reason: "файл не удалось прочитать" }] };
+}
+
+function parseEntriesImportJson(content: string):
+  | {
+      entries: Array<Record<string, unknown>>;
+      errors: Array<Record<string, unknown>>;
+    }
+  | null {
   try {
     const raw = JSON.parse(content) as Record<string, unknown>;
     const items = Array.isArray(raw.entries) ? raw.entries : Array.isArray(raw) ? raw : [];
     const entries: Array<Record<string, unknown>> = [];
-    const errors: string[] = [];
+    const errors: Array<Record<string, unknown>> = [];
 
     for (const item of items) {
       const parsed = parseImportedEntry(item as Record<string, unknown>);
       if ("error" in parsed) {
-        errors.push(parsed.error);
+        errors.push({
+          rawText: stringifyImportRow(item as Record<string, unknown>),
+          reason: parsed.error
+        });
       } else {
         entries.push(parsed.entry);
       }
@@ -2521,8 +2702,60 @@ function parseEntriesImport(content: string): {
 
     return { entries, errors };
   } catch {
-    return { entries: [], errors: ["файл не удалось прочитать"] };
+    return null;
   }
+}
+
+function parseEntriesImportCsv(content: string):
+  | {
+      entries: Array<Record<string, unknown>>;
+      errors: Array<Record<string, unknown>>;
+    }
+  | null {
+  const lines = content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length < 2) {
+    return null;
+  }
+
+  const headers = splitCsvLine(lines[0]).map((item) => item.trim().toLowerCase());
+  if (!headers.includes("type") && !headers.includes("тип")) {
+    return null;
+  }
+
+  const entries: Array<Record<string, unknown>> = [];
+  const errors: Array<Record<string, unknown>> = [];
+
+  for (const line of lines.slice(1)) {
+    const cells = splitCsvLine(line);
+    const row: Record<string, unknown> = {};
+    headers.forEach((header, index) => {
+      row[header] = cells[index] ?? "";
+    });
+
+    const normalized = {
+      type: row.type ?? row["тип"],
+      amount: row.amount ?? row["сумма"] ?? row["amount_minor"],
+      category: row.category ?? row["категория"],
+      subcategory: row.subcategory ?? row["подкатегория"],
+      description: row.description ?? row["описание"],
+      date: row.date ?? row["дата"],
+      time: row.time ?? row["время"]
+    };
+    const parsed = parseImportedEntry(normalized);
+    if ("error" in parsed) {
+      errors.push({
+        rawText: line,
+        reason: parsed.error
+      });
+    } else {
+      entries.push(parsed.entry);
+    }
+  }
+
+  return { entries, errors };
 }
 
 function parseImportedEntry(
@@ -2559,6 +2792,25 @@ function parseImportedEntry(
       isTimeAuto: !parsedTime,
       isDateMissing: !parsedDate.readable
     }
+  };
+}
+
+function parseFixCandidate(rawText: string): {
+  type?: EntryType;
+  amountMinor?: number;
+  category?: string;
+  subcategory?: string;
+  description?: string;
+  missing: string[];
+} {
+  const parsed = parseEntryAttempt(rawText);
+  return {
+    type: parsed.type,
+    amountMinor: parsed.amountMinor,
+    category: parsed.category,
+    subcategory: parsed.subcategory,
+    description: parsed.description,
+    missing: parsed.missing
   };
 }
 
@@ -2623,4 +2875,32 @@ function makeEntryDedupKey(entry: {
     normalizeName(entry.subcategoryName ?? ""),
     String(entry.description ?? "").trim().toLowerCase()
   ].join("|");
+}
+
+function stringifyImportRow(row: Record<string, unknown>): string {
+  return Object.entries(row)
+    .map(([key, value]) => `${key}: ${String(value ?? "")}`)
+    .join(", ");
+}
+
+function splitCsvLine(line: string): string[] {
+  const result: string[] = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (char === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (char === "," && !inQuotes) {
+      result.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  result.push(current.trim());
+  return result;
 }
