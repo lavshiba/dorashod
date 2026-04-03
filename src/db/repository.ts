@@ -516,6 +516,31 @@ export class Repository {
     return row ? mapEntry(row) : null;
   }
 
+  async getEntriesByIds(userId: number, entryIds: number[]): Promise<EntryRecord[]> {
+    if (entryIds.length === 0) {
+      return [];
+    }
+    const placeholders = entryIds.map(() => "?").join(", ");
+    const rows = await this.db
+      .prepare(
+        `
+        SELECT
+          e.*,
+          c.name as category_name,
+          s.name as subcategory_name
+        FROM entries e
+        JOIN categories c ON c.id = e.category_id
+        LEFT JOIN subcategories s ON s.id = e.subcategory_id
+        WHERE e.user_id = ? AND e.id IN (${placeholders})
+      `
+      )
+      .bind(userId, ...entryIds)
+      .all<Record<string, D1Value>>();
+
+    const mapped = new Map((rows.results ?? []).map((row) => [Number(row.id), mapEntry(row)]));
+    return entryIds.map((id) => mapped.get(id)).filter(Boolean) as EntryRecord[];
+  }
+
   async deleteEntry(userId: number, entryId: number): Promise<void> {
     await this.db.prepare("DELETE FROM entries WHERE user_id = ? AND id = ?").bind(userId, entryId).run();
   }
@@ -1025,6 +1050,14 @@ export class Repository {
     return (rows.results ?? []).map(mapSubcategory);
   }
 
+  async getSubcategory(userId: number, subcategoryId: number): Promise<SubcategoryRecord | null> {
+    const row = await this.db
+      .prepare("SELECT * FROM subcategories WHERE user_id = ? AND id = ?")
+      .bind(userId, subcategoryId)
+      .first<Record<string, D1Value>>();
+    return row ? mapSubcategory(row) : null;
+  }
+
   async getSubcategoryCount(userId: number, categoryId: number): Promise<number> {
     const row = await this.db
       .prepare("SELECT COUNT(*) as count FROM subcategories WHERE user_id = ? AND category_id = ? AND hidden_at IS NULL")
@@ -1038,12 +1071,25 @@ export class Repository {
     return row?.count ?? 0;
   }
 
+  async getSubcategoryUsageCount(subcategoryId: number): Promise<number> {
+    const row = await this.db.prepare("SELECT COUNT(*) as count FROM entries WHERE subcategory_id = ?").bind(subcategoryId).first<{ count: number }>();
+    return row?.count ?? 0;
+  }
+
   async hideCategory(userId: number, categoryId: number): Promise<void> {
     await this.db.prepare("UPDATE categories SET hidden_at = CURRENT_TIMESTAMP WHERE user_id = ? AND id = ?").bind(userId, categoryId).run();
   }
 
   async restoreCategory(userId: number, categoryId: number): Promise<void> {
     await this.db.prepare("UPDATE categories SET hidden_at = NULL WHERE user_id = ? AND id = ?").bind(userId, categoryId).run();
+  }
+
+  async hideSubcategory(userId: number, subcategoryId: number): Promise<void> {
+    await this.db.prepare("UPDATE subcategories SET hidden_at = CURRENT_TIMESTAMP WHERE user_id = ? AND id = ?").bind(userId, subcategoryId).run();
+  }
+
+  async restoreSubcategory(userId: number, subcategoryId: number): Promise<void> {
+    await this.db.prepare("UPDATE subcategories SET hidden_at = NULL WHERE user_id = ? AND id = ?").bind(userId, subcategoryId).run();
   }
 
   async createCronRun(jobName: string, status: string, summary: string): Promise<void> {

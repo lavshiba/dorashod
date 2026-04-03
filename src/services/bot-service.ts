@@ -115,6 +115,12 @@ export class BotService {
       return;
     }
 
+    if (session.mode === "categories" && session.context.awaiting === "new-subcategory") {
+      await this.repo.ensureSubcategory(user.id, Number(session.context.categoryId), text);
+      await this.showCategoryCard(user, Number(session.context.categoryId), String(session.context.type) as EntryType, Number(session.context.page ?? "0"));
+      return;
+    }
+
     if (session.mode === "settings" && session.context.awaiting === "currency") {
       await this.updateUserSetting(user.id, "currency_label", text.trim(), "currency_code", "CUSTOM");
       await this.showSettings(user);
@@ -364,9 +370,12 @@ export class BotService {
         await this.showEntryCard(
           user,
           Number(params.id),
-          params.source === "report" ? "report" : "operations",
+          params.source === "report" ? "report" : params.source === "category" ? "category" : "operations",
           Number(params.page ?? "0")
         );
+        return;
+      case "entry:move":
+        await this.moveEntryCard(user, Number(params.id), String(params.source ?? "operations"), Number(params.page ?? "0"));
         return;
       case "entry:edit":
         await this.startEditEntry(
@@ -534,6 +543,9 @@ export class BotService {
       case "category:view":
         await this.showCategoryCard(user, Number(params.id), String(params.type) as EntryType, Number(params.page ?? "0"));
         return;
+      case "subcategory:view":
+        await this.showSubcategoryCard(user, Number(params.id), Number(params.categoryId), String(params.type) as EntryType, Number(params.page ?? "0"));
+        return;
       case "category:hide":
         await this.repo.hideCategory(user.id, Number(params.id));
         await this.showCategoryList(user, String(params.type) as EntryType, Number(params.page ?? "0"));
@@ -544,6 +556,32 @@ export class BotService {
         return;
       case "categories:hidden":
         await this.showHiddenCategoryList(user, String(params.type) as EntryType, Number(params.page ?? "0"));
+        return;
+      case "subcategory:add":
+        await this.repo.saveSession(user.id, {
+          mode: "categories",
+          stack: ["categories"],
+          context: { awaiting: "new-subcategory", categoryId: Number(params.categoryId), type: params.type, page: Number(params.page ?? "0") }
+        });
+        await this.telegram.sendMessage({
+          chat_id: user.chatId,
+          text: "Напиши название подкатегории.",
+          reply_markup: kb([[{ text: BUTTONS.cancel, action: "category:view", payload: { id: params.categoryId, type: params.type, page: params.page } }, { text: BUTTONS.main, action: "nav:home" }]])
+        });
+        return;
+      case "subcategory:hide":
+        await this.repo.hideSubcategory(user.id, Number(params.id));
+        await this.showCategoryCard(user, Number(params.categoryId), String(params.type) as EntryType, Number(params.page ?? "0"));
+        return;
+      case "subcategory:restore":
+        await this.repo.restoreSubcategory(user.id, Number(params.id));
+        await this.showSubcategoryCard(user, Number(params.id), Number(params.categoryId), String(params.type) as EntryType, Number(params.page ?? "0"));
+        return;
+      case "category:entries":
+        await this.showCategoryEntries(user, Number(params.categoryId), undefined, String(params.type) as EntryType, Number(params.page ?? "0"));
+        return;
+      case "subcategory:entries":
+        await this.showCategoryEntries(user, Number(params.categoryId), Number(params.id), String(params.type) as EntryType, Number(params.page ?? "0"));
         return;
       case "settings:open":
         await this.showSettings(user);
@@ -955,6 +993,11 @@ export class BotService {
     const lines = items.map((item, index) => `${index + 1}. ${formatEntryLine(item, user.currencyLabel)}`).join("\n");
     const session = await this.repo.getSession(user.id);
     const selectedIds = new Set<number>(Array.isArray(session.context.selectedIds) ? (session.context.selectedIds as number[]) : []);
+    await this.repo.saveSession(user.id, {
+      ...session,
+      mode: "operations",
+      context: { ...session.context, visibleEntryIds: items.map((item) => item.id), visibleSource: "operations" }
+    });
     const numberButtons = items.map((item, index) => ({
       text: selectedIds.has(item.id) ? `✓${index + 1}` : String(index + 1),
       action: selectMode ? "select:toggle" : "operations:view",
@@ -986,19 +1029,38 @@ export class BotService {
     });
   }
 
-  private async showEntryCard(user: UserRecord, entryId: number, source: "operations" | "search" | "report", page: number, query?: string): Promise<void> {
+  private async showEntryCard(user: UserRecord, entryId: number, source: "operations" | "search" | "report" | "category", page: number, query?: string): Promise<void> {
     const entry = await this.repo.getEntryById(user.id, entryId);
     if (!entry) {
       await this.showOperations(user, 0);
       return;
     }
     const backText = source === "search" ? BUTTONS.toResults : BUTTONS.back;
-    const backAction = source === "search" ? "search:results" : source === "report" ? "report:entries" : "operations:list";
+    const backAction =
+      source === "search"
+        ? "search:results"
+        : source === "report"
+          ? "report:entries"
+          : source === "category"
+            ? "category:entries"
+            : "operations:list";
+    const session = await this.repo.getSession(user.id);
+    const visibleIds = Array.isArray(session.context.visibleEntryIds) ? (session.context.visibleEntryIds as number[]) : [];
+    const currentIndex = visibleIds.indexOf(entryId);
+    const prevId = currentIndex > 0 ? visibleIds[currentIndex - 1] : undefined;
+    const nextId = currentIndex >= 0 && currentIndex < visibleIds.length - 1 ? visibleIds[currentIndex + 1] : undefined;
     const backPayload =
       source === "search"
         ? { query, page }
         : source === "report"
           ? { page }
+          : source === "category"
+            ? {
+                categoryId: session.context.categoryEntriesCategoryId as number | undefined,
+                ...(typeof session.context.categoryEntriesSubcategoryId === "number" ? { id: session.context.categoryEntriesSubcategoryId as number } : {}),
+                type: session.context.categoryEntriesType as string | undefined,
+                page
+              }
           : { page };
     await this.telegram.sendMessage({
       chat_id: user.chatId,
@@ -1010,8 +1072,11 @@ export class BotService {
         `${entry.isTimeAuto ? "время поставлено автоматически" : ""}`,
       reply_markup: kb([
         [{ text: BUTTONS.edit, action: "entry:edit", payload: { id: entry.id, page, source, query } }],
-        [{ text: BUTTONS.delete, action: "entry:delete", payload: { id: entry.id, page } }],
-        [{ text: "◀️", action: "noop" }, { text: "▶️", action: "noop" }],
+        [{ text: BUTTONS.delete, action: "entry:delete", payload: { id: entry.id, page, source, query } }],
+        [
+          { text: "◀️", action: prevId ? "entry:move" : "noop", payload: prevId ? { id: prevId, page, source, query } : undefined },
+          { text: "▶️", action: nextId ? "entry:move" : "noop", payload: nextId ? { id: nextId, page, source, query } : undefined }
+        ],
         [{ text: backText, action: backAction, payload: backPayload }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
@@ -1021,7 +1086,7 @@ export class BotService {
     user: UserRecord,
     entryId: number,
     page: number,
-    source: "operations" | "search" | "report"
+    source: "operations" | "search" | "report" | "category"
   ): Promise<void> {
     const entry = await this.repo.getEntryById(user.id, entryId);
     if (!entry) {
@@ -1152,12 +1217,12 @@ export class BotService {
 
   private async showSearchResults(user: UserRecord, query: string, page: number, selectMode = false): Promise<void> {
     const currentSession = await this.repo.getSession(user.id);
+    const data = await this.repo.searchEntries(user.id, query, page);
     await this.repo.saveSession(user.id, {
       ...currentSession,
       mode: "search",
-      context: { ...currentSession.context, query }
+      context: { ...currentSession.context, query, visibleEntryIds: data.items.map((item) => item.id), visibleSource: "search" }
     });
-    const data = await this.repo.searchEntries(user.id, query, page);
     if (data.total === 0) {
       await this.telegram.sendMessage({
         chat_id: user.chatId,
@@ -1207,16 +1272,16 @@ export class BotService {
   ): Promise<void> {
     const title = periodToLabel(periodLabel);
     const currentSession = await this.repo.getSession(user.id);
-    await this.repo.saveSession(user.id, {
-      ...currentSession,
-      mode: "search",
-      context: { ...currentSession.context, query: title, searchPeriod: periodLabel, searchFrom: from, searchTo: to }
-    });
     const data = await this.repo.getEntriesByDateRange({
       userId: user.id,
       page,
       from,
       to
+    });
+    await this.repo.saveSession(user.id, {
+      ...currentSession,
+      mode: "search",
+      context: { ...currentSession.context, query: title, searchPeriod: periodLabel, searchFrom: from, searchTo: to, visibleEntryIds: data.items.map((item) => item.id), visibleSource: "search" }
     });
     if (data.total === 0) {
       await this.telegram.sendMessage({
@@ -1447,6 +1512,8 @@ export class BotService {
       mode: "reports",
       context: {
         ...session.context,
+        visibleEntryIds: data.items.map((item) => item.id),
+        visibleSource: "report",
         reportEntriesType: input.type,
         reportEntriesCategoryId: input.categoryId,
         reportEntriesSubcategoryId: input.subcategoryId
@@ -1599,13 +1666,93 @@ export class BotService {
         `записей: ${usageCount}\n` +
         `подкатегории:\n${subcategories.length ? subcategories.map((item, index) => `${index + 1}. ${item.name}`).join("\n") : "пока нет"}`,
       reply_markup: kb([
-        subcategories.length ? subcategories.map((_, index) => ({ text: String(index + 1), action: "noop" })) : [{ text: BUTTONS.addSubcategory, action: "noop" }],
-        [{ text: BUTTONS.addSubcategory, action: "noop" }],
+        subcategories.length
+          ? subcategories.map((item, index) => ({ text: String(index + 1), action: "subcategory:view", payload: { id: item.id, categoryId: category.id, page, type } }))
+          : [{ text: BUTTONS.addSubcategory, action: "subcategory:add", payload: { categoryId: category.id, page, type } }],
+        [{ text: BUTTONS.addSubcategory, action: "subcategory:add", payload: { categoryId: category.id, page, type } }],
         [{ text: BUTTONS.edit, action: "noop" }],
         [{ text: category.hiddenAt ? BUTTONS.restore : BUTTONS.hide, action: category.hiddenAt ? "category:restore" : "category:hide", payload: { id: category.id, page, type } }],
         [{ text: BUTTONS.delete, action: "noop" }],
-        [{ text: BUTTONS.allEntries, action: "operations:list", payload: { page: 0 } }],
+        [{ text: BUTTONS.allEntries, action: "category:entries", payload: { categoryId: category.id, type, page: 0 } }],
         [{ text: BUTTONS.back, action: "categories:list", payload: { type, page } }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async showSubcategoryCard(user: UserRecord, subcategoryId: number, categoryId: number, type: EntryType, page: number): Promise<void> {
+    const subcategory = await this.repo.getSubcategory(user.id, subcategoryId);
+    if (!subcategory) {
+      await this.showCategoryCard(user, categoryId, type, page);
+      return;
+    }
+    const usageCount = await this.repo.getSubcategoryUsageCount(subcategoryId);
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: `${subcategory.name}\n\nзаписей: ${usageCount}`,
+      reply_markup: kb([
+        [{ text: BUTTONS.edit, action: "noop" }],
+        [{ text: subcategory.hiddenAt ? BUTTONS.restore : BUTTONS.hide, action: subcategory.hiddenAt ? "subcategory:restore" : "subcategory:hide", payload: { id: subcategory.id, categoryId, page, type } }],
+        [{ text: BUTTONS.delete, action: "noop" }],
+        [{ text: BUTTONS.allEntries, action: "subcategory:entries", payload: { id: subcategory.id, categoryId, type, page: 0 } }],
+        [{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page } }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async showCategoryEntries(
+    user: UserRecord,
+    categoryId: number,
+    subcategoryId: number | undefined,
+    type: EntryType,
+    page: number,
+    selectMode = false
+  ): Promise<void> {
+    const data = await this.repo.getEntriesByDateRange({
+      userId: user.id,
+      page,
+      type,
+      categoryId,
+      subcategoryId
+    });
+
+    if (data.total === 0) {
+      await this.telegram.sendMessage({
+        chat_id: user.chatId,
+        text: "пока записей нет\nможно вернуться назад",
+        reply_markup: kb([[{ text: BUTTONS.back, action: subcategoryId ? "subcategory:view" : "category:view", payload: subcategoryId ? { id: subcategoryId, categoryId, type, page: 0 } : { id: categoryId, type, page: 0 } }, { text: BUTTONS.main, action: "nav:home" }]])
+      });
+      return;
+    }
+
+    const session = await this.repo.getSession(user.id);
+    await this.repo.saveSession(user.id, {
+      ...session,
+      mode: "categories",
+      context: {
+        ...session.context,
+        visibleEntryIds: data.items.map((item) => item.id),
+        visibleSource: "category",
+        categoryEntriesCategoryId: categoryId,
+        categoryEntriesSubcategoryId: subcategoryId,
+        categoryEntriesType: type
+      }
+    });
+
+    const selectedIds = new Set<number>(Array.isArray(session.context.selectedIds) ? (session.context.selectedIds as number[]) : []);
+    const lines = data.items.map((item, index) => `${index + 1}. ${formatEntryLine(item, user.currencyLabel)}`).join("\n");
+    const numberButtons = data.items.map((item, index) => ({
+      text: selectedIds.has(item.id) ? `✓${index + 1}` : String(index + 1),
+      action: selectMode ? "select:toggle" : "operations:view",
+      payload: { id: item.id, page, source: "category", origin: "category" }
+    }));
+
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: `все записи\n\n${lines}`,
+      reply_markup: kb([
+        numberButtons,
+        [{ text: BUTTONS.multipleSelect, action: "noop" }],
+        [{ text: BUTTONS.back, action: subcategoryId ? "subcategory:view" : "category:view", payload: subcategoryId ? { id: subcategoryId, categoryId, type, page: 0 } : { id: categoryId, type, page: 0 } }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
   }
@@ -1857,6 +2004,15 @@ export class BotService {
       return;
     }
     await this.showOperations(user, page);
+  }
+
+  private async moveEntryCard(user: UserRecord, entryId: number, source: string, page: number): Promise<void> {
+    await this.showEntryCard(
+      user,
+      entryId,
+      source === "report" ? "report" : source === "search" ? "search" : source === "category" ? "category" : "operations",
+      page
+    );
   }
 
   private async startBulkTransfer(user: UserRecord, origin: string, page: number): Promise<void> {
