@@ -72,6 +72,11 @@ export class BotService {
       return;
     }
 
+    if (session.mode === "edit") {
+      await this.handleEditInput(user, session, text);
+      return;
+    }
+
     if (session.mode === "search" && session.context.awaiting === "query") {
       await this.repo.saveSession(user.id, { ...session, context: { ...session.context, query: text, awaiting: undefined } });
       await this.showSearchResults(user, text, 0);
@@ -295,6 +300,9 @@ export class BotService {
       case "operations:view":
         await this.showEntryCard(user, Number(params.id), "operations", Number(params.page ?? "0"));
         return;
+      case "entry:edit":
+        await this.startEditEntry(user, Number(params.id), Number(params.page ?? "0"), "operations");
+        return;
       case "entry:delete":
         await this.telegram.sendMessage({
           chat_id: user.chatId,
@@ -325,6 +333,15 @@ export class BotService {
         return;
       case "search:view":
         await this.showEntryCard(user, Number(params.id), "search", Number(params.page ?? "0"), String(params.query ?? ""));
+        return;
+      case "edit:field":
+        await this.promptEditField(user, String(params.field));
+        return;
+      case "edit:save":
+        await this.saveEditedEntry(user);
+        return;
+      case "edit:back":
+        await this.showEditScreen(user);
         return;
       case "search:use-text":
         await this.showSearchResults(user, String(session.context.pendingText ?? ""), 0);
@@ -590,6 +607,35 @@ export class BotService {
     });
   }
 
+  private async handleEditInput(user: UserRecord, session: UiSession, text: string): Promise<void> {
+    const field = String(session.context.awaitingField ?? "");
+    const draft = await this.repo.getDraft(user.id);
+    if (!draft) {
+      await this.showHome(user);
+      return;
+    }
+
+    if (field === "amount") {
+      const parsed = parseEntryAttempt(`${draft.payload.type === "income" ? "+" : "-"}${text}`);
+      if (!parsed.amountMinor) {
+        await this.telegram.sendMessage({ chat_id: user.chatId, text: "Не удалось понять сумму. Напиши сумму ещё раз." });
+        return;
+      }
+      draft.payload.amountMinor = parsed.amountMinor;
+    } else if (field === "category") {
+      draft.payload.categoryName = text.trim();
+      draft.payload.subcategoryName = undefined;
+    } else if (field === "subcategory") {
+      draft.payload.subcategoryName = text.trim();
+    } else if (field === "description") {
+      draft.payload.description = text.trim();
+    }
+
+    await this.repo.saveDraft(user.id, draft.payload, "edit-menu");
+    await this.repo.saveSession(user.id, { ...session, context: { ...session.context, awaitingField: undefined } });
+    await this.showEditScreen(user);
+  }
+
   private async continueDraft(user: UserRecord): Promise<void> {
     const draft = await this.repo.getDraft(user.id);
     if (!draft) {
@@ -748,12 +794,126 @@ export class BotService {
         `${entry.isDateMissing ? "дата не указана" : `${entry.entryDate} ${entry.entryTime ?? ""}`.trim()}\n` +
         `${entry.isTimeAuto ? "время поставлено автоматически" : ""}`,
       reply_markup: kb([
-        [{ text: BUTTONS.edit, action: "noop" }],
+        [{ text: BUTTONS.edit, action: "entry:edit", payload: { id: entry.id, page, source, query } }],
         [{ text: BUTTONS.delete, action: "entry:delete", payload: { id: entry.id, page } }],
         [{ text: "◀️", action: "noop" }, { text: "▶️", action: "noop" }],
         [{ text: backText, action: backAction, payload: { query, page } }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
+  }
+
+  private async startEditEntry(
+    user: UserRecord,
+    entryId: number,
+    page: number,
+    source: "operations" | "search"
+  ): Promise<void> {
+    const entry = await this.repo.getEntryById(user.id, entryId);
+    if (!entry) {
+      await this.showOperations(user, page);
+      return;
+    }
+
+    await this.repo.saveDraft(
+      user.id,
+      {
+        type: entry.type,
+        amountMinor: entry.amountMinor,
+        categoryName: entry.categoryName,
+        categoryId: entry.categoryId,
+        subcategoryName: entry.subcategoryName ?? undefined,
+        subcategoryId: entry.subcategoryId ?? undefined,
+        description: entry.description ?? undefined,
+        entryDate: entry.entryDate,
+        entryTime: entry.entryTime,
+        isTimeAuto: entry.isTimeAuto,
+        isDateMissing: entry.isDateMissing
+      },
+      "edit-menu"
+    );
+    await this.repo.saveSession(user.id, {
+      mode: "edit",
+      stack: [source],
+      context: { entryId, page, source }
+    });
+    await this.showEditScreen(user);
+  }
+
+  private async showEditScreen(user: UserRecord): Promise<void> {
+    const draft = await this.repo.getDraft(user.id);
+    const session = await this.repo.getSession(user.id);
+    if (!draft) {
+      await this.showHome(user);
+      return;
+    }
+
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text:
+        `изменить\n\n${this.describeDraft(draft.payload, user.currencyLabel)}\n` +
+        `${draft.payload.entryDate ? `дата: ${draft.payload.entryDate}\n` : ""}` +
+        `${draft.payload.entryTime ? `время: ${draft.payload.entryTime}\n` : ""}`,
+      reply_markup: kb([
+        [{ text: "сумма", action: "edit:field", payload: { field: "amount" } }],
+        [{ text: "категория", action: "edit:field", payload: { field: "category" } }],
+        [{ text: "подкатегория", action: "edit:field", payload: { field: "subcategory" } }],
+        [{ text: "описание", action: "edit:field", payload: { field: "description" } }],
+        [{ text: BUTTONS.save, action: "edit:save" }],
+        [{ text: BUTTONS.back, action: session.context.source === "search" ? "search:view" : "operations:view", payload: { id: session.context.entryId as number, page: session.context.page as number } }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async promptEditField(user: UserRecord, field: string): Promise<void> {
+    const session = await this.repo.getSession(user.id);
+    await this.repo.saveSession(user.id, {
+      ...session,
+      mode: "edit",
+      context: { ...session.context, awaitingField: field }
+    });
+
+    const prompts: Record<string, string> = {
+      amount: "Напиши сумму.",
+      category: "Напиши категорию.",
+      subcategory: "Напиши подкатегорию.",
+      description: "Напиши описание."
+    };
+
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: prompts[field] ?? "Напиши значение.",
+      reply_markup: kb([[{ text: BUTTONS.cancel, action: "edit:back" }, { text: BUTTONS.main, action: "nav:home" }]])
+    });
+  }
+
+  private async saveEditedEntry(user: UserRecord): Promise<void> {
+    const session = await this.repo.getSession(user.id);
+    const draft = await this.repo.getDraft(user.id);
+    if (!draft || !draft.payload.type || !draft.payload.amountMinor || !draft.payload.categoryName) {
+      await this.showHome(user);
+      return;
+    }
+
+    await this.repo.updateEntry(user, Number(session.context.entryId), {
+      type: draft.payload.type,
+      amountMinor: draft.payload.amountMinor,
+      categoryName: draft.payload.categoryName,
+      subcategoryName: draft.payload.subcategoryName,
+      description: draft.payload.description,
+      entryDate: draft.payload.entryDate,
+      entryTime: draft.payload.entryTime,
+      isTimeAuto: draft.payload.isTimeAuto,
+      isDateMissing: draft.payload.isDateMissing
+    });
+
+    await this.repo.deleteDraft(user.id);
+    await this.repo.saveSession(user.id, { mode: "idle", stack: [], context: {} });
+    await this.showEntryCard(
+      user,
+      Number(session.context.entryId),
+      String(session.context.source) === "search" ? "search" : "operations",
+      Number(session.context.page ?? 0)
+    );
   }
 
   private async showSearchEntry(user: UserRecord): Promise<void> {

@@ -10,6 +10,7 @@ export type UiMode =
   | "data"
   | "reports"
   | "operations"
+  | "edit"
   | "queue"
   | "draft"
   | "import";

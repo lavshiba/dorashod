@@ -508,6 +508,69 @@ export class Repository {
     await this.db.prepare("DELETE FROM entries WHERE user_id = ? AND id = ?").bind(userId, entryId).run();
   }
 
+  async updateEntry(
+    user: UserRecord,
+    entryId: number,
+    input: {
+      type: EntryType;
+      amountMinor: number;
+      categoryName: string;
+      subcategoryName?: string;
+      description?: string;
+      entryDate?: string | null;
+      entryTime?: string | null;
+      isTimeAuto?: boolean;
+      isDateMissing?: boolean;
+    }
+  ): Promise<void> {
+    const category = await this.ensureCategory(user.id, input.type, input.categoryName);
+    let subcategoryId: number | null = null;
+
+    if (input.subcategoryName && user.subcategoriesEnabled) {
+      const subcategory = await this.ensureSubcategory(user.id, category.id, input.subcategoryName);
+      subcategoryId = subcategory.id;
+    }
+
+    const entryDatetimeSort = input.isDateMissing ? null : `${input.entryDate ?? ""}T${input.entryTime ?? ""}`;
+
+    await this.db
+      .prepare(
+        `
+        UPDATE entries
+        SET
+          type = ?,
+          amount_minor = ?,
+          currency_label = ?,
+          category_id = ?,
+          subcategory_id = ?,
+          description = ?,
+          entry_date = ?,
+          entry_time = ?,
+          entry_datetime_sort = ?,
+          is_time_auto = ?,
+          is_date_missing = ?,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = ? AND id = ?
+      `
+      )
+      .bind(
+        input.type,
+        input.amountMinor,
+        user.currencyLabel,
+        category.id,
+        subcategoryId,
+        input.description ?? null,
+        input.entryDate ?? null,
+        input.entryTime ?? null,
+        entryDatetimeSort,
+        input.isTimeAuto ? 1 : 0,
+        input.isDateMissing ? 1 : 0,
+        user.id,
+        entryId
+      )
+      .run();
+  }
+
   async searchEntries(userId: number, query: string, page: number, limit = 6): Promise<{ total: number; items: EntryRecord[] }> {
     const token = `%${query.trim().toLowerCase()}%`;
     const total = await this.db
