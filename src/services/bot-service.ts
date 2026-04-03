@@ -724,8 +724,7 @@ export class BotService {
 
   private async showQuickSearch(user: UserRecord, period: string): Promise<void> {
     const range = parseQuickPeriod(period as "today" | "yesterday" | "week" | "month" | "year" | "all");
-    const query = range.from && range.to ? `${range.from}..${range.to}` : "всё время";
-    await this.showSearchResults(user, query, 0);
+    await this.showSearchPeriodResults(user, period, 0, range.from, range.to);
   }
 
   private async showSearchResults(user: UserRecord, query: string, page: number): Promise<void> {
@@ -761,6 +760,52 @@ export class BotService {
     });
   }
 
+  private async showSearchPeriodResults(
+    user: UserRecord,
+    periodLabel: string,
+    page: number,
+    from: string | null,
+    to: string | null
+  ): Promise<void> {
+    const data = await this.repo.getEntriesByDateRange({
+      userId: user.id,
+      page,
+      from,
+      to
+    });
+
+    const title = periodToLabel(periodLabel);
+    if (data.total === 0) {
+      await this.telegram.sendMessage({
+        chat_id: user.chatId,
+        text: `запрос: ${title}\nнайдено: 0\n\nпока ничего не найдено\nможно сделать новый поиск или вернуться назад`,
+        reply_markup: kb([
+          [{ text: BUTTONS.newSearch, action: "search:open" }],
+          [{ text: BUTTONS.back, action: "search:open" }, { text: BUTTONS.main, action: "nav:home" }]
+        ])
+      });
+      return;
+    }
+
+    const lines = data.items.map((item, index) => `${index + 1}. ${formatEntryLine(item, user.currencyLabel)}`).join("\n");
+    const numberButtons = data.items.map((item, index) => ({
+      text: String(index + 1),
+      action: "search:view",
+      payload: { id: item.id, page, query: title }
+    }));
+
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: `запрос: ${title}\nнайдено: ${data.total}\n\n${lines}`,
+      reply_markup: kb([
+        numberButtons,
+        [{ text: BUTTONS.multipleSelect, action: "noop" }],
+        [{ text: BUTTONS.newSearch, action: "search:open" }],
+        [{ text: BUTTONS.back, action: "search:open" }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
   private async showReportsEntry(user: UserRecord): Promise<void> {
     await this.telegram.sendMessage({
       chat_id: user.chatId,
@@ -776,12 +821,11 @@ export class BotService {
   }
 
   private async showReport(user: UserRecord, period: string): Promise<void> {
-    const data = await this.repo.searchEntries(user.id, period === "all" ? "" : period, 0, 100);
-    const income = data.items.filter((item) => item.type === "income").reduce((sum, item) => sum + item.amountMinor, 0);
-    const expense = data.items.filter((item) => item.type === "expense").reduce((sum, item) => sum + item.amountMinor, 0);
+    const range = parseQuickPeriod(period as "today" | "yesterday" | "week" | "month" | "year" | "all");
+    const summary = await this.repo.getSummaryByDateRange(user.id, range.from, range.to);
     await this.telegram.sendMessage({
       chat_id: user.chatId,
-      text: `доход\n${formatAmountByType(income, "income", user.currencyLabel)}\n\nрасход\n${formatAmountByType(expense, "expense", user.currencyLabel)}\n\nбаланс\n${formatAmountFromMinor(income - expense, user.currencyLabel)}\n\nзаписей\n${data.total}`,
+      text: `доход\n${formatAmountByType(summary.income, "income", user.currencyLabel)}\n\nрасход\n${formatAmountByType(summary.expense, "expense", user.currencyLabel)}\n\nбаланс\n${formatAmountFromMinor(summary.income - summary.expense, user.currencyLabel)}\n\nзаписей\n${summary.entries}`,
       reply_markup: kb([
         [{ text: BUTTONS.expenseBreakdown, action: "noop" }],
         [{ text: BUTTONS.incomeBreakdown, action: "noop" }],
@@ -806,12 +850,14 @@ export class BotService {
 
   private async showCategoryList(user: UserRecord, type: EntryType, page: number): Promise<void> {
     const categories = await this.repo.listCategories(user.id, type, false, page);
+    const hiddenCount = await this.repo.getHiddenCategoryCount(user.id, type);
     if (categories.length === 0) {
       await this.telegram.sendMessage({
         chat_id: user.chatId,
         text: "пока категорий нет\nможно создать категорию",
         reply_markup: kb([
           [{ text: BUTTONS.addCategory, action: "categories:add", payload: { type } }],
+          ...(hiddenCount > 0 ? [[{ text: BUTTONS.hidden, action: "noop" }]] : []),
           [{ text: BUTTONS.back, action: "categories:open" }, { text: BUTTONS.main, action: "nav:home" }]
         ])
       });
@@ -830,7 +876,7 @@ export class BotService {
       reply_markup: kb([
         numberButtons,
         [{ text: BUTTONS.addCategory, action: "categories:add", payload: { type } }],
-        ...(page === 0 ? [] : [[{ text: BUTTONS.hidden, action: "noop" }]]),
+        ...(hiddenCount > 0 ? [[{ text: BUTTONS.hidden, action: "noop" }]] : []),
         [{ text: BUTTONS.back, action: "categories:open" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
@@ -991,4 +1037,26 @@ function formatMissingField(field: string): string {
     return "сумма";
   }
   return "категория";
+}
+
+function periodToLabel(period: string): string {
+  if (period === "today") {
+    return BUTTONS.today;
+  }
+  if (period === "yesterday") {
+    return BUTTONS.yesterday;
+  }
+  if (period === "week") {
+    return BUTTONS.week;
+  }
+  if (period === "month") {
+    return BUTTONS.month;
+  }
+  if (period === "year") {
+    return BUTTONS.year;
+  }
+  if (period === "all") {
+    return BUTTONS.allTime;
+  }
+  return period;
 }

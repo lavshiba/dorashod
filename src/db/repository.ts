@@ -422,6 +422,69 @@ export class Repository {
     return (result.results ?? []).map(mapEntry);
   }
 
+  async getEntriesByDateRange(input: {
+    userId: number;
+    page: number;
+    limit?: number;
+    from?: string | null;
+    to?: string | null;
+    type?: EntryType;
+  }): Promise<{ total: number; items: EntryRecord[] }> {
+    const limit = input.limit ?? 6;
+    const offset = input.page * limit;
+
+    const clauses = ["e.user_id = ?", "e.is_date_missing = 0"];
+    const binds: Array<string | number> = [input.userId];
+
+    if (input.type) {
+      clauses.push("e.type = ?");
+      binds.push(input.type);
+    }
+    if (input.from) {
+      clauses.push("e.entry_date >= ?");
+      binds.push(input.from);
+    }
+    if (input.to) {
+      clauses.push("e.entry_date <= ?");
+      binds.push(input.to);
+    }
+
+    const where = clauses.join(" AND ");
+    const total = await this.db
+      .prepare(
+        `
+        SELECT COUNT(*) as count
+        FROM entries e
+        WHERE ${where}
+      `
+      )
+      .bind(...binds)
+      .first<{ count: number }>();
+
+    const rows = await this.db
+      .prepare(
+        `
+        SELECT
+          e.*,
+          c.name as category_name,
+          s.name as subcategory_name
+        FROM entries e
+        JOIN categories c ON c.id = e.category_id
+        LEFT JOIN subcategories s ON s.id = e.subcategory_id
+        WHERE ${where}
+        ORDER BY COALESCE(e.entry_datetime_sort, e.created_at) DESC, e.id DESC
+        LIMIT ? OFFSET ?
+      `
+      )
+      .bind(...binds, limit, offset)
+      .all<Record<string, D1Value>>();
+
+    return {
+      total: total?.count ?? 0,
+      items: (rows.results ?? []).map(mapEntry)
+    };
+  }
+
   async getEntryById(userId: number, entryId: number): Promise<EntryRecord | null> {
     const row = await this.db
       .prepare(
@@ -499,6 +562,43 @@ export class Repository {
     };
   }
 
+  async getSummaryByDateRange(userId: number, from?: string | null, to?: string | null): Promise<{
+    income: number;
+    expense: number;
+    entries: number;
+  }> {
+    const clauses = ["user_id = ?", "is_date_missing = 0"];
+    const binds: Array<string | number> = [userId];
+    if (from) {
+      clauses.push("entry_date >= ?");
+      binds.push(from);
+    }
+    if (to) {
+      clauses.push("entry_date <= ?");
+      binds.push(to);
+    }
+
+    const row = await this.db
+      .prepare(
+        `
+        SELECT
+          COALESCE(SUM(CASE WHEN type = 'income' THEN amount_minor END), 0) as income,
+          COALESCE(SUM(CASE WHEN type = 'expense' THEN amount_minor END), 0) as expense,
+          COUNT(*) as entries
+        FROM entries
+        WHERE ${clauses.join(" AND ")}
+      `
+      )
+      .bind(...binds)
+      .first<{ income: number; expense: number; entries: number }>();
+
+    return {
+      income: row?.income ?? 0,
+      expense: row?.expense ?? 0,
+      entries: row?.entries ?? 0
+    };
+  }
+
   async listCategories(userId: number, type: EntryType, hidden = false, page = 0, limit = 6): Promise<CategoryRecord[]> {
     const result = await this.db
       .prepare(
@@ -513,6 +613,14 @@ export class Repository {
       .bind(userId, type, limit, page * limit)
       .all<Record<string, D1Value>>();
     return (result.results ?? []).map(mapCategory);
+  }
+
+  async getHiddenCategoryCount(userId: number, type: EntryType): Promise<number> {
+    const row = await this.db
+      .prepare("SELECT COUNT(*) as count FROM categories WHERE user_id = ? AND type = ? AND hidden_at IS NOT NULL")
+      .bind(userId, type)
+      .first<{ count: number }>();
+    return row?.count ?? 0;
   }
 
   async getCategory(userId: number, categoryId: number): Promise<CategoryRecord | null> {
