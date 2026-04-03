@@ -615,6 +615,31 @@ export class Repository {
     return (result.results ?? []).map(mapCategory);
   }
 
+  async resetUserSettings(userId: number): Promise<void> {
+    await this.db
+      .prepare(
+        `
+        UPDATE users
+        SET
+          currency_code = 'RUB',
+          currency_label = '₽',
+          timezone_name = 'Europe/Moscow',
+          timezone_source = 'default',
+          subcategories_enabled = 1,
+          quick_access_mode_expense = 'automatically',
+          quick_access_mode_income = 'automatically',
+          quick_access_mode_subcategories = 'automatically',
+          sort_mode_expense = 'usage',
+          sort_mode_income = 'usage',
+          sort_mode_subcategories = 'usage',
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `
+      )
+      .bind(userId)
+      .run();
+  }
+
   async getHiddenCategoryCount(userId: number, type: EntryType): Promise<number> {
     const row = await this.db
       .prepare("SELECT COUNT(*) as count FROM categories WHERE user_id = ? AND type = ? AND hidden_at IS NOT NULL")

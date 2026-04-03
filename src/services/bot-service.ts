@@ -96,6 +96,40 @@ export class BotService {
       return;
     }
 
+    if (session.mode === "reports" && session.context.awaiting === "custom-period") {
+      const normalized = text.trim().toLowerCase();
+      if (normalized === "сегодня") {
+        await this.showReport(user, "today");
+        return;
+      }
+      if (normalized === "вчера") {
+        await this.showReport(user, "yesterday");
+        return;
+      }
+      if (normalized === "неделя") {
+        await this.showReport(user, "week");
+        return;
+      }
+      if (normalized === "месяц") {
+        await this.showReport(user, "month");
+        return;
+      }
+      if (normalized === "год") {
+        await this.showReport(user, "year");
+        return;
+      }
+      if (normalized === "всё время") {
+        await this.showReport(user, "all");
+        return;
+      }
+      await this.telegram.sendMessage({
+        chat_id: user.chatId,
+        text: `период понят не до конца\n\nкак бот понял:\n${text}\n\nподтверди или напиши период ещё раз`,
+        reply_markup: kb([[{ text: BUTTONS.back, action: "reports:open" }, { text: BUTTONS.main, action: "nav:home" }]])
+      });
+      return;
+    }
+
     const parsed = parseEntryAttempt(text);
     if (parsed.isBatch) {
       for (const line of parsed.lines) {
@@ -308,6 +342,14 @@ export class BotService {
       case "reports:quick":
         await this.showReport(user, String(params.period));
         return;
+      case "reports:custom":
+        await this.repo.saveSession(user.id, { mode: "reports", stack: ["home"], context: { awaiting: "custom-period" } });
+        await this.telegram.sendMessage({
+          chat_id: user.chatId,
+          text: "Напиши период сообщением.",
+          reply_markup: kb([[{ text: BUTTONS.cancel, action: "reports:open" }, { text: BUTTONS.main, action: "nav:home" }]])
+        });
+        return;
       case "categories:open":
         await this.showCategoryRoot(user);
         return;
@@ -333,6 +375,9 @@ export class BotService {
         await this.repo.restoreCategory(user.id, Number(params.id));
         await this.showCategoryList(user, String(params.type) as EntryType, Number(params.page ?? "0"));
         return;
+      case "categories:hidden":
+        await this.showHiddenCategoryList(user, String(params.type) as EntryType, Number(params.page ?? "0"));
+        return;
       case "settings:open":
         await this.showSettings(user);
         return;
@@ -352,15 +397,8 @@ export class BotService {
         });
         return;
       case "settings:time":
-        await this.showTimeSettings(user);
-        return;
-      case "settings:time-prompt":
         await this.repo.saveSession(user.id, { mode: "settings", stack: ["settings"], context: { awaiting: "timezone" } });
-        await this.telegram.sendMessage({
-          chat_id: user.chatId,
-          text: "пришли свой город или отправь геопозицию\n\nнапример:\nсанкт-петербург\nмосква\nхельсинки",
-          reply_markup: kb([[{ text: BUTTONS.cancel, action: "settings:time" }, { text: BUTTONS.main, action: "nav:home" }]])
-        });
+        await this.showTimeSettings(user);
         return;
       case "settings:subcategories":
         await this.showSubcategoriesSettings(user);
@@ -370,6 +408,16 @@ export class BotService {
         await this.showSubcategoriesSettings(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId));
         return;
       case "data:open":
+        await this.showData(user);
+        return;
+      case "data:this-bot":
+        await this.showDataThisBot(user);
+        return;
+      case "data:other-apps":
+        await this.showDataOtherApps(user);
+        return;
+      case "data:reset-settings":
+        await this.repo.resetUserSettings(user.id);
         await this.showData(user);
         return;
       default:
@@ -814,7 +862,7 @@ export class BotService {
         [{ text: BUTTONS.today, action: "reports:quick", payload: { period: "today" } }, { text: BUTTONS.yesterday, action: "reports:quick", payload: { period: "yesterday" } }],
         [{ text: BUTTONS.week, action: "reports:quick", payload: { period: "week" } }, { text: BUTTONS.month, action: "reports:quick", payload: { period: "month" } }],
         [{ text: BUTTONS.year, action: "reports:quick", payload: { period: "year" } }, { text: BUTTONS.allTime, action: "reports:quick", payload: { period: "all" } }],
-        [{ text: BUTTONS.customPeriod, action: "noop" }],
+        [{ text: BUTTONS.customPeriod, action: "reports:custom" }],
         [{ text: BUTTONS.back, action: "nav:home" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
@@ -857,7 +905,7 @@ export class BotService {
         text: "пока категорий нет\nможно создать категорию",
         reply_markup: kb([
           [{ text: BUTTONS.addCategory, action: "categories:add", payload: { type } }],
-          ...(hiddenCount > 0 ? [[{ text: BUTTONS.hidden, action: "noop" }]] : []),
+          ...(hiddenCount > 0 ? [[{ text: BUTTONS.hidden, action: "categories:hidden", payload: { type, page: 0 } }]] : []),
           [{ text: BUTTONS.back, action: "categories:open" }, { text: BUTTONS.main, action: "nav:home" }]
         ])
       });
@@ -876,8 +924,36 @@ export class BotService {
       reply_markup: kb([
         numberButtons,
         [{ text: BUTTONS.addCategory, action: "categories:add", payload: { type } }],
-        ...(hiddenCount > 0 ? [[{ text: BUTTONS.hidden, action: "noop" }]] : []),
+        ...(hiddenCount > 0 ? [[{ text: BUTTONS.hidden, action: "categories:hidden", payload: { type, page: 0 } }]] : []),
         [{ text: BUTTONS.back, action: "categories:open" }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async showHiddenCategoryList(user: UserRecord, type: EntryType, page: number): Promise<void> {
+    const categories = await this.repo.listCategories(user.id, type, true, page);
+    if (categories.length === 0) {
+      await this.telegram.sendMessage({
+        chat_id: user.chatId,
+        text: "пока скрытых категорий нет\nможно вернуться назад",
+        reply_markup: kb([[{ text: BUTTONS.back, action: "categories:list", payload: { type, page: 0 } }, { text: BUTTONS.main, action: "nav:home" }]])
+      });
+      return;
+    }
+
+    const lines = categories.map((item, index) => `${index + 1}. ${item.name}`).join("\n");
+    const numberButtons = categories.map((item, index) => ({
+      text: String(index + 1),
+      action: "category:view",
+      payload: { id: item.id, page, type }
+    }));
+
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: `скрытые\n\n${lines}`,
+      reply_markup: kb([
+        numberButtons,
+        [{ text: BUTTONS.back, action: "categories:list", payload: { type, page: 0 } }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
   }
@@ -964,11 +1040,35 @@ export class BotService {
       chat_id: user.chatId,
       text: "данные",
       reply_markup: kb([
-        [{ text: BUTTONS.forThisBot, action: "noop" }],
-        [{ text: BUTTONS.forOtherApps, action: "noop" }],
-        [{ text: BUTTONS.resetSettings, action: "noop" }],
+        [{ text: BUTTONS.forThisBot, action: "data:this-bot" }],
+        [{ text: BUTTONS.forOtherApps, action: "data:other-apps" }],
+        [{ text: BUTTONS.resetSettings, action: "data:reset-settings" }],
         [{ text: BUTTONS.clearAll, action: "noop" }],
         [{ text: BUTTONS.back, action: "settings:open" }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async showDataThisBot(user: UserRecord): Promise<void> {
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: "для этого бота",
+      reply_markup: kb([
+        [{ text: BUTTONS.saveToFile, action: "noop" }],
+        [{ text: BUTTONS.loadFromFile, action: "noop" }],
+        [{ text: BUTTONS.back, action: "data:open" }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async showDataOtherApps(user: UserRecord): Promise<void> {
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: "в другие приложения",
+      reply_markup: kb([
+        [{ text: BUTTONS.saveToFile, action: "noop" }],
+        [{ text: BUTTONS.loadFromFile, action: "noop" }],
+        [{ text: BUTTONS.back, action: "data:open" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
   }
