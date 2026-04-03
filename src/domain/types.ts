@@ -109,3 +109,10 @@ export interface TelegramMessagePayload {
     inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
   };
 }
+
+export interface TelegramDocumentPayload {
+  chat_id: string;
+  filename: string;
+  content: string;
+  caption?: string;
+}

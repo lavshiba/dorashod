@@ -787,6 +787,69 @@ export class Repository {
       .bind(...values, userId)
       .run();
   }
+
+  async exportFullUserSnapshot(userId: number): Promise<Record<string, unknown>> {
+    const [user, categories, subcategories, entries, draft, queue] = await Promise.all([
+      this.db.prepare("SELECT * FROM users WHERE id = ?").bind(userId).first(),
+      this.db.prepare("SELECT * FROM categories WHERE user_id = ? ORDER BY id").bind(userId).all(),
+      this.db.prepare("SELECT * FROM subcategories WHERE user_id = ? ORDER BY id").bind(userId).all(),
+      this.db.prepare("SELECT * FROM entries WHERE user_id = ? ORDER BY id").bind(userId).all(),
+      this.db.prepare("SELECT * FROM drafts WHERE user_id = ?").bind(userId).first(),
+      this.db.prepare("SELECT * FROM intake_queue WHERE user_id = ? ORDER BY id").bind(userId).all()
+    ]);
+
+    return {
+      exported_at: new Date().toISOString(),
+      user,
+      categories: categories.results ?? [],
+      subcategories: subcategories.results ?? [],
+      entries: entries.results ?? [],
+      draft,
+      intake_queue: queue.results ?? []
+    };
+  }
+
+  async exportEntriesSnapshot(userId: number): Promise<Record<string, unknown>> {
+    const entries = await this.db
+      .prepare(
+        `
+        SELECT
+          e.entry_date as date,
+          e.entry_time as time,
+          e.amount_minor as amount_minor,
+          e.type,
+          c.name as category,
+          s.name as subcategory,
+          e.description
+        FROM entries e
+        JOIN categories c ON c.id = e.category_id
+        LEFT JOIN subcategories s ON s.id = e.subcategory_id
+        WHERE e.user_id = ?
+        ORDER BY COALESCE(e.entry_datetime_sort, e.created_at) DESC, e.id DESC
+      `
+      )
+      .bind(userId)
+      .all();
+
+    return {
+      exported_at: new Date().toISOString(),
+      entries: entries.results ?? []
+    };
+  }
+
+  async clearAllUserData(userId: number): Promise<void> {
+    await this.db.batch([
+      this.db.prepare("DELETE FROM entries WHERE user_id = ?").bind(userId),
+      this.db.prepare("DELETE FROM subcategories WHERE user_id = ?").bind(userId),
+      this.db.prepare("DELETE FROM categories WHERE user_id = ?").bind(userId),
+      this.db.prepare("DELETE FROM drafts WHERE user_id = ?").bind(userId),
+      this.db.prepare("DELETE FROM intake_queue WHERE user_id = ?").bind(userId),
+      this.db.prepare("DELETE FROM ui_sessions WHERE user_id = ?").bind(userId),
+      this.db.prepare("DELETE FROM saved_views WHERE user_id = ?").bind(userId),
+      this.db.prepare("DELETE FROM imports WHERE user_id = ?").bind(userId),
+      this.db.prepare("UPDATE users SET onboarding_step = 0, onboarding_completed_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(userId)
+    ]);
+  }
 }
 
 function mapUser(row: Record<string, D1Value>): UserRecord {

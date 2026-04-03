@@ -455,6 +455,50 @@ export class BotService {
         await this.repo.resetUserSettings(user.id);
         await this.showData(user);
         return;
+      case "data:clear-all":
+        await this.telegram.sendMessage({
+          chat_id: user.chatId,
+          text: "очистить всё?\n\nэто самое опасное действие",
+          reply_markup: kb([
+            [{ text: BUTTONS.clearAll, action: "data:clear-all-confirm" }],
+            [{ text: BUTTONS.back, action: "data:open" }, { text: BUTTONS.main, action: "nav:home" }]
+          ])
+        });
+        return;
+      case "data:clear-all-confirm":
+        await this.telegram.sendMessage({
+          chat_id: user.chatId,
+          text: "подтверди очистить всё",
+          reply_markup: kb([
+            [{ text: BUTTONS.clearAll, action: "data:clear-all-final" }],
+            [{ text: BUTTONS.back, action: "data:open" }, { text: BUTTONS.main, action: "nav:home" }]
+          ])
+        });
+        return;
+      case "data:clear-all-final":
+        await this.repo.clearAllUserData(user.id);
+        await this.showHome(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId));
+        return;
+      case "data:export-full": {
+        const snapshot = await this.repo.exportFullUserSnapshot(user.id);
+        await this.telegram.sendDocument({
+          chat_id: user.chatId,
+          filename: "finance-bot-backup.json",
+          content: JSON.stringify(snapshot, null, 2),
+          caption: "полная копия для этого бота"
+        });
+        return;
+      }
+      case "data:export-entries": {
+        const snapshot = await this.repo.exportEntriesSnapshot(user.id);
+        await this.telegram.sendDocument({
+          chat_id: user.chatId,
+          filename: "finance-bot-entries.json",
+          content: JSON.stringify(snapshot, null, 2),
+          caption: "записи для других приложений"
+        });
+        return;
+      }
       default:
         await this.showHome(user);
     }
@@ -1257,7 +1301,7 @@ export class BotService {
         [{ text: BUTTONS.forThisBot, action: "data:this-bot" }],
         [{ text: BUTTONS.forOtherApps, action: "data:other-apps" }],
         [{ text: BUTTONS.resetSettings, action: "data:reset-settings" }],
-        [{ text: BUTTONS.clearAll, action: "noop" }],
+        [{ text: BUTTONS.clearAll, action: "data:clear-all" }],
         [{ text: BUTTONS.back, action: "settings:open" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
@@ -1268,7 +1312,7 @@ export class BotService {
       chat_id: user.chatId,
       text: "для этого бота",
       reply_markup: kb([
-        [{ text: BUTTONS.saveToFile, action: "noop" }],
+        [{ text: BUTTONS.saveToFile, action: "data:export-full" }],
         [{ text: BUTTONS.loadFromFile, action: "noop" }],
         [{ text: BUTTONS.back, action: "data:open" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
@@ -1280,7 +1324,7 @@ export class BotService {
       chat_id: user.chatId,
       text: "в другие приложения",
       reply_markup: kb([
-        [{ text: BUTTONS.saveToFile, action: "noop" }],
+        [{ text: BUTTONS.saveToFile, action: "data:export-entries" }],
         [{ text: BUTTONS.loadFromFile, action: "noop" }],
         [{ text: BUTTONS.back, action: "data:open" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
