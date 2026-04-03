@@ -3,7 +3,7 @@
   "name": "finance-bot",
   "main": "src/index.ts",
   "workers_dev": true,
-  "compatibility_date": "2026-04-04",
+  "compatibility_date": "2026-04-03",
   "observability": {
     "enabled": true
   },
