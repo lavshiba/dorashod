@@ -77,6 +77,32 @@ export class BotService {
       return;
     }
 
+    if (session.mode === "operations" && session.context.awaiting === "bulk-transfer-category") {
+      await this.repo.saveSession(user.id, {
+        ...session,
+        context: { ...session.context, transferCategoryName: text.trim(), awaiting: user.subcategoriesEnabled ? "bulk-transfer-subcategory" : undefined }
+      });
+      if (user.subcategoriesEnabled) {
+        await this.telegram.sendMessage({
+          chat_id: user.chatId,
+          text: "Напиши подкатегорию.",
+          reply_markup: kb([[{ text: BUTTONS.skip, action: "bulk:transfer-skip-subcategory" }, { text: BUTTONS.main, action: "nav:home" }]])
+        });
+        return;
+      }
+      await this.applyBulkTransfer(user);
+      return;
+    }
+
+    if (session.mode === "operations" && session.context.awaiting === "bulk-transfer-subcategory") {
+      await this.repo.saveSession(user.id, {
+        ...session,
+        context: { ...session.context, transferSubcategoryName: text.trim(), awaiting: undefined }
+      });
+      await this.applyBulkTransfer(user);
+      return;
+    }
+
     if (session.mode === "search" && session.context.awaiting === "query") {
       await this.repo.saveSession(user.id, { ...session, context: { ...session.context, query: text, awaiting: undefined } });
       await this.showSearchResults(user, text, 0);
@@ -308,6 +334,28 @@ export class BotService {
         return;
       case "select:actions":
         await this.showBulkActions(user, String(params.origin), Number(params.page ?? "0"));
+        return;
+      case "bulk:transfer":
+        await this.startBulkTransfer(user, String(params.origin), Number(params.page ?? "0"));
+        return;
+      case "bulk:transfer-skip-subcategory":
+        await this.applyBulkTransfer(user);
+        return;
+      case "bulk:delete":
+        await this.telegram.sendMessage({
+          chat_id: user.chatId,
+          text: "Удалить выбранные записи?",
+          reply_markup: kb([
+            [{ text: BUTTONS.delete, action: "bulk:delete-confirm", payload: { origin: params.origin, page: params.page } }],
+            [{ text: BUTTONS.back, action: "select:actions", payload: { origin: params.origin, page: params.page } }]
+          ])
+        });
+        return;
+      case "bulk:delete-confirm":
+        await this.applyBulkDelete(user, String(params.origin), Number(params.page ?? "0"));
+        return;
+      case "bulk:remove-subcategory":
+        await this.applyBulkRemoveSubcategory(user, String(params.origin), Number(params.page ?? "0"));
         return;
       case "bulk:cancel":
         await this.clearBulkSelection(user, String(params.origin), Number(params.page ?? "0"));
@@ -1770,9 +1818,9 @@ export class BotService {
       chat_id: user.chatId,
       text: `действия: ${selectedIds.length}`,
       reply_markup: kb([
-        [{ text: BUTTONS.transfer, action: "noop" }],
-        [{ text: BUTTONS.delete, action: "noop" }],
-        ...(hasSubcategory ? [[{ text: BUTTONS.removeSubcategory, action: "noop" }]] : []),
+        [{ text: BUTTONS.transfer, action: "bulk:transfer", payload: { origin, page } }],
+        [{ text: BUTTONS.delete, action: "bulk:delete", payload: { origin, page } }],
+        ...(hasSubcategory ? [[{ text: BUTTONS.removeSubcategory, action: "bulk:remove-subcategory", payload: { origin, page } }]] : []),
         [{ text: BUTTONS.cancel, action: "bulk:cancel", payload: { origin, page } }],
         [{ text: BUTTONS.main, action: "nav:home" }]
       ])
@@ -1809,6 +1857,147 @@ export class BotService {
       return;
     }
     await this.showOperations(user, page);
+  }
+
+  private async startBulkTransfer(user: UserRecord, origin: string, page: number): Promise<void> {
+    const session = await this.repo.getSession(user.id);
+    const selectedIds = Array.isArray(session.context.selectedIds) ? (session.context.selectedIds as number[]) : [];
+    const entries = (await Promise.all(selectedIds.map((id) => this.repo.getEntryById(user.id, id)))).filter(Boolean) as EntryRecord[];
+    const typeSet = new Set(entries.map((entry) => entry.type));
+
+    if (entries.length === 0) {
+      await this.clearBulkSelection(user, origin, page);
+      return;
+    }
+
+    if (typeSet.size > 1) {
+      await this.telegram.sendMessage({
+        chat_id: user.chatId,
+        text: "Нельзя перенести вместе доходы и расходы.\n\nСними лишний выбор и попробуй ещё раз.",
+        reply_markup: kb([
+          [{ text: BUTTONS.back, action: "select:actions", payload: { origin, page } }],
+          [{ text: BUTTONS.main, action: "nav:home" }]
+        ])
+      });
+      return;
+    }
+
+    await this.repo.saveSession(user.id, {
+      ...session,
+      mode: "operations",
+      context: {
+        ...session.context,
+        awaiting: "bulk-transfer-category",
+        bulkOrigin: origin,
+        bulkPage: page,
+        bulkTransferType: entries[0]?.type
+      }
+    });
+
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: "Напиши категорию.",
+      reply_markup: kb([[{ text: BUTTONS.cancel, action: "select:actions", payload: { origin, page } }, { text: BUTTONS.main, action: "nav:home" }]])
+    });
+  }
+
+  private async applyBulkTransfer(user: UserRecord): Promise<void> {
+    const session = await this.repo.getSession(user.id);
+    const selectedIds = Array.isArray(session.context.selectedIds) ? (session.context.selectedIds as number[]) : [];
+    const categoryName = String(session.context.transferCategoryName ?? "").trim();
+    const subcategoryNameRaw = String(session.context.transferSubcategoryName ?? "").trim();
+    const origin = String(session.context.bulkOrigin ?? "operations");
+    const page = Number(session.context.bulkPage ?? 0);
+    const type = String(session.context.bulkTransferType ?? "") as EntryType;
+
+    if (!selectedIds.length || !categoryName || (type !== "income" && type !== "expense")) {
+      await this.showBulkActions(user, origin, page);
+      return;
+    }
+
+    await this.repo.moveEntriesToCategory({
+      user,
+      entryIds: selectedIds,
+      type,
+      categoryName,
+      subcategoryName: subcategoryNameRaw || undefined
+    });
+
+    await this.repo.saveSession(user.id, {
+      ...session,
+      mode: "idle",
+      context: {
+        ...session.context,
+        awaiting: undefined,
+        transferCategoryName: undefined,
+        transferSubcategoryName: undefined,
+        bulkTransferType: undefined,
+        selectedIds: []
+      }
+    });
+
+    await this.showBulkResult(user, origin, page, "записи перенесены");
+  }
+
+  private async applyBulkDelete(user: UserRecord, origin: string, page: number): Promise<void> {
+    const session = await this.repo.getSession(user.id);
+    const selectedIds = Array.isArray(session.context.selectedIds) ? (session.context.selectedIds as number[]) : [];
+    await this.repo.deleteEntries(user.id, selectedIds);
+    await this.repo.saveSession(user.id, {
+      ...session,
+      context: { ...session.context, selectedIds: [] }
+    });
+    await this.showBulkResult(user, origin, page, "записи удалены");
+  }
+
+  private async applyBulkRemoveSubcategory(user: UserRecord, origin: string, page: number): Promise<void> {
+    const session = await this.repo.getSession(user.id);
+    const selectedIds = Array.isArray(session.context.selectedIds) ? (session.context.selectedIds as number[]) : [];
+    await this.repo.clearSubcategoryForEntries(user.id, selectedIds);
+    await this.repo.saveSession(user.id, {
+      ...session,
+      context: { ...session.context, selectedIds: [] }
+    });
+    await this.showBulkResult(user, origin, page, "подкатегория снята");
+  }
+
+  private async showBulkResult(user: UserRecord, origin: string, page: number, notice: string): Promise<void> {
+    if (origin === "search") {
+      const session = await this.repo.getSession(user.id);
+      if (session.context.searchPeriod) {
+        await this.showSearchPeriodResults(
+          user,
+          String(session.context.searchPeriod),
+          page,
+          (session.context.searchFrom as string | null | undefined) ?? null,
+          (session.context.searchTo as string | null | undefined) ?? null
+        );
+        return;
+      }
+      await this.showSearchResults(user, String(session.context.query ?? ""), page);
+      return;
+    }
+
+    if (origin === "report") {
+      const session = await this.repo.getSession(user.id);
+      await this.showReportEntries(user, {
+        page,
+        type: typeof session.context.reportEntriesType === "string" ? (String(session.context.reportEntriesType) as EntryType) : undefined,
+        categoryId: typeof session.context.reportEntriesCategoryId === "number" ? (session.context.reportEntriesCategoryId as number) : undefined,
+        subcategoryId: typeof session.context.reportEntriesSubcategoryId === "number" ? (session.context.reportEntriesSubcategoryId as number) : undefined
+      });
+      await this.telegram.sendMessage({
+        chat_id: user.chatId,
+        text: notice
+      });
+      return;
+    }
+
+    await this.showOperations(user, page);
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: notice
+    });
   }
 
   private reportEntriesBackAction(session: UiSession, input: { type?: EntryType; categoryId?: number; subcategoryId?: number }): string {

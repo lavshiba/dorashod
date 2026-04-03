@@ -520,6 +520,65 @@ export class Repository {
     await this.db.prepare("DELETE FROM entries WHERE user_id = ? AND id = ?").bind(userId, entryId).run();
   }
 
+  async deleteEntries(userId: number, entryIds: number[]): Promise<void> {
+    if (entryIds.length === 0) {
+      return;
+    }
+    const placeholders = entryIds.map(() => "?").join(", ");
+    await this.db
+      .prepare(`DELETE FROM entries WHERE user_id = ? AND id IN (${placeholders})`)
+      .bind(userId, ...entryIds)
+      .run();
+  }
+
+  async clearSubcategoryForEntries(userId: number, entryIds: number[]): Promise<void> {
+    if (entryIds.length === 0) {
+      return;
+    }
+    const placeholders = entryIds.map(() => "?").join(", ");
+    await this.db
+      .prepare(
+        `
+        UPDATE entries
+        SET subcategory_id = NULL, updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = ? AND id IN (${placeholders})
+      `
+      )
+      .bind(userId, ...entryIds)
+      .run();
+  }
+
+  async moveEntriesToCategory(input: {
+    user: UserRecord;
+    entryIds: number[];
+    type: EntryType;
+    categoryName: string;
+    subcategoryName?: string;
+  }): Promise<void> {
+    if (input.entryIds.length === 0) {
+      return;
+    }
+
+    const category = await this.ensureCategory(input.user.id, input.type, input.categoryName);
+    let subcategoryId: number | null = null;
+    if (input.subcategoryName && input.user.subcategoriesEnabled) {
+      const subcategory = await this.ensureSubcategory(input.user.id, category.id, input.subcategoryName);
+      subcategoryId = subcategory.id;
+    }
+
+    const placeholders = input.entryIds.map(() => "?").join(", ");
+    await this.db
+      .prepare(
+        `
+        UPDATE entries
+        SET category_id = ?, subcategory_id = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = ? AND id IN (${placeholders})
+      `
+      )
+      .bind(category.id, subcategoryId, input.user.id, ...input.entryIds)
+      .run();
+  }
+
   async updateEntry(
     user: UserRecord,
     entryId: number,
