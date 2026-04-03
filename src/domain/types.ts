@@ -130,3 +130,13 @@ export interface TelegramDocumentPayload {
   content: string;
   caption?: string;
 }
+
+export interface ImportRecord {
+  id: number;
+  userId: number;
+  importType: string;
+  status: string;
+  previewJson: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}

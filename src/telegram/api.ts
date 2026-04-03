@@ -7,9 +7,11 @@ interface TelegramApiResponse<T> {
 
 export class TelegramApi {
   private readonly baseUrl: string;
+  private readonly fileBaseUrl: string;
 
   constructor(token: string) {
     this.baseUrl = `https://api.telegram.org/bot${token}`;
+    this.fileBaseUrl = `https://api.telegram.org/file/bot${token}`;
   }
 
   async sendMessage(payload: TelegramMessagePayload): Promise<void> {
@@ -58,6 +60,21 @@ export class TelegramApi {
     if (!body.ok) {
       throw new Error("Telegram API sendDocument returned ok=false");
     }
+  }
+
+  async downloadTextFile(fileId: string): Promise<{ filePath: string; content: string }> {
+    const file = await this.call<{ file_path: string }>("getFile", {
+      file_id: fileId
+    });
+    const filePath = file.file_path;
+    const response = await fetch(`${this.fileBaseUrl}/${filePath}`);
+    if (!response.ok) {
+      throw new Error(`Telegram file download failed with ${response.status}`);
+    }
+    return {
+      filePath,
+      content: await response.text()
+    };
   }
 
   private async call<T>(method: string, payload: Record<string, unknown>): Promise<T> {

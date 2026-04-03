@@ -7,13 +7,18 @@ import { decodeCallback } from "@/utils/callback";
 import { parseQuickPeriod } from "@/utils/dates";
 import { parseEntryAttempt } from "@/utils/entry-parser";
 import { formatAmountFromMinor } from "@/utils/money";
-import { escapeHtml } from "@/utils/normalize";
+import { escapeHtml, normalizeName } from "@/utils/normalize";
 
 interface TelegramUpdate {
   update_id: number;
   message?: {
     message_id: number;
     text?: string;
+    document?: {
+      file_id: string;
+      file_name?: string;
+      mime_type?: string;
+    };
     chat: { id: number };
     from?: { id: number };
     location?: { latitude: number; longitude: number };
@@ -42,6 +47,11 @@ export class BotService {
 
     if (update.message?.text) {
       await this.handleMessage(update.message.from?.id, update.message.chat.id, update.message.text);
+      return;
+    }
+
+    if (update.message?.document) {
+      await this.handleDocument(update.message.from?.id, update.message.chat.id, update.message.document);
     }
   }
 
@@ -234,6 +244,99 @@ export class BotService {
     }
 
     await this.showHome(user);
+  }
+
+  private async handleDocument(
+    fromId: number | undefined,
+    chatId: number,
+    document: { file_id: string; file_name?: string; mime_type?: string }
+  ): Promise<void> {
+    if (!fromId) {
+      return;
+    }
+
+    const user = await this.repo.getOrCreateUser(String(fromId), String(chatId));
+    const session = await this.repo.getSession(user.id);
+    if (session.mode !== "data" || !session.context.awaitingUploadType) {
+      await this.telegram.sendMessage({
+        chat_id: user.chatId,
+        text: "Сначала открой раздел данные и выбери, куда загрузить файл.",
+        reply_markup: kb([[{ text: BUTTONS.data, action: "data:open" }, { text: BUTTONS.main, action: "nav:home" }]])
+      });
+      return;
+    }
+
+    const downloaded = await this.telegram.downloadTextFile(document.file_id);
+    const uploadType = String(session.context.awaitingUploadType);
+
+    if (uploadType === "full") {
+      const snapshot = parseFullSnapshot(downloaded.content);
+      if (!snapshot) {
+        await this.telegram.sendMessage({
+          chat_id: user.chatId,
+          text: "Файл не удалось прочитать.\n\nПришли полную копию для этого бота ещё раз.",
+          reply_markup: kb([[{ text: BUTTONS.back, action: "data:this-bot" }, { text: BUTTONS.main, action: "nav:home" }]])
+        });
+        return;
+      }
+
+      const importId = await this.repo.createImport(user.id, "full-backup", "preview", snapshot.raw);
+      await this.repo.saveSession(user.id, {
+        mode: "data",
+        stack: ["data"],
+        context: { importId, awaitingUploadType: undefined }
+      });
+      await this.telegram.sendMessage({
+        chat_id: user.chatId,
+        text:
+          `для этого бота\n\n` +
+          `записи: ${snapshot.entries}\n` +
+          `категории: ${snapshot.categories}\n` +
+          `подкатегории: ${snapshot.subcategories}\n` +
+          `черновик: ${snapshot.hasDraft ? "есть" : "нет"}\n` +
+          `новые записи: ${snapshot.queue}`,
+        reply_markup: kb([
+          [{ text: BUTTONS.loadFromFile, action: "data:import-full-confirm", payload: { importId } }],
+          [{ text: BUTTONS.back, action: "data:this-bot" }, { text: BUTTONS.main, action: "nav:home" }]
+        ])
+      });
+      return;
+    }
+
+    const preview = parseEntriesImport(downloaded.content);
+    const importId = await this.repo.createImport(user.id, "entries", "preview", {
+      filename: document.file_name ?? downloaded.filePath,
+      entries: preview.entries,
+      errors: preview.errors
+    });
+    await this.repo.saveSession(user.id, {
+      mode: "data",
+      stack: ["data"],
+      context: { importId, awaitingUploadType: undefined }
+    });
+
+    if (preview.errors.length > 0) {
+      await this.telegram.sendMessage({
+        chat_id: user.chatId,
+        text: `не удалось прочитать: ${preview.errors.length}\n\nкраткие причины:\n${preview.errors.slice(0, 3).join("\n")}`,
+        reply_markup: kb([
+          [{ text: `добавить ${preview.entries.length}`, action: "data:import-entries-add-all", payload: { importId } }],
+          [{ text: `исправить ${preview.errors.length}`, action: "data:import-fix-open", payload: { importId } }],
+          [{ text: BUTTONS.back, action: "data:other-apps" }, { text: BUTTONS.main, action: "nav:home" }]
+        ])
+      });
+      return;
+    }
+
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: `в другие приложения\n\nзаписей: ${preview.entries.length}`,
+      reply_markup: kb([
+        [{ text: BUTTONS.merge, action: "data:import-entries-merge", payload: { importId } }],
+        [{ text: BUTTONS.addAll, action: "data:import-entries-add-all", payload: { importId } }],
+        [{ text: BUTTONS.back, action: "data:other-apps" }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
   }
 
   private async handleCallback(callbackQuery: TelegramUpdate["callback_query"]): Promise<void> {
@@ -620,6 +723,50 @@ export class BotService {
         return;
       case "data:other-apps":
         await this.showDataOtherApps(user);
+        return;
+      case "data:import-full-open":
+        await this.repo.saveSession(user.id, { mode: "data", stack: ["data"], context: { awaitingUploadType: "full" } });
+        await this.telegram.sendMessage({
+          chat_id: user.chatId,
+          text: "Пришли файл.",
+          reply_markup: kb([[{ text: BUTTONS.back, action: "data:this-bot" }, { text: BUTTONS.main, action: "nav:home" }]])
+        });
+        return;
+      case "data:import-entries-open":
+        await this.repo.saveSession(user.id, { mode: "data", stack: ["data"], context: { awaitingUploadType: "entries" } });
+        await this.telegram.sendMessage({
+          chat_id: user.chatId,
+          text: "Пришли файл.",
+          reply_markup: kb([[{ text: BUTTONS.back, action: "data:other-apps" }, { text: BUTTONS.main, action: "nav:home" }]])
+        });
+        return;
+      case "data:import-full-confirm": {
+        const pendingImport = await this.repo.getImport(user.id, Number(params.importId));
+        if (!pendingImport) {
+          await this.showDataThisBot(user);
+          return;
+        }
+        await this.repo.replaceUserDataFromSnapshot(user, pendingImport.previewJson);
+        await this.repo.deleteImport(user.id, pendingImport.id);
+        await this.telegram.sendMessage({
+          chat_id: user.chatId,
+          text: "данные загружены"
+        });
+        await this.showHome(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId));
+        return;
+      }
+      case "data:import-entries-merge":
+        await this.applyEntriesImport(user, Number(params.importId), true);
+        return;
+      case "data:import-entries-add-all":
+        await this.applyEntriesImport(user, Number(params.importId), false);
+        return;
+      case "data:import-fix-open":
+        await this.telegram.sendMessage({
+          chat_id: user.chatId,
+          text: "исправить\n\nэта ветка ещё в работе. Сейчас можно добавить уже понятные строки или вернуться назад.",
+          reply_markup: kb([[{ text: BUTTONS.back, action: "data:other-apps" }, { text: BUTTONS.main, action: "nav:home" }]])
+        });
         return;
       case "data:reset-settings":
         await this.repo.resetUserSettings(user.id);
@@ -1825,10 +1972,10 @@ export class BotService {
   private async showDataThisBot(user: UserRecord): Promise<void> {
     await this.telegram.sendMessage({
       chat_id: user.chatId,
-      text: "для этого бота",
+        text: "для этого бота",
       reply_markup: kb([
         [{ text: BUTTONS.saveToFile, action: "data:export-full" }],
-        [{ text: BUTTONS.loadFromFile, action: "noop" }],
+        [{ text: BUTTONS.loadFromFile, action: "data:import-full-open" }],
         [{ text: BUTTONS.back, action: "data:open" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
@@ -1837,13 +1984,64 @@ export class BotService {
   private async showDataOtherApps(user: UserRecord): Promise<void> {
     await this.telegram.sendMessage({
       chat_id: user.chatId,
-      text: "в другие приложения",
+        text: "в другие приложения",
       reply_markup: kb([
         [{ text: BUTTONS.saveToFile, action: "data:export-entries" }],
-        [{ text: BUTTONS.loadFromFile, action: "noop" }],
+        [{ text: BUTTONS.loadFromFile, action: "data:import-entries-open" }],
         [{ text: BUTTONS.back, action: "data:open" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
+  }
+
+  private async applyEntriesImport(user: UserRecord, importId: number, mergeOnly: boolean): Promise<void> {
+    const pendingImport = await this.repo.getImport(user.id, importId);
+    if (!pendingImport) {
+      await this.showDataOtherApps(user);
+      return;
+    }
+
+    const previewEntries = Array.isArray(pendingImport.previewJson.entries)
+      ? (pendingImport.previewJson.entries as Array<Record<string, unknown>>)
+      : [];
+    const existingKeys = mergeOnly ? new Set(await this.repo.getExistingEntryDedupKeys(user.id)) : new Set<string>();
+    let added = 0;
+
+    for (const item of previewEntries) {
+      const key = makeEntryDedupKey({
+        type: String(item.type) as EntryType,
+        amountMinor: Number(item.amountMinor),
+        entryDate: item.entryDate ? String(item.entryDate) : null,
+        entryTime: item.entryTime ? String(item.entryTime) : null,
+        categoryName: String(item.categoryName),
+        subcategoryName: item.subcategoryName ? String(item.subcategoryName) : null,
+        description: item.description ? String(item.description) : null
+      });
+      if (mergeOnly && existingKeys.has(key)) {
+        continue;
+      }
+      await this.repo.createEntry({
+        user,
+        type: String(item.type) as EntryType,
+        amountMinor: Number(item.amountMinor),
+        categoryName: String(item.categoryName),
+        subcategoryName: item.subcategoryName ? String(item.subcategoryName) : undefined,
+        description: item.description ? String(item.description) : undefined,
+        entryDate: item.entryDate ? String(item.entryDate) : null,
+        entryTime: item.entryTime ? String(item.entryTime) : null,
+        isTimeAuto: Boolean(item.isTimeAuto),
+        isDateMissing: Boolean(item.isDateMissing),
+        source: "import"
+      });
+      existingKeys.add(key);
+      added += 1;
+    }
+
+    await this.repo.deleteImport(user.id, importId);
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: `записи добавлены: ${added}`
+    });
+    await this.showDataOtherApps(user);
   }
 
   private async toggleSelection(user: UserRecord, entryId: number, origin: string, page: number): Promise<void> {
@@ -2272,4 +2470,157 @@ function formatShare(part: number, whole: number): string {
     return "0%";
   }
   return `${Math.round((part / whole) * 100)}%`;
+}
+
+function parseFullSnapshot(content: string):
+  | {
+      raw: Record<string, unknown>;
+      categories: number;
+      subcategories: number;
+      entries: number;
+      hasDraft: boolean;
+      queue: number;
+    }
+  | null {
+  try {
+    const raw = JSON.parse(content) as Record<string, unknown>;
+    if (!raw || typeof raw !== "object") {
+      return null;
+    }
+    return {
+      raw,
+      categories: Array.isArray(raw.categories) ? raw.categories.length : 0,
+      subcategories: Array.isArray(raw.subcategories) ? raw.subcategories.length : 0,
+      entries: Array.isArray(raw.entries) ? raw.entries.length : 0,
+      hasDraft: Boolean(raw.draft),
+      queue: Array.isArray(raw.intake_queue) ? raw.intake_queue.length : 0
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseEntriesImport(content: string): {
+  entries: Array<Record<string, unknown>>;
+  errors: string[];
+} {
+  try {
+    const raw = JSON.parse(content) as Record<string, unknown>;
+    const items = Array.isArray(raw.entries) ? raw.entries : Array.isArray(raw) ? raw : [];
+    const entries: Array<Record<string, unknown>> = [];
+    const errors: string[] = [];
+
+    for (const item of items) {
+      const parsed = parseImportedEntry(item as Record<string, unknown>);
+      if ("error" in parsed) {
+        errors.push(parsed.error);
+      } else {
+        entries.push(parsed.entry);
+      }
+    }
+
+    return { entries, errors };
+  } catch {
+    return { entries: [], errors: ["файл не удалось прочитать"] };
+  }
+}
+
+function parseImportedEntry(
+  item: Record<string, unknown>
+): { entry: Record<string, unknown> } | { error: string } {
+  const typeRaw = String(item.type ?? "").trim();
+  const type = typeRaw === "income" || typeRaw === "expense" ? typeRaw : null;
+  const amountMinor = parseImportedAmount(item.amount_minor ?? item.amount);
+  const categoryName = String(item.category ?? item.categoryName ?? "").trim();
+  const subcategoryName = String(item.subcategory ?? item.subcategoryName ?? "").trim();
+  const description = String(item.description ?? "").trim();
+  const parsedDate = parseImportedDate(String(item.date ?? item.entryDate ?? ""));
+  const parsedTime = parseImportedTime(String(item.time ?? item.entryTime ?? ""));
+
+  if (!type) {
+    return { error: "не удалось понять тип" };
+  }
+  if (amountMinor === null) {
+    return { error: "не удалось понять сумму" };
+  }
+  if (!categoryName) {
+    return { error: "не удалось понять категорию" };
+  }
+
+  return {
+    entry: {
+      type,
+      amountMinor,
+      categoryName,
+      subcategoryName: subcategoryName || null,
+      description: description || null,
+      entryDate: parsedDate.readable ? parsedDate.value : null,
+      entryTime: parsedTime,
+      isTimeAuto: !parsedTime,
+      isDateMissing: !parsedDate.readable
+    }
+  };
+}
+
+function parseImportedAmount(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.round(value);
+  }
+  const raw = String(value ?? "")
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(",", ".");
+  if (!raw) {
+    return null;
+  }
+  const numeric = Number(raw);
+  if (!Number.isFinite(numeric)) {
+    return null;
+  }
+  return Math.round(Math.abs(numeric) < 100000000 ? numeric * (raw.includes(".") ? 100 : 1) : numeric);
+}
+
+function parseImportedDate(value: string): { readable: boolean; value: string | null } {
+  const raw = value.trim();
+  if (!raw || raw.toLowerCase() === "(null)") {
+    return { readable: false, value: null };
+  }
+  const normalized = raw.replace(" ", "T");
+  const parsed = new Date(normalized);
+  if (Number.isNaN(parsed.getTime())) {
+    return { readable: false, value: null };
+  }
+  return { readable: true, value: parsed.toISOString().slice(0, 10) };
+}
+
+function parseImportedTime(value: string): string | null {
+  const raw = value.trim();
+  if (!raw || raw.toLowerCase() === "(null)") {
+    return null;
+  }
+  const match = raw.match(/(\d{2}):(\d{2})(?::\d{2})?/);
+  if (!match) {
+    return null;
+  }
+  return `${match[1]}:${match[2]}`;
+}
+
+function makeEntryDedupKey(entry: {
+  type: EntryType;
+  amountMinor: number;
+  entryDate: string | null;
+  entryTime: string | null;
+  categoryName: string;
+  subcategoryName: string | null;
+  description: string | null;
+}): string {
+  return [
+    entry.type,
+    String(entry.amountMinor),
+    entry.entryDate ?? "",
+    entry.entryTime ?? "",
+    normalizeName(entry.categoryName),
+    normalizeName(entry.subcategoryName ?? ""),
+    String(entry.description ?? "").trim().toLowerCase()
+  ].join("|");
 }

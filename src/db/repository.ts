@@ -3,6 +3,7 @@ import type {
   DraftPayload,
   EntryRecord,
   EntryType,
+  ImportRecord,
   ReportCategorySummary,
   ReportSubcategorySummary,
   SubcategoryRecord,
@@ -1187,6 +1188,247 @@ export class Repository {
       this.db.prepare("UPDATE users SET onboarding_step = 0, onboarding_completed_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(userId)
     ]);
   }
+
+  async createImport(userId: number, importType: string, status: string, preview: Record<string, unknown>): Promise<number> {
+    await this.db
+      .prepare("INSERT INTO imports (user_id, import_type, status, preview_json) VALUES (?, ?, ?, ?)")
+      .bind(userId, importType, status, json(preview))
+      .run();
+
+    const row = await this.db
+      .prepare("SELECT id FROM imports WHERE user_id = ? ORDER BY id DESC LIMIT 1")
+      .bind(userId)
+      .first<{ id: number }>();
+    if (!row) {
+      throw new Error("Failed to create import");
+    }
+    return row.id;
+  }
+
+  async getImport(userId: number, importId: number): Promise<ImportRecord | null> {
+    const row = await this.db
+      .prepare("SELECT * FROM imports WHERE user_id = ? AND id = ?")
+      .bind(userId, importId)
+      .first<Record<string, D1Value>>();
+    return row ? mapImport(row) : null;
+  }
+
+  async deleteImport(userId: number, importId: number): Promise<void> {
+    await this.db.prepare("DELETE FROM imports WHERE user_id = ? AND id = ?").bind(userId, importId).run();
+  }
+
+  async replaceUserDataFromSnapshot(user: UserRecord, snapshot: Record<string, unknown>): Promise<void> {
+    const snapUser = snapshot.user as Record<string, unknown> | null;
+    const categories = Array.isArray(snapshot.categories) ? (snapshot.categories as Array<Record<string, unknown>>) : [];
+    const subcategories = Array.isArray(snapshot.subcategories) ? (snapshot.subcategories as Array<Record<string, unknown>>) : [];
+    const entries = Array.isArray(snapshot.entries) ? (snapshot.entries as Array<Record<string, unknown>>) : [];
+    const draft = snapshot.draft as Record<string, unknown> | null;
+    const intakeQueue = Array.isArray(snapshot.intake_queue) ? (snapshot.intake_queue as Array<Record<string, unknown>>) : [];
+
+    const statements: D1PreparedStatement[] = [
+      this.db.prepare("DELETE FROM entries WHERE user_id = ?").bind(user.id),
+      this.db.prepare("DELETE FROM subcategories WHERE user_id = ?").bind(user.id),
+      this.db.prepare("DELETE FROM categories WHERE user_id = ?").bind(user.id),
+      this.db.prepare("DELETE FROM drafts WHERE user_id = ?").bind(user.id),
+      this.db.prepare("DELETE FROM intake_queue WHERE user_id = ?").bind(user.id),
+      this.db.prepare("DELETE FROM ui_sessions WHERE user_id = ?").bind(user.id),
+      this.db.prepare("DELETE FROM saved_views WHERE user_id = ?").bind(user.id),
+      this.db.prepare("DELETE FROM imports WHERE user_id = ?").bind(user.id)
+    ];
+
+    if (snapUser) {
+      statements.push(
+        this.db
+          .prepare(
+            `
+            UPDATE users
+            SET onboarding_step = ?, onboarding_completed_at = ?, timezone_name = ?, timezone_source = ?,
+                currency_code = ?, currency_label = ?, subcategories_enabled = ?, quick_access_mode_expense = ?,
+                quick_access_mode_income = ?, quick_access_mode_subcategories = ?, sort_mode_expense = ?,
+                sort_mode_income = ?, sort_mode_subcategories = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+          `
+          )
+          .bind(
+            Number(snapUser.onboarding_step ?? 0),
+            snapUser.onboarding_completed_at ? String(snapUser.onboarding_completed_at) : null,
+            String(snapUser.timezone_name ?? user.timezoneName),
+            String(snapUser.timezone_source ?? user.timezoneSource),
+            String(snapUser.currency_code ?? user.currencyCode),
+            String(snapUser.currency_label ?? user.currencyLabel),
+            Number(snapUser.subcategories_enabled ?? (user.subcategoriesEnabled ? 1 : 0)),
+            String(snapUser.quick_access_mode_expense ?? user.quickAccessModeExpense),
+            String(snapUser.quick_access_mode_income ?? user.quickAccessModeIncome),
+            String(snapUser.quick_access_mode_subcategories ?? user.quickAccessModeSubcategories),
+            String(snapUser.sort_mode_expense ?? user.sortModeExpense),
+            String(snapUser.sort_mode_income ?? user.sortModeIncome),
+            String(snapUser.sort_mode_subcategories ?? user.sortModeSubcategories),
+            user.id
+          )
+      );
+    }
+
+    for (const item of categories) {
+      statements.push(
+        this.db
+          .prepare(
+            `
+            INSERT INTO categories (id, user_id, type, name, normalized_name, hidden_at, quick_access_slot, sort_mode_override, usage_count_cache, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `
+          )
+          .bind(
+            Number(item.id),
+            user.id,
+            String(item.type),
+            String(item.name),
+            String(item.normalized_name),
+            item.hidden_at ? String(item.hidden_at) : null,
+            item.quick_access_slot === null || typeof item.quick_access_slot === "undefined" ? null : Number(item.quick_access_slot),
+            item.sort_mode_override ? String(item.sort_mode_override) : null,
+            Number(item.usage_count_cache ?? 0),
+            String(item.created_at ?? new Date().toISOString()),
+            String(item.updated_at ?? new Date().toISOString())
+          )
+      );
+    }
+
+    for (const item of subcategories) {
+      statements.push(
+        this.db
+          .prepare(
+            `
+            INSERT INTO subcategories (id, user_id, category_id, name, normalized_name, hidden_at, quick_access_slot, usage_count_cache, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `
+          )
+          .bind(
+            Number(item.id),
+            user.id,
+            Number(item.category_id),
+            String(item.name),
+            String(item.normalized_name),
+            item.hidden_at ? String(item.hidden_at) : null,
+            item.quick_access_slot === null || typeof item.quick_access_slot === "undefined" ? null : Number(item.quick_access_slot),
+            Number(item.usage_count_cache ?? 0),
+            String(item.created_at ?? new Date().toISOString()),
+            String(item.updated_at ?? new Date().toISOString())
+          )
+      );
+    }
+
+    for (const item of entries) {
+      statements.push(
+        this.db
+          .prepare(
+            `
+            INSERT INTO entries (
+              id, user_id, type, amount_minor, currency_label, category_id, subcategory_id, description,
+              entry_date, entry_time, entry_datetime_sort, is_time_auto, is_date_missing, source, external_hash, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `
+          )
+          .bind(
+            Number(item.id),
+            user.id,
+            String(item.type),
+            Number(item.amount_minor),
+            String(item.currency_label ?? user.currencyLabel),
+            Number(item.category_id),
+            item.subcategory_id === null || typeof item.subcategory_id === "undefined" ? null : Number(item.subcategory_id),
+            item.description ? String(item.description) : null,
+            item.entry_date ? String(item.entry_date) : null,
+            item.entry_time ? String(item.entry_time) : null,
+            item.entry_datetime_sort ? String(item.entry_datetime_sort) : null,
+            Number(item.is_time_auto ?? 0),
+            Number(item.is_date_missing ?? 0),
+            String(item.source ?? "restore"),
+            item.external_hash ? String(item.external_hash) : null,
+            String(item.created_at ?? new Date().toISOString()),
+            String(item.updated_at ?? new Date().toISOString())
+          )
+      );
+    }
+
+    if (draft) {
+      statements.push(
+        this.db
+          .prepare(
+            `
+            INSERT INTO drafts (user_id, payload_json, current_step, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+          `
+          )
+          .bind(
+            user.id,
+            String(draft.payload_json ?? "{}"),
+            String(draft.current_step ?? "amount"),
+            String(draft.created_at ?? new Date().toISOString()),
+            String(draft.updated_at ?? new Date().toISOString())
+          )
+      );
+    }
+
+    for (const item of intakeQueue) {
+      statements.push(
+        this.db
+          .prepare(
+            `
+            INSERT INTO intake_queue (id, user_id, source, raw_text, parsed_json, missing_fields_json, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `
+          )
+          .bind(
+            Number(item.id),
+            user.id,
+            String(item.source ?? "restore"),
+            String(item.raw_text ?? ""),
+            String(item.parsed_json ?? "{}"),
+            String(item.missing_fields_json ?? "[]"),
+            String(item.status ?? "pending"),
+            String(item.created_at ?? new Date().toISOString()),
+            String(item.updated_at ?? new Date().toISOString())
+          )
+      );
+    }
+
+    await this.db.batch(statements);
+  }
+
+  async getExistingEntryDedupKeys(userId: number): Promise<string[]> {
+    const rows = await this.db
+      .prepare(
+        `
+        SELECT
+          e.type,
+          e.amount_minor,
+          e.entry_date,
+          e.entry_time,
+          c.normalized_name as category_name,
+          COALESCE(s.normalized_name, '') as subcategory_name,
+          LOWER(TRIM(COALESCE(e.description, ''))) as description
+        FROM entries e
+        JOIN categories c ON c.id = e.category_id
+        LEFT JOIN subcategories s ON s.id = e.subcategory_id
+        WHERE e.user_id = ?
+      `
+      )
+      .bind(userId)
+      .all<Record<string, D1Value>>();
+
+    return (rows.results ?? []).map((row) =>
+      [
+        String(row.type),
+        String(row.amount_minor),
+        row.entry_date ? String(row.entry_date) : "",
+        row.entry_time ? String(row.entry_time) : "",
+        String(row.category_name),
+        String(row.subcategory_name),
+        String(row.description)
+      ].join("|")
+    );
+  }
 }
 
 function mapUser(row: Record<string, D1Value>): UserRecord {
@@ -1250,5 +1492,17 @@ function mapEntry(row: Record<string, D1Value>): EntryRecord {
     isDateMissing: Number(row.is_date_missing) === 1,
     source: String(row.source),
     createdAt: String(row.created_at)
+  };
+}
+
+function mapImport(row: Record<string, D1Value>): ImportRecord {
+  return {
+    id: Number(row.id),
+    userId: Number(row.user_id),
+    importType: String(row.import_type),
+    status: String(row.status),
+    previewJson: parseJson<Record<string, unknown>>(String(row.preview_json)),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
   };
 }
