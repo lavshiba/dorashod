@@ -1,0 +1,28 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "finance-bot",
+  "main": "src/index.ts",
+  "workers_dev": true,
+  "compatibility_date": "2026-04-04",
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "APP_ENV": "production",
+    "BOT_NAME": "финансы"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "finance-bot-db",
+      "database_id": "0ce605f9-e138-4f30-8c1a-cf8073cc2bbe",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "*/10 * * * *",
+      "0 4 * * *"
+    ]
+  }
+}

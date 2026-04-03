@@ -1,0 +1,43 @@
+{
+  "name": "dorashod-finance-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Production-ready Telegram bot \"финансы\" on Cloudflare Workers + D1.",
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "check": "npm run lint && npm run build && npm run test",
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev --local",
+    "d1:create": "wrangler d1 create finance-bot-db",
+    "d1:migrate:local": "wrangler d1 migrations apply DB --local",
+    "d1:migrate:remote": "wrangler d1 migrations apply DB --remote",
+    "d1:seed:local": "wrangler d1 execute DB --local --file ./scripts/seed.sql",
+    "format": "prettier --write .",
+    "lint": "eslint .",
+    "postdeploy:smoke": "vitest run test/integration/post-deploy.spec.ts",
+    "test": "vitest run --coverage",
+    "test:watch": "vitest watch"
+  },
+  "dependencies": {
+    "grammy": "^1.42.0",
+    "hono": "^4.12.10",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@cloudflare/workers-types": "^4.20260403.1",
+    "@types/node": "^24.7.2",
+    "@typescript-eslint/eslint-plugin": "^8.58.0",
+    "@typescript-eslint/parser": "^8.58.0",
+    "@vitest/coverage-v8": "^4.1.2",
+    "eslint": "^10.2.0",
+    "prettier": "^3.6.2",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2",
+    "wrangler": "^4.80.0"
+  }
+}

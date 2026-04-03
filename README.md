@@ -1,0 +1,150 @@
+# Финансы
+
+Production-ready Telegram-бот для учёта доходов и расходов прямо в Telegram. Проект рассчитан на автономную работу 24/7 без включённого компьютера владельца: весь runtime живёт в Cloudflare Workers, данные хранятся в Cloudflare D1, входящие обновления Telegram принимаются через webhook, а периодические проверки и напоминания запускаются через Cloudflare Cron Triggers.
+
+## Текущий статус
+
+Сейчас в репозитории готовы:
+
+- production-oriented каркас Worker + D1 + webhook + cron + health/diagnostics
+- миграция начальной схемы
+- базовая документация проекта
+- core flows для onboarding, главной, добавления записи, черновика, очереди `новые записи`, списка `операции`, базового поиска, базового отчёта, категорий и настроек
+- CI-пайплайн на `npm run check`
+
+Пока не доведены до полного `definition of done`:
+
+- реальный прод-деплой в Cloudflare
+- привязка GitHub remote
+- установка webhook в Telegram
+- полный охват всех сценариев из ТЗ: массовые действия, полный импорт/экспорт файлов, полный edit-flow, все ветки категорий/подкатегорий, все ветки отчётов и custom period parsing
+
+## Что умеет бот
+
+- Пошагово и текстом добавлять доходы и расходы.
+- Продолжать onboarding с того же шага после прерывания.
+- Сохранять неполную запись как черновик.
+- Складывать пачки записей и проблемные строки импорта в очередь `новые записи`.
+- Показывать `операции`, `поиск`, `отчёт`, `категории`, `настройки`, `данные`.
+- Делать массовые действия по нескольким записям.
+- Делать резервную копию для этого бота и обмен файлами записей с другими приложениями.
+- Работать с webhook, cron, health check, миграциями и диагностикой в проде.
+
+## Стек
+
+- Node.js: latest stable LTS в CI и локальной разработке.
+- TypeScript `6.0.2`
+- Wrangler `4.80.0`
+- Cloudflare Workers
+- Cloudflare D1
+- Hono `4.12.10`
+- grammY `1.42.0`
+- Vitest `4.1.2`
+- ESLint `10.2.0`
+
+## Где хостится
+
+- Код: GitHub
+- Runtime: Cloudflare Workers
+- База данных: Cloudflare D1
+- Webhook Telegram: `POST /webhook/telegram/:secret`
+- Health check: `GET /health`
+
+## Данные
+
+Основные данные хранятся в D1. Схема построена вокруг:
+
+- пользователей и их настроек
+- категорий и подкатегорий
+- записей
+- onboarding-состояния
+- UI-сессии
+- черновика
+- очереди `новые записи`
+- контекстов поиска, отчётов и импорта
+- журнала cron/диагностики
+
+Подробности лежат в [docs/architecture.md](/home/abihsgelo/Документы/dorashod/docs/architecture.md).
+
+## Деплой
+
+Основной поток:
+
+1. `npm install`
+2. `npm run check`
+3. `wrangler login`
+4. `wrangler d1 create finance-bot-db`
+5. Обновить `database_id` в [wrangler.jsonc](/home/abihsgelo/Документы/dorashod/wrangler.jsonc)
+6. Задать секреты через `wrangler secret put`
+7. `npm run d1:migrate:remote`
+8. `npm run deploy`
+9. Поставить webhook и прогнать post-deploy checks
+
+Подробная операционная инструкция находится в [docs/operations.md](/home/abihsgelo/Документы/dorashod/docs/operations.md).
+
+## Как обновлять проект через Codex
+
+Будущая поддержка проекта предполагается только через Codex. Перед любой новой задачей нужно читать:
+
+- [README.md](/home/abihsgelo/Документы/dorashod/README.md)
+- [AGENTS.md](/home/abihsgelo/Документы/dorashod/AGENTS.md)
+- [docs/product-spec.md](/home/abihsgelo/Документы/dorashod/docs/product-spec.md)
+- [docs/architecture.md](/home/abihsgelo/Документы/dorashod/docs/architecture.md)
+- [docs/operations.md](/home/abihsgelo/Документы/dorashod/docs/operations.md)
+- [docs/testing.md](/home/abihsgelo/Документы/dorashod/docs/testing.md)
+- [PLANS.md](/home/abihsgelo/Документы/dorashod/PLANS.md)
+
+Любое значимое изменение обязано сопровождаться актуализацией документации.
+
+## Проверки
+
+- `npm run lint`
+- `npm run build`
+- `npm run test`
+- `npm run check`
+- `npm run d1:migrate:local`
+- `npm run postdeploy:smoke`
+
+Полный план проверок лежит в [docs/testing.md](/home/abihsgelo/Документы/dorashod/docs/testing.md).
+
+## Восстановление данных
+
+Есть два пути:
+
+- Полная копия `для этого бота`: включает записи, категории, подкатегории, настройки, черновик и `новые записи`.
+- Обмен файлами `в другие приложения`: включает только записи.
+
+Сценарии backup/restore и аварийного отката описаны в [docs/operations.md](/home/abihsgelo/Документы/dorashod/docs/operations.md).
+
+## Ограничения free-плана
+
+- Нужно экономить D1-запросы и cron-выполнения.
+- Нельзя держать тяжёлые постоянные фоновые циклы.
+- Нельзя делать бессмысленные пинги для “поддержания жизни”.
+- Важно аккуратно проектировать SQL, индексы и пагинацию.
+
+Проект учитывает это так:
+
+- минимизирует количество запросов на обычные пользовательские действия
+- хранит компактные UI-состояния
+- использует paginated list views
+- выносит периодические задачи в редкие cron-проверки
+- избегает ORM-магии и лишних запросов
+
+Компромиссы и риски описаны в [docs/architecture.md](/home/abihsgelo/Документы/dorashod/docs/architecture.md) и [docs/operations.md](/home/abihsgelo/Документы/dorashod/docs/operations.md).
+
+## Важные файлы
+
+- [src/index.ts](/home/abihsgelo/Документы/dorashod/src/index.ts)
+- [wrangler.jsonc](/home/abihsgelo/Документы/dorashod/wrangler.jsonc)
+- [migrations/0001_init.sql](/home/abihsgelo/Документы/dorashod/migrations/0001_init.sql)
+- [docs/product-spec.md](/home/abihsgelo/Документы/dorashod/docs/product-spec.md)
+- [docs/architecture.md](/home/abihsgelo/Документы/dorashod/docs/architecture.md)
+- [docs/operations.md](/home/abihsgelo/Документы/dorashod/docs/operations.md)
+- [docs/testing.md](/home/abihsgelo/Документы/dorashod/docs/testing.md)
+- [AGENTS.md](/home/abihsgelo/Документы/dorashod/AGENTS.md)
+- [PLANS.md](/home/abihsgelo/Документы/dorashod/PLANS.md)
+
+## Секреты
+
+Секреты не лежат в репозитории. Токен Telegram-бота, webhook secret, health token и другие секреты задаются только через Cloudflare Workers secrets. Пример структуры переменных есть в [.dev.vars.example](/home/abihsgelo/Документы/dorashod/.dev.vars.example), но без реальных значений.
