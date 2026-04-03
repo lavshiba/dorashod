@@ -22,6 +22,11 @@
 - базовый парсинг одиночной записи и пачки записей
 - health endpoint
 - post-deploy smoke skeleton
+- production health
+- production diagnostics
+- production D1 migration
+- production webhook installation
+- production cron registration
 
 Полная матрица ниже остаётся definition of done и ещё требует дальнейшего покрытия.
 
@@ -176,3 +181,9 @@
 - `health` отвечает
 
 Если какой-то пункт не удалось проверить автоматически, нужен минимальный ручной чек с честной фиксацией статуса.
+
+Текущий минимальный ручной чек:
+
+- открыть `@dorashodbot`
+- отправить `/start`
+- убедиться, что приходит onboarding / стартовый экран уже из production webhook

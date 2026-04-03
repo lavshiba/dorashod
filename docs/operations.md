@@ -30,7 +30,14 @@ curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
   }'
 ```
 
-На текущий момент реальный Cloudflare deploy и установка webhook ещё не выполнены, потому что в репозитории нет ваших действующих credentials и Telegram token.
+Фактическое прод-состояние:
+
+- GitHub repo: `https://github.com/lavshiba/dorashod`
+- Worker URL: `https://finance-bot.shiaboi.workers.dev`
+- Health: `https://finance-bot.shiaboi.workers.dev/health`
+- D1 database id: `0ce605f9-e138-4f30-8c1a-cf8073cc2bbe`
+- Telegram bot username: `@dorashodbot`
+- Webhook установлен на production URL
 
 ## Миграции
 
@@ -49,6 +56,8 @@ curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
 
 - `*/10 * * * *`: лёгкая обработка очередей и напоминаний
 - `0 4 * * *`: ежедневная диагностика и housekeeping
+
+Обе cron schedule зарегистрированы в production.
 
 ## Health / diagnostics / observability
 

@@ -4,20 +4,33 @@ Production-ready Telegram-бот для учёта доходов и расхо�
 
 ## Текущий статус
 
-Сейчас в репозитории готовы:
+Сейчас в проекте уже есть:
 
-- production-oriented каркас Worker + D1 + webhook + cron + health/diagnostics
-- миграция начальной схемы
-- базовая документация проекта
-- core flows для onboarding, главной, добавления записи, черновика, очереди `новые записи`, списка `операции`, базового поиска, базового отчёта, категорий и настроек
-- CI-пайплайн на `npm run check`
+- GitHub-репозиторий: `https://github.com/lavshiba/dorashod`
+- production Worker: `https://finance-bot.shiaboi.workers.dev`
+- health endpoint: `https://finance-bot.shiaboi.workers.dev/health`
+- webhook Telegram: `https://finance-bot.shiaboi.workers.dev/webhook/telegram/<secret>`
+- D1 database `finance-bot-db`
+- активные cron triggers `*/10 * * * *` и `0 4 * * *`
+- GitHub CI и GitHub deploy workflow
+
+Подтверждено автоматически:
+
+- локальные `lint`, `build`, `test`, `check`
+- GitHub Actions `ci`
+- remote миграции D1
+- прод-ответ `health`
+- прод-ответ `diagnostics`
+- регистрация cron schedules
+- установка webhook
 
 Пока не доведены до полного `definition of done`:
 
-- реальный прод-деплой в Cloudflare
-- привязка GitHub remote
-- установка webhook в Telegram
-- полный охват всех сценариев из ТЗ: массовые действия, полный импорт/экспорт файлов, полный edit-flow, все ветки категорий/подкатегорий, все ветки отчётов и custom period parsing
+- полный охват всех продуктовых сценариев из ТЗ
+- полный import/export flow
+- полный edit-flow и массовые действия
+- полный отчётный и категорийный функционал
+- живой ручной чек реального ответа бота в вашем Telegram-чате
 
 ## Что умеет бот
 
@@ -44,9 +57,9 @@ Production-ready Telegram-бот для учёта доходов и расхо�
 
 ## Где хостится
 
-- Код: GitHub
-- Runtime: Cloudflare Workers
-- База данных: Cloudflare D1
+- Код: `https://github.com/lavshiba/dorashod`
+- Runtime: `https://finance-bot.shiaboi.workers.dev`
+- База данных: Cloudflare D1 `finance-bot-db`
 - Webhook Telegram: `POST /webhook/telegram/:secret`
 - Health check: `GET /health`
 
