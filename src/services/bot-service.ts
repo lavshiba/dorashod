@@ -689,6 +689,9 @@ export class BotService {
       case "queue:save-current":
         await this.saveQueueItem(user);
         return;
+      case "queue:edit-current":
+        await this.editQueueItem(user);
+        return;
       case "queue:skip-current":
         await this.skipQueueItem(user);
         return;
@@ -1944,6 +1947,7 @@ export class BotService {
 
   private async finalizeDraft(user: UserRecord, description: string | undefined): Promise<void> {
     const draft = await this.repo.getDraft(user.id);
+    const session = await this.repo.getSession(user.id);
     if (!draft?.payload.type || !draft.payload.amountMinor || !draft.payload.categoryName) {
       await this.showHome(user);
       return;
@@ -1960,16 +1964,14 @@ export class BotService {
     });
 
     await this.repo.deleteDraft(user.id);
+    if (session.context.source === "queue" && typeof session.context.queueId === "number") {
+      await this.repo.markQueueItem(user.id, Number(session.context.queueId), "saved");
+      await this.showQueue(user, "запись добавлена");
+      return;
+    }
+
     await this.repo.clearSession(user.id);
-    await this.sendMessage({
-      chat_id: user.chatId,
-      text: `<b>${BOT_TITLE}</b>\n\nзапись добавлена`,
-      reply_markup: kb([
-        [{ text: BUTTONS.income, action: "add:start", payload: { type: "income" } }, { text: BUTTONS.expense, action: "add:start", payload: { type: "expense" } }],
-        [{ text: BUTTONS.operations, action: "operations:list", payload: { page: 0 } }, { text: BUTTONS.report, action: "reports:open" }],
-        [{ text: BUTTONS.main, action: "nav:home" }]
-      ])
-    });
+    await this.showHome(user, "запись добавлена");
   }
 
   private async handleEditInput(user: UserRecord, session: UiSession, text: string): Promise<void> {
@@ -2347,12 +2349,12 @@ export class BotService {
         ...(!item.missing.length
           ? [
               [{ text: BUTTONS.save, action: "queue:save-current" }],
-              [{ text: BUTTONS.edit, action: "draft:continue" }],
+              [{ text: BUTTONS.edit, action: "queue:edit-current" }],
               [{ text: BUTTONS.skip, action: "queue:skip-current" }],
               [{ text: BUTTONS.main, action: "nav:home" }]
             ]
           : [
-              [{ text: missingLabel, action: "draft:continue" }],
+              [{ text: BUTTONS.edit, action: "queue:edit-current" }],
               [{ text: BUTTONS.skip, action: "queue:skip-current" }],
               [{ text: BUTTONS.main, action: "nav:home" }]
             ])
@@ -2425,6 +2427,33 @@ export class BotService {
     });
     await this.repo.markQueueItem(user.id, item.id, "saved");
     await this.showQueue(user, "запись добавлена");
+  }
+
+  private async editQueueItem(user: UserRecord): Promise<void> {
+    const item = await this.repo.getNextQueueItem(user.id);
+    if (!item) {
+      await this.showHome(user);
+      return;
+    }
+
+    const parsed = item.parsed;
+    await this.repo.saveDraft(
+      user.id,
+      {
+        type: parsed.type as EntryType | undefined,
+        amountMinor: Number(parsed.amountMinor ?? 0) || undefined,
+        categoryName: parsed.category ? String(parsed.category) : undefined,
+        subcategoryName: parsed.subcategory ? String(parsed.subcategory) : undefined,
+        description: parsed.description ? String(parsed.description) : undefined
+      },
+      this.nextAddStep({
+        type: parsed.type as EntryType | undefined,
+        amountMinor: Number(parsed.amountMinor ?? 0) || undefined,
+        categoryName: parsed.category ? String(parsed.category) : undefined
+      })
+    );
+    await this.repo.saveSession(user.id, { mode: "add", stack: ["queue"], context: { source: "queue", queueId: item.id } });
+    await this.continueDraft(user);
   }
 
   private async skipQueueItem(user: UserRecord): Promise<void> {
