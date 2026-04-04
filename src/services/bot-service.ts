@@ -771,6 +771,24 @@ export class BotService {
         await this.updateUserSetting(user.id, "subcategories_enabled", params.enabled === "1" ? 1 : 0);
         await this.showSubcategoriesSettings(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId));
         return;
+      case "settings:quick-access":
+        await this.showQuickAccessRoot(user);
+        return;
+      case "settings:quick-access-section":
+        await this.showQuickAccessSection(user, String(params.section));
+        return;
+      case "settings:set-quick-access":
+        await this.applyQuickAccessMode(user, String(params.section), String(params.mode));
+        return;
+      case "settings:sorting":
+        await this.showSortingRoot(user);
+        return;
+      case "settings:sorting-section":
+        await this.showSortingSection(user, String(params.section));
+        return;
+      case "settings:set-sorting":
+        await this.applySortingMode(user, String(params.section), String(params.mode));
+        return;
       case "data:open":
         await this.showData(user);
         return;
@@ -2147,12 +2165,12 @@ export class BotService {
   private async showSettings(user: UserRecord): Promise<void> {
     await this.telegram.sendMessage({
       chat_id: user.chatId,
-      text: "настройки",
+        text: "настройки",
       reply_markup: kb([
         [{ text: BUTTONS.currency, action: "settings:currency" }, { text: BUTTONS.time, action: "settings:time" }],
         [{ text: BUTTONS.subcategories, action: "settings:subcategories" }],
-        [{ text: BUTTONS.quickAccess, action: "noop" }],
-        [{ text: BUTTONS.sorting, action: "noop" }],
+        [{ text: BUTTONS.quickAccess, action: "settings:quick-access" }],
+        [{ text: BUTTONS.sorting, action: "settings:sorting" }],
         [{ text: BUTTONS.data, action: "data:open" }],
         [{ text: BUTTONS.howToUse, action: "onboarding:show", payload: { step: 0 } }],
         [{ text: BUTTONS.main, action: "nav:home" }]
@@ -2188,11 +2206,100 @@ export class BotService {
       text: user.subcategoriesEnabled ? "включены" : "выключены",
       reply_markup: kb([
         [{ text: user.subcategoriesEnabled ? BUTTONS.disable : BUTTONS.enable, action: "settings:set-subcategories", payload: { enabled: user.subcategoriesEnabled ? 0 : 1 } }],
-        [{ text: BUTTONS.quickAccess, action: "noop" }],
-        [{ text: BUTTONS.sorting, action: "noop" }],
+        [{ text: BUTTONS.quickAccess, action: "settings:quick-access-section", payload: { section: "subcategories" } }],
+        [{ text: BUTTONS.sorting, action: "settings:sorting-section", payload: { section: "subcategories" } }],
         [{ text: BUTTONS.back, action: "settings:open" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
+  }
+
+  private async showQuickAccessRoot(user: UserRecord): Promise<void> {
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: "быстрый доступ",
+      reply_markup: kb([
+        [{ text: BUTTONS.expenseCategories, action: "settings:quick-access-section", payload: { section: "expense" } }],
+        [{ text: BUTTONS.incomeCategories, action: "settings:quick-access-section", payload: { section: "income" } }],
+        [{ text: BUTTONS.subcategories, action: "settings:quick-access-section", payload: { section: "subcategories" } }],
+        [{ text: BUTTONS.back, action: "settings:open" }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async showQuickAccessSection(user: UserRecord, section: string): Promise<void> {
+    const current =
+      section === "expense"
+        ? user.quickAccessModeExpense
+        : section === "income"
+          ? user.quickAccessModeIncome
+          : user.quickAccessModeSubcategories;
+    const title = section === "expense" ? BUTTONS.expenseCategories : section === "income" ? BUTTONS.incomeCategories : BUTTONS.subcategories;
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: `${title}\n\nтекущее значение: ${formatQuickAccessMode(current)}`,
+      reply_markup: kb([
+        [{ text: BUTTONS.automatically, action: "settings:set-quick-access", payload: { section, mode: "automatically" } }],
+        [{ text: BUTTONS.own, action: "settings:set-quick-access", payload: { section, mode: "custom" } }],
+        [{ text: BUTTONS.off, action: "settings:set-quick-access", payload: { section, mode: "disabled" } }],
+        [{ text: BUTTONS.back, action: "settings:quick-access" }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async applyQuickAccessMode(user: UserRecord, section: string, mode: string): Promise<void> {
+    const field =
+      section === "expense"
+        ? "quick_access_mode_expense"
+        : section === "income"
+          ? "quick_access_mode_income"
+          : "quick_access_mode_subcategories";
+    await this.updateUserSetting(user.id, field, mode);
+    await this.showQuickAccessSection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), section);
+  }
+
+  private async showSortingRoot(user: UserRecord): Promise<void> {
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: "сортировка",
+      reply_markup: kb([
+        [{ text: BUTTONS.expenseCategories, action: "settings:sorting-section", payload: { section: "expense" } }],
+        [{ text: BUTTONS.incomeCategories, action: "settings:sorting-section", payload: { section: "income" } }],
+        [{ text: BUTTONS.subcategories, action: "settings:sorting-section", payload: { section: "subcategories" } }],
+        [{ text: BUTTONS.back, action: "settings:open" }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async showSortingSection(user: UserRecord, section: string): Promise<void> {
+    const current =
+      section === "expense"
+        ? user.sortModeExpense
+        : section === "income"
+          ? user.sortModeIncome
+          : user.sortModeSubcategories;
+    const title = section === "expense" ? BUTTONS.expenseCategories : section === "income" ? BUTTONS.incomeCategories : BUTTONS.subcategories;
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: `${title}\n\nтекущее значение: ${formatSortingMode(current)}`,
+      reply_markup: kb([
+        [{ text: "по количеству операций", action: "settings:set-sorting", payload: { section, mode: "usage" } }],
+        [{ text: "недавние", action: "settings:set-sorting", payload: { section, mode: "recent" } }],
+        [{ text: "по алфавиту", action: "settings:set-sorting", payload: { section, mode: "alphabet" } }],
+        ...(section === "subcategories" ? [[{ text: BUTTONS.resetToGeneral, action: "settings:set-sorting", payload: { section, mode: "usage" } }]] : []),
+        [{ text: BUTTONS.back, action: "settings:sorting" }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async applySortingMode(user: UserRecord, section: string, mode: string): Promise<void> {
+    const field =
+      section === "expense"
+        ? "sort_mode_expense"
+        : section === "income"
+          ? "sort_mode_income"
+          : "sort_mode_subcategories";
+    await this.updateUserSetting(user.id, field, mode);
+    await this.showSortingSection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), section);
   }
 
   private async showData(user: UserRecord): Promise<void> {
@@ -2894,6 +3001,26 @@ function formatShare(part: number, whole: number): string {
     return "0%";
   }
   return `${Math.round((part / whole) * 100)}%`;
+}
+
+function formatQuickAccessMode(mode: string): string {
+  if (mode === "automatically") {
+    return BUTTONS.automatically;
+  }
+  if (mode === "custom") {
+    return BUTTONS.own;
+  }
+  return BUTTONS.off;
+}
+
+function formatSortingMode(mode: string): string {
+  if (mode === "recent") {
+    return "недавние";
+  }
+  if (mode === "alphabet") {
+    return "по алфавиту";
+  }
+  return "по количеству операций";
 }
 
 function parseFullSnapshot(content: string):
