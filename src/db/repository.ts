@@ -159,6 +159,44 @@ export class Repository {
     return Number(result.meta.changes ?? 0) > 0;
   }
 
+  async tryAcquireUserUpdateLock(userId: number, lockToken: string): Promise<boolean> {
+    await this.db
+      .prepare(
+        `
+        DELETE FROM user_update_locks
+        WHERE user_id = ?
+          AND created_at < datetime('now', '-15 seconds')
+      `
+      )
+      .bind(userId)
+      .run();
+
+    const result = await this.db
+      .prepare(
+        `
+        INSERT OR IGNORE INTO user_update_locks (user_id, lock_token)
+        VALUES (?, ?)
+      `
+      )
+      .bind(userId, lockToken)
+      .run();
+
+    return Number(result.meta.changes ?? 0) > 0;
+  }
+
+  async releaseUserUpdateLock(userId: number, lockToken: string): Promise<void> {
+    await this.db
+      .prepare(
+        `
+        DELETE FROM user_update_locks
+        WHERE user_id = ?
+          AND lock_token = ?
+      `
+      )
+      .bind(userId, lockToken)
+      .run();
+  }
+
   async saveDraft(userId: number, payload: DraftPayload, step: string): Promise<void> {
     await this.db
       .prepare(

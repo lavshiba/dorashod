@@ -51,23 +51,51 @@ export class BotService {
   ) {}
 
   async handleUpdate(update: TelegramUpdate): Promise<void> {
-    if (update.callback_query) {
-      await this.handleCallback(update.callback_query);
+    const target =
+      update.callback_query
+        ? {
+            fromId: update.callback_query.from.id,
+            chatId: update.callback_query.message?.chat.id
+          }
+        : update.message
+          ? {
+              fromId: update.message.from?.id,
+              chatId: update.message.chat.id
+            }
+          : null;
+
+    if (!target?.fromId || !target.chatId) {
       return;
     }
 
-    if (update.message?.text) {
-      await this.handleMessage(update.message.from?.id, update.message.chat.id, update.message.text, update.message.message_id);
+    const user = await this.repo.getOrCreateUser(String(target.fromId), String(target.chatId));
+    const lockToken = crypto.randomUUID();
+    const acquired = await this.acquireUserUpdateLock(user.id, lockToken);
+    if (!acquired) {
       return;
     }
 
-    if (update.message?.location) {
-      await this.handleLocation(update.message.from?.id, update.message.chat.id, update.message.location, update.message.message_id);
-      return;
-    }
+    try {
+      if (update.callback_query) {
+        await this.handleCallback(update.callback_query);
+        return;
+      }
 
-    if (update.message?.document) {
-      await this.handleDocument(update.message.from?.id, update.message.chat.id, update.message.document, update.message.message_id);
+      if (update.message?.text) {
+        await this.handleMessage(update.message.from?.id, update.message.chat.id, update.message.text, update.message.message_id);
+        return;
+      }
+
+      if (update.message?.location) {
+        await this.handleLocation(update.message.from?.id, update.message.chat.id, update.message.location, update.message.message_id);
+        return;
+      }
+
+      if (update.message?.document) {
+        await this.handleDocument(update.message.from?.id, update.message.chat.id, update.message.document, update.message.message_id);
+      }
+    } finally {
+      await this.repo.releaseUserUpdateLock(user.id, lockToken);
     }
   }
 
@@ -1761,6 +1789,16 @@ export class BotService {
     } catch {
       // Telegram can refuse deletion for old, already removed or non-deletable messages.
     }
+  }
+
+  private async acquireUserUpdateLock(userId: number, lockToken: string): Promise<boolean> {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      if (await this.repo.tryAcquireUserUpdateLock(userId, lockToken)) {
+        return true;
+      }
+      await sleep(120);
+    }
+    return false;
   }
 
   private async showStart(user: UserRecord): Promise<void> {
@@ -6209,4 +6247,8 @@ function normalizeImportNumber(raw: string): string {
     return raw.replace(",", ".");
   }
   return raw;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
