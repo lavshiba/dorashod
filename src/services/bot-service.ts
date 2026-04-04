@@ -210,7 +210,7 @@ export class BotService {
       return;
     }
 
-    if (session.mode === "reports" && session.context.awaiting === "custom-period") {
+    if (session.mode === "reports" && (session.context.awaiting === "custom-period" || session.context.awaiting === "custom-period-confirm")) {
       const parsed = parseCustomPeriodInput(text, this.userNow(user.timezoneName).date);
       if (parsed.status === "resolved") {
         await this.showReportRange(user, parsed.label, parsed.from, parsed.to, "custom");
