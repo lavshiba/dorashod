@@ -469,43 +469,27 @@ export class BotService {
       const uploadType = String(session.context.awaitingUploadType);
 
       if (uploadType === "full") {
-      const snapshot = parseFullSnapshot(downloaded.content);
-      if (!snapshot) {
-        await this.sendMessage({
-          chat_id: user.chatId,
-          text:
-            `<b>${BOT_TITLE}</b>\n\n` +
-            `не удалось прочитать файл\n\n` +
-            `пришли другой файл\n` +
-            `или вернись назад`,
-          reply_markup: kb([[{ text: BUTTONS.back, action: "data:this-bot" }, { text: BUTTONS.main, action: "nav:home" }]])
-        });
-        return;
-      }
+        const snapshot = parseFullSnapshot(downloaded.content);
+        if (!snapshot) {
+          await this.sendMessage({
+            chat_id: user.chatId,
+            text:
+              `<b>${BOT_TITLE}</b>\n\n` +
+              `не удалось прочитать файл\n\n` +
+              `пришли другой файл\n` +
+              `или вернись назад`,
+            reply_markup: kb([[{ text: BUTTONS.back, action: "data:this-bot" }, { text: BUTTONS.main, action: "nav:home" }]])
+          });
+          return;
+        }
 
-      const importId = await this.repo.createImport(user.id, "full-backup", "preview", snapshot.raw);
-      await this.repo.saveSession(user.id, {
-        mode: "data",
-        stack: ["data"],
-        context: { importId, awaitingUploadType: undefined }
-      });
-      await this.sendMessage({
-        chat_id: user.chatId,
-        text:
-          `<b>${BOT_TITLE}</b>\n\n` +
-          `файл загружен\n\n` +
-          `внутри:\n` +
-          `записи — ${snapshot.entries}\n` +
-          `категории расходов — ${snapshot.expenseCategories}\n` +
-          `категории доходов — ${snapshot.incomeCategories}\n` +
-          `есть черновик — ${snapshot.hasDraft ? "да" : "нет"}\n` +
-          `новые записи — ${snapshot.queue}`,
-        reply_markup: kb([
-          [{ text: BUTTONS.uploadToBot, action: "data:import-full-preview-confirm", payload: { importId } }],
-          [{ text: BUTTONS.cancel, action: "data:this-bot" }],
-          [{ text: BUTTONS.main, action: "nav:home" }]
-        ])
-      });
+        const importId = await this.repo.createImport(user.id, "full-backup", "preview", snapshot.raw);
+        await this.repo.saveSession(user.id, {
+          mode: "data",
+          stack: ["data"],
+          context: { importId, awaitingUploadType: undefined }
+        });
+        await this.showFullImportPreview(user, importId);
         return;
       }
 
@@ -5074,6 +5058,11 @@ export class BotService {
       ? (pendingImport.previewJson.entries as Array<Record<string, unknown>>)
       : [];
     const analysis = await this.analyzeEntriesImport(user, previewEntries, false);
+    const rows: Array<Array<{ text: string; action: string; payload?: Record<string, string | number | undefined> }>> = [];
+    if (analysis.addedEntries > 0) {
+      rows.push([{ text: `добавить ${analysis.addedEntries}`, action: "data:import-entries-add-all-confirm", payload: { importId } }]);
+    }
+    rows.push([{ text: BUTTONS.back, action: "data:import-preview", payload: { importId } }, { text: BUTTONS.main, action: "nav:home" }]);
     await this.sendMessage({
       chat_id: user.chatId,
       text:
@@ -5082,14 +5071,24 @@ export class BotService {
         `будет добавлено:\n${analysis.addedEntries} записей\n\n` +
         `будет создано:\n${analysis.createdCategories} категории\n${analysis.createdSubcategories} подкатегорий\n\n` +
         "повторы тоже будут добавлены",
-      reply_markup: kb([
-        [{ text: `добавить ${analysis.addedEntries}`, action: "data:import-entries-add-all-confirm", payload: { importId } }],
-        [{ text: BUTTONS.back, action: "data:import-preview", payload: { importId } }, { text: BUTTONS.main, action: "nav:home" }]
-      ])
+      reply_markup: kb(rows)
     });
   }
 
   private async showEntriesImportAddAllConfirm(user: UserRecord, importId: number): Promise<void> {
+    const pendingImport = await this.repo.getImport(user.id, importId);
+    if (!pendingImport) {
+      await this.showDataOtherApps(user);
+      return;
+    }
+    const previewEntries = Array.isArray(pendingImport.previewJson.entries)
+      ? (pendingImport.previewJson.entries as Array<Record<string, unknown>>)
+      : [];
+    const analysis = await this.analyzeEntriesImport(user, previewEntries, false);
+    if (analysis.addedEntries <= 0) {
+      await this.showEntriesImportAddAllPlan(user, importId);
+      return;
+    }
     await this.sendMessage({
       chat_id: user.chatId,
       text:
