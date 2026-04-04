@@ -3268,6 +3268,15 @@ export class BotService {
     const session = await this.repo.getSession(user.id);
     const from = (session.context.reportFrom as string | null | undefined) ?? null;
     const to = (session.context.reportTo as string | null | undefined) ?? null;
+    const reportTitle = String(session.context.reportTitle ?? "");
+    const category = typeof input.categoryId === "number" ? await this.repo.getCategory(user.id, input.categoryId) : null;
+    const subcategory = typeof input.subcategoryId === "number" ? await this.repo.getSubcategory(user.id, input.subcategoryId) : null;
+    const heading =
+      typeof input.subcategoryId === "number" && category && subcategory
+        ? `записи\n${category.name} → ${subcategory.name}\nза ${reportTitle}`
+        : typeof input.categoryId === "number" && category
+          ? `записи\n${category.name}\nза ${reportTitle}`
+          : `записи за ${reportTitle}`;
     const data = await this.repo.getEntriesByDateRange({
       userId: user.id,
       page: input.page,
@@ -3296,7 +3305,7 @@ export class BotService {
         chat_id: user.chatId,
         text:
           `<b>${BOT_TITLE}</b>\n\n` +
-          `${reportEntriesTitle(input, String(session.context.reportTitle ?? ""))}\n\n` +
+          `${heading}\n\n` +
           `пока записей нет\n\n` +
           `можно выбрать другой период`,
         reply_markup: kb([
@@ -3307,8 +3316,15 @@ export class BotService {
       return;
     }
 
-    const title = String(session.context.reportTitle ?? "");
-    const lines = data.items.map((item, index) => `${index + 1}. ${formatEntryListBlock(item, user.currencyLabel)}`).join("\n\n");
+    const lines = data.items
+      .map((item, index) =>
+        `${index + 1}. ${
+          typeof input.subcategoryId === "number"
+            ? `${formatAmountByType(item.amountMinor, item.type, user.currencyLabel)}\n${formatEntryReadableDate(item.entryDate, item.entryTime, item.isDateMissing)}`
+            : formatEntryListBlock(item, user.currencyLabel)
+        }`
+      )
+      .join("\n\n");
     const selectedIds = new Set<number>(Array.isArray(session.context.selectedIds) ? (session.context.selectedIds as number[]) : []);
     const numberButtons = data.items.map((item, index) => ({
       text: selectedIds.has(item.id) ? `✓${index + 1}` : String(index + 1),
@@ -3320,7 +3336,7 @@ export class BotService {
       chat_id: user.chatId,
       text:
         `<b>${BOT_TITLE}</b>\n\n` +
-        `${reportEntriesTitle(input, title)}\n\n` +
+        `${heading}\n\n` +
         `${notice ? `${notice}\n\n` : ""}` +
         `${lines}`,
       reply_markup: kb([
