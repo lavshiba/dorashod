@@ -26,6 +26,10 @@ export type CategoryTransferPlan = {
   clearedSubcategoryCount: number;
 };
 
+export function resolveSubcategorySortMode(sortModeOverride: string | null, fallback: string): string {
+  return sortModeOverride && ["usage", "recent", "alphabet"].includes(sortModeOverride) ? sortModeOverride : fallback;
+}
+
 function json<T>(value: T): string {
   return JSON.stringify(value);
 }
@@ -1134,28 +1138,30 @@ export class Repository {
   }
 
   async resetUserSettings(userId: number): Promise<void> {
-    await this.db
-      .prepare(
+    await this.db.batch([
+      this.db
+        .prepare(
+          `
+          UPDATE users
+          SET
+            currency_code = 'RUB',
+            currency_label = '₽',
+            timezone_name = 'Europe/Moscow',
+            timezone_source = 'default',
+            subcategories_enabled = 1,
+            quick_access_mode_expense = 'automatically',
+            quick_access_mode_income = 'automatically',
+            quick_access_mode_subcategories = 'automatically',
+            sort_mode_expense = 'usage',
+            sort_mode_income = 'usage',
+            sort_mode_subcategories = 'usage',
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
         `
-        UPDATE users
-        SET
-          currency_code = 'RUB',
-          currency_label = '₽',
-          timezone_name = 'Europe/Moscow',
-          timezone_source = 'default',
-          subcategories_enabled = 1,
-          quick_access_mode_expense = 'automatically',
-          quick_access_mode_income = 'automatically',
-          quick_access_mode_subcategories = 'automatically',
-          sort_mode_expense = 'usage',
-          sort_mode_income = 'usage',
-          sort_mode_subcategories = 'usage',
-          updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `
-      )
-      .bind(userId)
-      .run();
+        )
+        .bind(userId),
+      this.db.prepare("UPDATE categories SET sort_mode_override = NULL, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?").bind(userId)
+    ]);
   }
 
   async getHiddenCategoryCount(userId: number, type: EntryType): Promise<number> {
@@ -1175,10 +1181,11 @@ export class Repository {
   }
 
   async getSubcategories(userId: number, categoryId: number, sortMode = "usage"): Promise<SubcategoryRecord[]> {
+    const effectiveSortMode = resolveSubcategorySortMode((await this.getCategory(userId, categoryId))?.sortModeOverride ?? null, sortMode);
     const orderBy =
-      sortMode === "recent"
+      effectiveSortMode === "recent"
         ? "updated_at DESC, id DESC"
-        : sortMode === "alphabet"
+        : effectiveSortMode === "alphabet"
           ? "name COLLATE NOCASE ASC, id DESC"
           : "usage_count_cache DESC, updated_at DESC, id DESC";
     const rows = await this.db
@@ -1261,10 +1268,11 @@ export class Repository {
   }
 
   async listHiddenSubcategories(userId: number, categoryId: number, sortMode = "usage"): Promise<SubcategoryRecord[]> {
+    const effectiveSortMode = resolveSubcategorySortMode((await this.getCategory(userId, categoryId))?.sortModeOverride ?? null, sortMode);
     const orderBy =
-      sortMode === "recent"
+      effectiveSortMode === "recent"
         ? "updated_at DESC, id DESC"
-        : sortMode === "alphabet"
+        : effectiveSortMode === "alphabet"
           ? "name COLLATE NOCASE ASC, id DESC"
           : "usage_count_cache DESC, updated_at DESC, id DESC";
     const rows = await this.db
@@ -1321,6 +1329,13 @@ export class Repository {
 
   async createCronRun(jobName: string, status: string, summary: string): Promise<void> {
     await this.db.prepare("INSERT INTO cron_runs (job_name, status, summary) VALUES (?, ?, ?)").bind(jobName, status, summary).run();
+  }
+
+  async updateCategorySortModeOverride(userId: number, categoryId: number, mode: string | null): Promise<void> {
+    await this.db
+      .prepare("UPDATE categories SET sort_mode_override = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND id = ?")
+      .bind(mode, userId, categoryId)
+      .run();
   }
 
   async getDiagnostics(): Promise<Record<string, unknown>> {
@@ -1712,6 +1727,7 @@ function mapCategory(row: Record<string, D1Value>): CategoryRecord {
     name: String(row.name),
     hiddenAt: row.hidden_at ? String(row.hidden_at) : null,
     quickAccessSlot: row.quick_access_slot === null || typeof row.quick_access_slot === "undefined" ? null : Number(row.quick_access_slot),
+    sortModeOverride: row.sort_mode_override ? String(row.sort_mode_override) : null,
     usageCountCache: Number(row.usage_count_cache)
   };
 }

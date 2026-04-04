@@ -1036,8 +1036,17 @@ export class BotService {
       case "settings:sorting-section":
         await this.showSortingSection(user, String(params.section));
         return;
+      case "settings:sorting-subcategories-categories":
+        await this.showSubcategorySortingCategoryChooser(user, String(params.type) as EntryType, Number(params.page ?? "0"));
+        return;
+      case "settings:sorting-subcategory-category":
+        await this.showSubcategorySortingCategory(user, Number(params.id), String(params.type) as EntryType, Number(params.page ?? "0"));
+        return;
       case "settings:set-sorting":
         await this.applySortingMode(user, String(params.section), String(params.mode));
+        return;
+      case "settings:set-sorting-category":
+        await this.applyCategorySortingMode(user, Number(params.id), String(params.type) as EntryType, Number(params.page ?? "0"), String(params.mode));
         return;
       case "data:open":
         await this.showData(user);
@@ -3216,6 +3225,13 @@ export class BotService {
           ? user.sortModeIncome
           : user.sortModeSubcategories;
     const title = section === "expense" ? BUTTONS.expenseCategories : section === "income" ? BUTTONS.incomeCategories : BUTTONS.subcategories;
+    const extraRows =
+      section === "subcategories"
+        ? [
+            [{ text: BUTTONS.expenseCategories, action: "settings:sorting-subcategories-categories", payload: { type: "expense", page: 0 } }],
+            [{ text: BUTTONS.incomeCategories, action: "settings:sorting-subcategories-categories", payload: { type: "income", page: 0 } }]
+          ]
+        : [];
     await this.telegram.sendMessage({
       chat_id: user.chatId,
       text: `${title}\n\nтекущее значение: ${formatSortingMode(current)}`,
@@ -3223,7 +3239,7 @@ export class BotService {
         [{ text: "по количеству операций", action: "settings:set-sorting", payload: { section, mode: "usage" } }],
         [{ text: "недавние", action: "settings:set-sorting", payload: { section, mode: "recent" } }],
         [{ text: "по алфавиту", action: "settings:set-sorting", payload: { section, mode: "alphabet" } }],
-        ...(section === "subcategories" ? [[{ text: BUTTONS.resetToGeneral, action: "settings:set-sorting", payload: { section, mode: "usage" } }]] : []),
+        ...extraRows,
         [{ text: BUTTONS.back, action: "settings:sorting" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
@@ -3238,6 +3254,58 @@ export class BotService {
           : "sort_mode_subcategories";
     await this.updateUserSetting(user.id, field, mode);
     await this.showSortingSection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), section);
+  }
+
+  private async showSubcategorySortingCategoryChooser(user: UserRecord, type: EntryType, page: number): Promise<void> {
+    const categories = await this.repo.listCategories(user.id, type, false, page, 6, type === "expense" ? user.sortModeExpense : user.sortModeIncome);
+    if (categories.length === 0) {
+      await this.telegram.sendMessage({
+        chat_id: user.chatId,
+        text: "пока категорий нет\nможно вернуться назад",
+        reply_markup: kb([[{ text: BUTTONS.back, action: "settings:sorting-section", payload: { section: "subcategories" } }, { text: BUTTONS.main, action: "nav:home" }]])
+      });
+      return;
+    }
+
+    const lines = categories.map((item, index) => `${index + 1}. ${item.name}`).join("\n");
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: `подкатегории\n\n${lines}\n\nвыбери категорию`,
+      reply_markup: kb([
+        categories.map((item, index) => ({
+          text: String(index + 1),
+          action: "settings:sorting-subcategory-category",
+          payload: { id: item.id, type, page }
+        })),
+        ...(page > 0 || categories.length === 6 ? [buildPageRow(page, categories.length === 6, "settings:sorting-subcategories-categories", { type })] : []),
+        [{ text: BUTTONS.back, action: "settings:sorting-section", payload: { section: "subcategories" } }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async showSubcategorySortingCategory(user: UserRecord, categoryId: number, type: EntryType, page: number): Promise<void> {
+    const category = await this.repo.getCategory(user.id, categoryId);
+    if (!category) {
+      await this.showSubcategorySortingCategoryChooser(user, type, page);
+      return;
+    }
+    const current = category.sortModeOverride ?? user.sortModeSubcategories;
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: `подкатегории\n\n${category.name}\n\nтекущее значение: ${formatSortingMode(current)}`,
+      reply_markup: kb([
+        [{ text: "по количеству операций", action: "settings:set-sorting-category", payload: { id: categoryId, type, page, mode: "usage" } }],
+        [{ text: "недавние", action: "settings:set-sorting-category", payload: { id: categoryId, type, page, mode: "recent" } }],
+        [{ text: "по алфавиту", action: "settings:set-sorting-category", payload: { id: categoryId, type, page, mode: "alphabet" } }],
+        [{ text: BUTTONS.resetToGeneral, action: "settings:set-sorting-category", payload: { id: categoryId, type, page, mode: "reset" } }],
+        [{ text: BUTTONS.back, action: "settings:sorting-subcategories-categories", payload: { type, page } }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async applyCategorySortingMode(user: UserRecord, categoryId: number, type: EntryType, page: number, mode: string): Promise<void> {
+    await this.repo.updateCategorySortModeOverride(user.id, categoryId, mode === "reset" ? null : mode);
+    await this.showSubcategorySortingCategory(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), categoryId, type, page);
   }
 
   private userNow(timezone: string): { date: string; time: string; sort: string } {

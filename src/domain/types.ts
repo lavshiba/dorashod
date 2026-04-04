@@ -41,6 +41,7 @@ export interface CategoryRecord {
   name: string;
   hiddenAt: string | null;
   quickAccessSlot: number | null;
+  sortModeOverride: string | null;
   usageCountCache: number;
 }
 
