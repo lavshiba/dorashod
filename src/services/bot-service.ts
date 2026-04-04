@@ -1126,7 +1126,7 @@ export class BotService {
         return;
       case "data:reset-settings":
         await this.repo.resetUserSettings(user.id);
-        await this.showData(user);
+        await this.showData(user, "настройки сброшены");
         return;
       case "data:clear-all":
         await this.sendMessage({
@@ -1614,16 +1614,17 @@ export class BotService {
     });
   }
 
-  private async showQueue(user: UserRecord): Promise<void> {
+  private async showQueue(user: UserRecord, notice?: string): Promise<void> {
     const item = await this.repo.getNextQueueItem(user.id);
     if (!item) {
-      await this.showHome(user);
+      await this.showHome(user, notice);
       return;
     }
     await this.repo.saveSession(user.id, { mode: "queue", stack: ["home"], context: { queueId: item.id } });
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `${notice ? `${notice}\n\n` : ""}` +
         `новые записи\n\nиз записи удалось понять:\n${this.describeQueueParsed(item.parsed, user.currencyLabel)}\n\n` +
         (item.missing.length ? `не хватает: ${item.missing.map(formatMissingField).join(", ")}.` : "запись готова к сохранению"),
       reply_markup: kb([
@@ -1672,7 +1673,7 @@ export class BotService {
       source: "queue"
     });
     await this.repo.markQueueItem(user.id, item.id, "saved");
-    await this.showQueue(user);
+    await this.showQueue(user, "запись добавлена");
   }
 
   private async skipQueueItem(user: UserRecord): Promise<void> {
@@ -1737,7 +1738,14 @@ export class BotService {
     });
   }
 
-  private async showEntryCard(user: UserRecord, entryId: number, source: "operations" | "search" | "report" | "category", page: number, query?: string): Promise<void> {
+  private async showEntryCard(
+    user: UserRecord,
+    entryId: number,
+    source: "operations" | "search" | "report" | "category",
+    page: number,
+    query?: string,
+    notice?: string
+  ): Promise<void> {
     const entry = await this.repo.getEntryById(user.id, entryId);
     if (!entry) {
       await this.refreshEntryListByOrigin(user, source, page, query);
@@ -1773,6 +1781,7 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `${notice ? `${notice}\n\n` : ""}` +
         `${formatAmountByType(entry.amountMinor, entry.type, user.currencyLabel)}\n` +
         `${entry.categoryName}${entry.subcategoryName ? ` / ${entry.subcategoryName}` : ""}\n` +
         `${entry.description ? `${entry.description}\n` : ""}` +
@@ -1930,7 +1939,8 @@ export class BotService {
       Number(session.context.entryId),
       source === "search" ? "search" : source === "report" ? "report" : source === "category" ? "category" : "operations",
       Number(session.context.page ?? 0),
-      typeof session.context.query === "string" ? String(session.context.query) : undefined
+      typeof session.context.query === "string" ? String(session.context.query) : undefined,
+      "изменения сохранены"
     );
   }
 
@@ -3362,10 +3372,10 @@ export class BotService {
     return splitNowForUser(timezone);
   }
 
-  private async showData(user: UserRecord): Promise<void> {
+  private async showData(user: UserRecord, notice?: string): Promise<void> {
     await this.sendMessage({
       chat_id: user.chatId,
-      text: "данные",
+      text: `${notice ? `${notice}\n\n` : ""}данные`,
       reply_markup: kb([
         [{ text: BUTTONS.forThisBot, action: "data:this-bot" }],
         [{ text: BUTTONS.forOtherApps, action: "data:other-apps" }],
