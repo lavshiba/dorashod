@@ -393,6 +393,7 @@ export class BotService {
       await this.sendMessage({
         chat_id: user.chatId,
         text:
+          `<b>${BOT_TITLE}</b>\n\n` +
           `из записи удалось понять:\n\n${this.describeDraft(
             {
               type: parsed.type,
@@ -499,6 +500,7 @@ export class BotService {
       await this.sendMessage({
         chat_id: user.chatId,
         text:
+          `<b>${BOT_TITLE}</b>\n\n` +
           `файл загружен\n\n` +
           `внутри:\n` +
           `записи — ${snapshot.entries}\n` +
@@ -2746,7 +2748,10 @@ export class BotService {
 
     await this.sendMessage({
       chat_id: user.chatId,
-      text: prompts[field] ?? "пришли значение сообщением",
+      text:
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `изменить запись\n\n` +
+        `${prompts[field] ?? "пришли значение сообщением"}`,
       reply_markup: kb([[{ text: BUTTONS.cancel, action: "edit:back" }, { text: BUTTONS.main, action: "nav:home" }]])
     });
   }
@@ -5240,6 +5245,7 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `<b>${BOT_TITLE}</b>\n\n` +
         "действия с записями\n\n" +
         `выбрано: ${selectedIds.length}\n\n` +
         "что хочешь сделать?",
