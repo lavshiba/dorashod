@@ -94,11 +94,23 @@ export class BotService {
     }
 
     if (session.mode === "operations" && session.context.awaiting === "bulk-transfer-category") {
+      const type = String(session.context.bulkTransferType ?? "") as EntryType;
+      if ((type !== "income" && type !== "expense") || !text.trim()) {
+        await this.showBulkActions(user, String(session.context.bulkOrigin ?? "operations"), Number(session.context.bulkPage ?? 0));
+        return;
+      }
+      const category = await this.repo.ensureCategory(user.id, type, text.trim());
+      const shouldAskSubcategory = user.subcategoriesEnabled && (await this.repo.getSubcategoryCount(user.id, category.id)) > 0;
       await this.repo.saveSession(user.id, {
         ...session,
-        context: { ...session.context, transferCategoryName: text.trim(), awaiting: user.subcategoriesEnabled ? "bulk-transfer-subcategory" : undefined }
+        context: {
+          ...session.context,
+          transferCategoryName: text.trim(),
+          transferSubcategoryName: undefined,
+          awaiting: shouldAskSubcategory ? "bulk-transfer-subcategory" : undefined
+        }
       });
-      if (user.subcategoriesEnabled) {
+      if (shouldAskSubcategory) {
         await this.telegram.sendMessage({
           chat_id: user.chatId,
           text: "Напиши подкатегорию.",
@@ -3426,8 +3438,14 @@ export class BotService {
                 })
               ).items
           : await this.repo.getEntryList(user.id, page);
-    for (const item of items) {
-      selectedIds.add(item.id);
+    const itemIds = items.map((item) => item.id);
+    const allSelected = itemIds.length > 0 && itemIds.every((id) => selectedIds.has(id));
+    for (const itemId of itemIds) {
+      if (allSelected) {
+        selectedIds.delete(itemId);
+      } else {
+        selectedIds.add(itemId);
+      }
     }
     await this.repo.saveSession(user.id, {
       ...session,
