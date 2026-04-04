@@ -195,19 +195,12 @@ function splitNowForOffset(offset: string, current: Date): { date: string; time:
 }
 
 function parseRangePeriod(raw: string, todayIso: string): ParsedCustomPeriod | null {
-  let parts: string[] | null = null;
-  if (raw.includes(" по ")) {
-    parts = raw.split(/\s+по\s+/);
-  } else if (raw.includes(" — ")) {
-    parts = raw.split(/\s+—\s+/);
-  } else if (raw.includes(" - ")) {
-    parts = raw.split(/\s+-\s+/);
-  }
+  const parts = splitRangeParts(raw);
   if (!parts || parts.length !== 2) {
     return null;
   }
-  const left = parseCustomPeriodInput(parts[0], todayIso);
-  const right = parseCustomPeriodInput(parts[1], todayIso);
+  const left = parseCustomPeriodInput(cleanRangeToken(parts[0]), todayIso);
+  const right = parseCustomPeriodInput(cleanRangeToken(parts[1]), todayIso);
   if (left.status === "unparsed" || right.status === "unparsed" || !left.from || !right.to) {
     return null;
   }
@@ -218,6 +211,56 @@ function parseRangePeriod(raw: string, todayIso: string): ParsedCustomPeriod | n
     to: right.to,
     label: `${left.label} — ${right.label}`
   };
+}
+
+function splitRangeParts(raw: string): string[] | null {
+  const normalized = raw.trim().replace(/\s+/g, " ");
+  const prefixed = raw.match(/^с\s+(.+?)\s+по\s+(.+)$/);
+  if (prefixed) {
+    return [prefixed[1], prefixed[2]];
+  }
+  if (raw.includes(" по ")) {
+    return raw.split(/\s+по\s+/);
+  }
+  const emDash = raw.match(/^(.+?)\s*—\s*(.+)$/);
+  if (emDash) {
+    return [emDash[1], emDash[2]];
+  }
+  const wordTo = raw.match(/^(.+?)\s+до\s+(.+)$/);
+  if (wordTo) {
+    return [wordTo[1], wordTo[2]];
+  }
+  const dottedRange = raw.match(/^(\d{1,2}\.\d{1,2}(?:\.\d{4})?)\s*-\s*(\d{1,2}\.\d{1,2}(?:\.\d{4})?)$/);
+  if (dottedRange) {
+    return [dottedRange[1], dottedRange[2]];
+  }
+  const isoDateRange = raw.match(/^(\d{4}-\d{2}-\d{2})\s*-\s*(\d{4}-\d{2}-\d{2})$/);
+  if (isoDateRange) {
+    return [isoDateRange[1], isoDateRange[2]];
+  }
+  const monthRange = raw.match(/^(\d{2}\.\d{4})\s*-\s*(\d{2}\.\d{4})$/);
+  if (monthRange) {
+    return [monthRange[1], monthRange[2]];
+  }
+  const yearRange = raw.match(/^(\d{4})\s*-\s*(\d{4})$/);
+  if (yearRange) {
+    return [yearRange[1], yearRange[2]];
+  }
+  const isoMonthRange = normalized.match(/^(\d{4}-\d{2})\s*-\s*(\d{4}-\d{2})$/);
+  if (isoMonthRange) {
+    return [isoMonthRange[1], isoMonthRange[2]];
+  }
+  const dateWithMonthNameRange = normalized.match(
+    /^(\d{1,2}\s+[а-яё]+(?:\s+\d{4})?)\s*-\s*(\d{1,2}\s+[а-яё]+(?:\s+\d{4})?)$/
+  );
+  if (dateWithMonthNameRange) {
+    return [dateWithMonthNameRange[1], dateWithMonthNameRange[2]];
+  }
+  return null;
+}
+
+function cleanRangeToken(token: string): string {
+  return token.trim().replace(/^с\s+/, "").trim();
 }
 
 function parseMonthNamePeriod(raw: string, todayIso: string): ParsedCustomPeriod | null {
@@ -253,14 +296,40 @@ function parseMonthNamePeriod(raw: string, todayIso: string): ParsedCustomPeriod
     return null;
   }
   const month = monthNames[parts[0]];
-  if (!month) {
+  if (month) {
+    if (parts.length > 2) {
+      return null;
+    }
+    const year = parts[1] ? Number(parts[1]) : Number(todayIso.slice(0, 4));
+    if (!Number.isFinite(year)) {
+      return null;
+    }
+    return monthRange(year, month, parts.length === 1, parts.join(" "));
+  }
+
+  const day = Number(parts[0]);
+  const monthByName = monthNames[parts[1] ?? ""];
+  if (!Number.isFinite(day) || !monthByName) {
     return null;
   }
-  const year = parts[1] ? Number(parts[1]) : Number(todayIso.slice(0, 4));
+  if (parts.length > 3) {
+    return null;
+  }
+
+  const year = parts[2] ? Number(parts[2]) : Number(todayIso.slice(0, 4));
   if (!Number.isFinite(year)) {
     return null;
   }
-  return monthRange(year, month, parts.length === 1, parts.join(" "));
+  const date = toIsoDate(year, monthByName, day);
+  if (!date) {
+    return { status: "unparsed" };
+  }
+  return {
+    status: parts[2] ? "resolved" : "ambiguous",
+    from: date,
+    to: date,
+    label: parts[2] ? `${day} ${parts[1]} ${parts[2]}` : `${day} ${parts[1]}`
+  };
 }
 
 function monthRange(year: number, month: number, ambiguous: boolean, label: string): ParsedCustomPeriod {
