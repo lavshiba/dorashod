@@ -20,6 +20,7 @@
 
 - frozen словарь кнопок и onboarding progress
 - базовый парсинг одиночной записи и пачки записей
+- CSV-импорт: `;`, русские заголовки, вывод типа по знаку суммы, нечитаемая дата и отсутствие времени
 - health endpoint
 - post-deploy smoke skeleton
 - production health

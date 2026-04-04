@@ -3625,7 +3625,7 @@ function parseFullSnapshot(content: string):
   }
 }
 
-function parseEntriesImport(content: string): {
+export function parseEntriesImport(content: string): {
   entries: Array<Record<string, unknown>>;
   errors: Array<Record<string, unknown>>;
 } {
@@ -3684,8 +3684,10 @@ function parseEntriesImportCsv(content: string):
     return null;
   }
 
-  const headers = splitCsvLine(lines[0]).map((item) => item.trim().toLowerCase());
-  if (!headers.includes("type") && !headers.includes("тип")) {
+  const delimiter = detectCsvDelimiter(lines[0]);
+  const headers = splitCsvLine(lines[0], delimiter).map(normalizeImportHeader);
+  const hasCoreField = headers.includes("type") || headers.includes("amount") || headers.includes("category") || headers.includes("datetime") || headers.includes("date");
+  if (!hasCoreField) {
     return null;
   }
 
@@ -3693,22 +3695,13 @@ function parseEntriesImportCsv(content: string):
   const errors: Array<Record<string, unknown>> = [];
 
   for (const line of lines.slice(1)) {
-    const cells = splitCsvLine(line);
+    const cells = splitCsvLine(line, delimiter);
     const row: Record<string, unknown> = {};
     headers.forEach((header, index) => {
-      row[header] = cells[index] ?? "";
+      row[header] = normalizeImportValue(cells[index] ?? "");
     });
 
-    const normalized = {
-      type: row.type ?? row["тип"],
-      amount: row.amount ?? row["сумма"] ?? row["amount_minor"],
-      category: row.category ?? row["категория"],
-      subcategory: row.subcategory ?? row["подкатегория"],
-      description: row.description ?? row["описание"],
-      date: row.date ?? row["дата"],
-      time: row.time ?? row["время"]
-    };
-    const parsed = parseImportedEntry(normalized);
+    const parsed = parseImportedEntry(row);
     if ("error" in parsed) {
       errors.push({
         rawText: line,
@@ -3725,16 +3718,18 @@ function parseEntriesImportCsv(content: string):
 function parseImportedEntry(
   item: Record<string, unknown>
 ): { entry: Record<string, unknown> } | { error: string } {
-  const typeRaw = String(item.type ?? "").trim();
-  const type = typeRaw === "income" || typeRaw === "expense" ? typeRaw : null;
-  const amountMinor = parseImportedAmount(item.amount_minor ?? item.amount);
+  const rawAmount = item.amount_minor ?? item.amount;
+  const inferredType = parseImportedType(item.type ?? item.kind ?? item.direction ?? rawAmount);
+  const amountMinor = parseImportedAmount(rawAmount);
   const categoryName = String(item.category ?? item.categoryName ?? "").trim();
   const subcategoryName = String(item.subcategory ?? item.subcategoryName ?? "").trim();
-  const description = String(item.description ?? "").trim();
-  const parsedDate = parseImportedDate(String(item.date ?? item.entryDate ?? ""));
-  const parsedTime = parseImportedTime(String(item.time ?? item.entryTime ?? ""));
+  const description = String(item.description ?? item.comment ?? item.note ?? "").trim();
+  const dateSource = item.datetime ?? item.date ?? item.entryDate ?? item.createdAt ?? "";
+  const timeSource = item.time ?? item.entryTime ?? item.datetime ?? item.createdAt ?? "";
+  const parsedDate = parseImportedDate(String(dateSource));
+  const parsedTime = parseImportedTime(String(timeSource));
 
-  if (!type) {
+  if (!inferredType) {
     return { error: "не удалось понять тип" };
   }
   if (amountMinor === null) {
@@ -3746,7 +3741,7 @@ function parseImportedEntry(
 
   return {
     entry: {
-      type,
+      type: inferredType,
       amountMinor,
       categoryName,
       subcategoryName: subcategoryName || null,
@@ -3780,20 +3775,24 @@ function parseFixCandidate(rawText: string): {
 
 function parseImportedAmount(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) {
-    return Math.round(value);
+    return Math.round(Math.abs(value) < 100000000 ? Math.abs(value) * 100 : Math.abs(value));
   }
   const raw = String(value ?? "")
     .trim()
+    .replace(/\(null\)/gi, "")
     .replace(/\s+/g, "")
-    .replace(",", ".");
+    .replace(/[^0-9,.\-+]/g, "");
   if (!raw) {
     return null;
   }
-  const numeric = Number(raw);
+  const normalized = normalizeImportNumber(raw);
+  const numeric = Number(normalized);
   if (!Number.isFinite(numeric)) {
     return null;
   }
-  return Math.round(Math.abs(numeric) < 100000000 ? numeric * (raw.includes(".") ? 100 : 1) : numeric);
+  const usesDecimal = /[.,]\d{1,2}$/.test(normalized);
+  const abs = Math.abs(numeric);
+  return Math.round(abs < 100000000 ? abs * (usesDecimal ? 100 : 1) : abs);
 }
 
 function parseImportedDate(value: string): { readable: boolean; value: string | null } {
@@ -3801,8 +3800,25 @@ function parseImportedDate(value: string): { readable: boolean; value: string | 
   if (!raw || raw.toLowerCase() === "(null)") {
     return { readable: false, value: null };
   }
-  const normalized = raw.replace(" ", "T");
-  const parsed = new Date(normalized);
+  const normalized = raw.replace(/\s+/g, " ").trim();
+  const isoMatch = normalized.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    return { readable: true, value: `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}` };
+  }
+  const dottedMatch = normalized.match(/^(\d{1,2})[./](\d{1,2})[./](\d{4})/);
+  if (dottedMatch) {
+    const day = dottedMatch[1].padStart(2, "0");
+    const month = dottedMatch[2].padStart(2, "0");
+    const year = dottedMatch[3];
+    return { readable: true, value: `${year}-${month}-${day}` };
+  }
+  const slashYearFirst = normalized.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})/);
+  if (slashYearFirst) {
+    const month = slashYearFirst[2].padStart(2, "0");
+    const day = slashYearFirst[3].padStart(2, "0");
+    return { readable: true, value: `${slashYearFirst[1]}-${month}-${day}` };
+  }
+  const parsed = new Date(normalized.replace(" ", "T"));
   if (Number.isNaN(parsed.getTime())) {
     return { readable: false, value: null };
   }
@@ -3814,11 +3830,11 @@ function parseImportedTime(value: string): string | null {
   if (!raw || raw.toLowerCase() === "(null)") {
     return null;
   }
-  const match = raw.match(/(\d{2}):(\d{2})(?::\d{2})?/);
+  const match = raw.match(/(\d{1,2}):(\d{2})(?::\d{2})?/);
   if (!match) {
     return null;
   }
-  return `${match[1]}:${match[2]}`;
+  return `${match[1].padStart(2, "0")}:${match[2]}`;
 }
 
 function makeEntryDedupKey(entry: {
@@ -3847,7 +3863,7 @@ function stringifyImportRow(row: Record<string, unknown>): string {
     .join(", ");
 }
 
-function splitCsvLine(line: string): string[] {
+function splitCsvLine(line: string, delimiter = ","): string[] {
   const result: string[] = [];
   let current = "";
   let inQuotes = false;
@@ -3858,7 +3874,7 @@ function splitCsvLine(line: string): string[] {
       inQuotes = !inQuotes;
       continue;
     }
-    if (char === "," && !inQuotes) {
+    if (char === delimiter && !inQuotes) {
       result.push(current.trim());
       current = "";
       continue;
@@ -3867,4 +3883,102 @@ function splitCsvLine(line: string): string[] {
   }
   result.push(current.trim());
   return result;
+}
+
+function detectCsvDelimiter(headerLine: string): string {
+  const delimiters = [",", ";", "\t"];
+  let best = ",";
+  let bestCount = -1;
+  for (const delimiter of delimiters) {
+    const count = headerLine.split(delimiter).length;
+    if (count > bestCount) {
+      best = delimiter;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+function normalizeImportHeader(value: string): string {
+  const raw = normalizeName(value).replace(/[^a-zа-я0-9]+/g, " ").trim();
+  const map: Record<string, string> = {
+    type: "type",
+    тип: "type",
+    direction: "type",
+    kind: "type",
+    operation: "type",
+    "transaction type": "type",
+    amount: "amount",
+    "amount minor": "amount",
+    amountminor: "amount",
+    сумма: "amount",
+    value: "amount",
+    money: "amount",
+    date: "date",
+    дата: "date",
+    day: "date",
+    datetime: "datetime",
+    "date time": "datetime",
+    "дата время": "datetime",
+    "created at": "datetime",
+    created: "datetime",
+    "время операции": "datetime",
+    time: "time",
+    время: "time",
+    category: "category",
+    категория: "category",
+    "category name": "category",
+    subcategory: "subcategory",
+    подкатегория: "subcategory",
+    "sub category": "subcategory",
+    note: "description",
+    notes: "description",
+    comment: "description",
+    description: "description",
+    описание: "description"
+  };
+  return map[raw] ?? raw;
+}
+
+function normalizeImportValue(value: string): string {
+  const trimmed = value.trim().replace(/^"(.*)"$/, "$1").trim();
+  if (trimmed.toLowerCase() === "(null)") {
+    return "";
+  }
+  return trimmed;
+}
+
+function parseImportedType(value: unknown): EntryType | null {
+  const raw = String(value ?? "").trim().toLowerCase();
+  if (!raw) {
+    return null;
+  }
+  if (["income", "доход", "+", "in", "credit", "deposit"].includes(raw)) {
+    return "income";
+  }
+  if (["expense", "расход", "-", "out", "debit", "withdrawal"].includes(raw)) {
+    return "expense";
+  }
+  if (raw.startsWith("+")) {
+    return "income";
+  }
+  if (raw.startsWith("-")) {
+    return "expense";
+  }
+  return null;
+}
+
+function normalizeImportNumber(raw: string): string {
+  const commas = (raw.match(/,/g) ?? []).length;
+  const dots = (raw.match(/\./g) ?? []).length;
+  if (commas > 0 && dots > 0) {
+    if (raw.lastIndexOf(",") > raw.lastIndexOf(".")) {
+      return raw.replace(/\./g, "").replace(",", ".");
+    }
+    return raw.replace(/,/g, "");
+  }
+  if (commas > 0) {
+    return raw.replace(",", ".");
+  }
+  return raw;
 }
