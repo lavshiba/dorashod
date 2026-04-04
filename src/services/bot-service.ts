@@ -828,7 +828,7 @@ export class BotService {
         return;
       case "category:hide":
         await this.repo.hideCategory(user.id, Number(params.id));
-        await this.showCategoryList(user, String(params.type) as EntryType, Number(params.page ?? "0"));
+        await this.showCategoryList(user, String(params.type) as EntryType, Number(params.page ?? "0"), "категория скрыта");
         return;
       case "category:restore":
         await this.repo.restoreCategory(user.id, Number(params.id));
@@ -838,7 +838,8 @@ export class BotService {
           String(params.type) as EntryType,
           Number(params.page ?? "0"),
           Number(params.subpage ?? "0"),
-          "list"
+          "list",
+          "категория возвращена"
         );
         return;
       case "categories:hidden":
@@ -868,10 +869,10 @@ export class BotService {
       case "subcategory:hide":
         await this.repo.hideSubcategory(user.id, Number(params.id));
         if (params.source === "hidden") {
-          await this.showHiddenSubcategoryList(user, Number(params.categoryId), String(params.type) as EntryType, Number(params.page ?? "0"), Number(params.subpage ?? "0"));
+          await this.showHiddenSubcategoryList(user, Number(params.categoryId), String(params.type) as EntryType, Number(params.page ?? "0"), Number(params.subpage ?? "0"), "подкатегория скрыта");
           return;
         }
-        await this.showCategoryCard(user, Number(params.categoryId), String(params.type) as EntryType, Number(params.page ?? "0"), Number(params.subpage ?? "0"), "list");
+        await this.showCategoryCard(user, Number(params.categoryId), String(params.type) as EntryType, Number(params.page ?? "0"), Number(params.subpage ?? "0"), "list", "подкатегория скрыта");
         return;
       case "category:edit":
         await this.startCategoryRename(
@@ -903,7 +904,8 @@ export class BotService {
           String(params.type) as EntryType,
           Number(params.page ?? "0"),
           Number(params.subpage ?? "0"),
-          params.source === "hidden" ? "list" : String(params.source ?? "list")
+          params.source === "hidden" ? "list" : String(params.source ?? "list"),
+          "подкатегория возвращена"
         );
         return;
       case "category:delete":
@@ -2445,14 +2447,14 @@ export class BotService {
     });
   }
 
-  private async showCategoryList(user: UserRecord, type: EntryType, page: number): Promise<void> {
+  private async showCategoryList(user: UserRecord, type: EntryType, page: number, notice?: string): Promise<void> {
     const sortMode = type === "expense" ? user.sortModeExpense : user.sortModeIncome;
     const categories = await this.repo.listCategories(user.id, type, false, page, 6, sortMode);
     const hiddenCount = await this.repo.getHiddenCategoryCount(user.id, type);
     if (categories.length === 0) {
       await this.sendMessage({
         chat_id: user.chatId,
-        text: "пока категорий нет\nможно создать категорию",
+        text: `${notice ? `${notice}\n\n` : ""}пока категорий нет\nможно создать категорию`,
         reply_markup: kb([
           [{ text: BUTTONS.addCategory, action: "categories:add", payload: { type } }],
           ...(hiddenCount > 0 ? [[{ text: BUTTONS.hidden, action: "categories:hidden", payload: { type, page: 0 } }]] : []),
@@ -2470,7 +2472,7 @@ export class BotService {
     }));
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `${type === "expense" ? "расходы" : "доходы"}\n\n${lines}`,
+      text: `${notice ? `${notice}\n\n` : ""}${type === "expense" ? "расходы" : "доходы"}\n\n${lines}`,
       reply_markup: kb([
         numberButtons,
         [{ text: BUTTONS.addCategory, action: "categories:add", payload: { type } }],
@@ -2481,13 +2483,13 @@ export class BotService {
     });
   }
 
-  private async showHiddenCategoryList(user: UserRecord, type: EntryType, page: number): Promise<void> {
+  private async showHiddenCategoryList(user: UserRecord, type: EntryType, page: number, notice?: string): Promise<void> {
     const sortMode = type === "expense" ? user.sortModeExpense : user.sortModeIncome;
     const categories = await this.repo.listCategories(user.id, type, true, page, 6, sortMode);
     if (categories.length === 0) {
       await this.sendMessage({
         chat_id: user.chatId,
-        text: "пока скрытых категорий нет\nможно вернуться назад",
+        text: `${notice ? `${notice}\n\n` : ""}пока скрытых категорий нет\nможно вернуться назад`,
         reply_markup: kb([[{ text: BUTTONS.back, action: "categories:list", payload: { type, page: 0 } }, { text: BUTTONS.main, action: "nav:home" }]])
       });
       return;
@@ -2502,7 +2504,7 @@ export class BotService {
 
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `скрытые\n\n${lines}`,
+      text: `${notice ? `${notice}\n\n` : ""}скрытые\n\n${lines}`,
       reply_markup: kb([
         numberButtons,
         ...(page > 0 || categories.length === 6 ? [buildPageRow(page, categories.length === 6, "categories:hidden", { type })] : []),
@@ -2549,12 +2551,12 @@ export class BotService {
     });
   }
 
-  private async showHiddenSubcategoryList(user: UserRecord, categoryId: number, type: EntryType, page: number, subpage = 0): Promise<void> {
+  private async showHiddenSubcategoryList(user: UserRecord, categoryId: number, type: EntryType, page: number, subpage = 0, notice?: string): Promise<void> {
     const allItems = await this.repo.listHiddenSubcategories(user.id, categoryId, user.sortModeSubcategories);
     if (allItems.length === 0) {
       await this.sendMessage({
         chat_id: user.chatId,
-        text: "пока скрытых подкатегорий нет\nможно вернуться назад",
+        text: `${notice ? `${notice}\n\n` : ""}пока скрытых подкатегорий нет\nможно вернуться назад`,
         reply_markup: kb([[{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page, subpage, source: "list" } }, { text: BUTTONS.main, action: "nav:home" }]])
       });
       return;
@@ -2569,7 +2571,7 @@ export class BotService {
     }));
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `скрытые\n\n${lines}`,
+      text: `${notice ? `${notice}\n\n` : ""}скрытые\n\n${lines}`,
       reply_markup: kb([
         numberButtons,
         ...(page > 0 || allItems.length > (page + 1) * 6 ? [buildPageRow(page, allItems.length > (page + 1) * 6, "subcategories:hidden", { categoryId, type, subpage })] : []),
@@ -2619,10 +2621,10 @@ export class BotService {
     }
     await this.repo.deleteCategory(user.id, categoryId);
     if (source === "hidden") {
-      await this.showHiddenCategoryList(user, type, page);
+      await this.showHiddenCategoryList(user, type, page, "категория удалена");
       return;
     }
-    await this.showCategoryList(user, type, page);
+    await this.showCategoryList(user, type, page, "категория удалена");
   }
 
   private async handleSubcategoryDelete(user: UserRecord, subcategoryId: number, categoryId: number, type: EntryType, page: number, subpage = 0, source = "list"): Promise<void> {
@@ -2641,10 +2643,10 @@ export class BotService {
     }
     await this.repo.deleteSubcategory(user.id, subcategoryId);
     if (source === "hidden") {
-      await this.showHiddenSubcategoryList(user, categoryId, type, page, subpage);
+      await this.showHiddenSubcategoryList(user, categoryId, type, page, subpage, "подкатегория удалена");
       return;
     }
-    await this.showCategoryCard(user, categoryId, type, page, subpage, "list");
+    await this.showCategoryCard(user, categoryId, type, page, subpage, "list", "подкатегория удалена");
   }
 
   private async startCategoryRename(user: UserRecord, categoryId: number, type: EntryType, page: number, subpage = 0, source = "list"): Promise<void> {
@@ -2687,7 +2689,7 @@ export class BotService {
       return;
     }
     await this.repo.ensureCategory(user.id, type, text);
-    await this.showCategoryList(user, type, 0);
+    await this.showCategoryList(user, type, 0, "категория создана");
   }
 
   private async handleSubcategoryCreate(user: UserRecord, categoryId: number, type: EntryType, page: number, text: string, subpage = 0, source = "list"): Promise<void> {
@@ -2704,7 +2706,7 @@ export class BotService {
       return;
     }
     await this.repo.ensureSubcategory(user.id, categoryId, text);
-    await this.showCategoryCard(user, categoryId, type, page, subpage, source);
+    await this.showCategoryCard(user, categoryId, type, page, subpage, source, "подкатегория создана");
   }
 
   private async handleCategoryRename(user: UserRecord, categoryId: number, type: EntryType, page: number, text: string, subpage = 0, source = "list"): Promise<void> {
@@ -2729,7 +2731,7 @@ export class BotService {
       return;
     }
     await this.repo.renameCategory(user.id, categoryId, text);
-    await this.showCategoryCard(user, categoryId, type, page, subpage, source);
+    await this.showCategoryCard(user, categoryId, type, page, subpage, source, "изменения сохранены");
   }
 
   private async handleSubcategoryRename(user: UserRecord, subcategoryId: number, categoryId: number, type: EntryType, page: number, text: string, subpage = 0, source = "list"): Promise<void> {
@@ -2754,7 +2756,7 @@ export class BotService {
       return;
     }
     await this.repo.renameSubcategory(user.id, subcategoryId, text);
-    await this.showSubcategoryCard(user, subcategoryId, categoryId, type, page, subpage, source);
+    await this.showSubcategoryCard(user, subcategoryId, categoryId, type, page, subpage, source, "изменения сохранены");
   }
 
   private async startCategoryTransferAll(user: UserRecord, categoryId: number, type: EntryType, page: number, subpage = 0, source = "list"): Promise<void> {
