@@ -376,28 +376,7 @@ export class BotService {
       context: { importId, awaitingUploadType: undefined }
     });
 
-    if (preview.errors.length > 0) {
-      await this.telegram.sendMessage({
-        chat_id: user.chatId,
-        text: `не удалось прочитать: ${preview.errors.length}\n\nкраткие причины:\n${preview.errors.slice(0, 3).join("\n")}`,
-        reply_markup: kb([
-          [{ text: `добавить ${preview.entries.length}`, action: "data:import-entries-add-all", payload: { importId } }],
-          [{ text: `исправить ${preview.errors.length}`, action: "data:import-fix-open", payload: { importId } }],
-          [{ text: BUTTONS.back, action: "data:other-apps" }, { text: BUTTONS.main, action: "nav:home" }]
-        ])
-      });
-      return;
-    }
-
-    await this.telegram.sendMessage({
-      chat_id: user.chatId,
-      text: `в другие приложения\n\nзаписей: ${preview.entries.length}`,
-      reply_markup: kb([
-        [{ text: BUTTONS.merge, action: "data:import-entries-merge", payload: { importId } }],
-        [{ text: BUTTONS.addAll, action: "data:import-entries-add-all", payload: { importId } }],
-        [{ text: BUTTONS.back, action: "data:other-apps" }, { text: BUTTONS.main, action: "nav:home" }]
-      ])
-    });
+    await this.showEntriesImportPreview(user, importId);
   }
 
   private async handleCallback(callbackQuery: TelegramUpdate["callback_query"]): Promise<void> {
@@ -3119,6 +3098,49 @@ export class BotService {
     });
   }
 
+  private async showEntriesImportPreview(user: UserRecord, importId: number): Promise<void> {
+    const pendingImport = await this.repo.getImport(user.id, importId);
+    if (!pendingImport) {
+      await this.showDataOtherApps(user);
+      return;
+    }
+
+    const previewEntries = Array.isArray(pendingImport.previewJson.entries)
+      ? (pendingImport.previewJson.entries as Array<Record<string, unknown>>)
+      : [];
+    const previewErrors = Array.isArray(pendingImport.previewJson.errors)
+      ? (pendingImport.previewJson.errors as Array<Record<string, unknown>>)
+      : [];
+    const reasonLines = previewErrors
+      .slice(0, 3)
+      .map((item) => `- ${String(item.reason ?? "не удалось прочитать строку")}`)
+      .join("\n");
+
+    const text =
+      `в другие приложения\n\n` +
+      `записей: ${previewEntries.length}` +
+      (previewErrors.length > 0
+        ? `\nне удалось прочитать: ${previewErrors.length}\n\nкраткие причины:\n${reasonLines}`
+        : "");
+
+    const rows: Array<Array<{ text: string; action: string; payload?: Record<string, string | number | undefined> }>> = [
+      [{ text: BUTTONS.merge, action: "data:import-entries-merge", payload: { importId } }],
+      [{ text: BUTTONS.addAll, action: "data:import-entries-add-all", payload: { importId } }]
+    ];
+
+    if (previewErrors.length > 0) {
+      rows.push([{ text: `исправить ${previewErrors.length}`, action: "data:import-fix-open", payload: { importId } }]);
+    }
+
+    rows.push([{ text: BUTTONS.back, action: "data:other-apps" }, { text: BUTTONS.main, action: "nav:home" }]);
+
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text,
+      reply_markup: kb(rows)
+    });
+  }
+
   private async applyEntriesImport(user: UserRecord, importId: number, mergeOnly: boolean): Promise<void> {
     const pendingImport = await this.repo.getImport(user.id, importId);
     if (!pendingImport) {
@@ -3257,7 +3279,7 @@ export class BotService {
     const entries = Array.isArray(preview.entries) ? ([...preview.entries] as Array<Record<string, unknown>>) : [];
     const current = errors[index];
     if (!current) {
-      await this.showDataOtherApps(user);
+      await this.showEntriesImportPreview(user, importId);
       return;
     }
     const parsed = parseFixCandidate(String(current.rawText ?? ""));
@@ -3305,7 +3327,7 @@ export class BotService {
         chat_id: user.chatId,
         text: "проблемных строк больше нет"
       });
-      await this.showDataOtherApps(user);
+      await this.showEntriesImportPreview(user, importId);
       return;
     }
 
