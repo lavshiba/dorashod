@@ -1034,6 +1034,7 @@ export class BotService {
         await this.sendMessage({
           chat_id: user.chatId,
           text:
+            `<b>${BOT_TITLE}</b>\n\n` +
             "новая подкатегория\n" +
             `категория: ${await this.describeCategoryName(user.id, Number(params.categoryId))}\n\n` +
             "пришли название подкатегории сообщением",
@@ -3351,6 +3352,7 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `<b>${BOT_TITLE}</b>\n\n` +
         "изменить категорию\n\n" +
         "сейчас:\n" +
         `${category?.name ?? ""}\n\n` +
@@ -3369,6 +3371,7 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `<b>${BOT_TITLE}</b>\n\n` +
         "изменить подкатегорию\n\n" +
         "сейчас:\n" +
         `${subcategory?.name ?? ""}\n\n` +
@@ -3488,6 +3491,7 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `<b>${BOT_TITLE}</b>\n\n` +
         "перенести все записи\n\n" +
         "пришли категорию сообщением\n\n" +
         "если в новой категории нет нужных подкатегорий,\n" +
@@ -3508,6 +3512,7 @@ export class BotService {
       await this.sendMessage({
         chat_id: user.chatId,
         text:
+          `<b>${BOT_TITLE}</b>\n\n` +
           "перенести все записи\n\n" +
           "это уже эта категория",
         reply_markup: kb([[{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]])
@@ -4599,6 +4604,7 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `<b>${BOT_TITLE}</b>\n\n` +
         "импорт завершён\n\n" +
         `добавлено:\n${added} записей\n${analysis.createdCategories} категории\n${analysis.createdSubcategories} подкатегорий`,
       reply_markup: kb([
