@@ -1283,6 +1283,30 @@ export class BotService {
           String(params.type) as EntryType,
           Number(params.page ?? "0"),
           Number(params.subpage ?? "0"),
+          String(params.source ?? "list"),
+          Number(params.chooserPage ?? "0"),
+          String(params.showAll ?? "0") === "1"
+        );
+        return;
+      case "category:transfer-all-target":
+        await this.startCategoryTransferAllTarget(
+          user,
+          Number(params.id),
+          Number(params.target),
+          String(params.type) as EntryType,
+          Number(params.page ?? "0"),
+          Number(params.subpage ?? "0"),
+          String(params.source ?? "list")
+        );
+        return;
+      case "category:transfer-all-apply":
+        await this.applyCategoryTransferAllTarget(
+          user,
+          Number(params.id),
+          Number(params.target),
+          String(params.type) as EntryType,
+          Number(params.page ?? "0"),
+          Number(params.subpage ?? "0"),
           String(params.source ?? "list")
         );
         return;
@@ -1294,7 +1318,9 @@ export class BotService {
           String(params.type) as EntryType,
           Number(params.page ?? "0"),
           Number(params.subpage ?? "0"),
-          String(params.source ?? "list")
+          String(params.source ?? "list"),
+          Number(params.chooserPage ?? "0"),
+          String(params.showAll ?? "0") === "1"
         );
         return;
       case "subcategory:transfer-to":
@@ -3828,21 +3854,40 @@ export class BotService {
     await this.showSubcategoryCard(user, subcategoryId, categoryId, type, page, subpage, source, "изменения сохранены");
   }
 
-  private async startCategoryTransferAll(user: UserRecord, categoryId: number, type: EntryType, page: number, subpage = 0, source = "list"): Promise<void> {
-    await this.repo.saveSession(user.id, {
-      mode: "categories",
-      stack: ["categories"],
-      context: { awaiting: "transfer-category-name", categoryId, type, page, subpage, source }
-    });
+  private async startCategoryTransferAll(
+    user: UserRecord,
+    categoryId: number,
+    type: EntryType,
+    page: number,
+    subpage = 0,
+    source = "list",
+    chooserPage = 0,
+    showAll = false
+  ): Promise<void> {
+    const sourceCategory = await this.repo.getCategory(user.id, categoryId);
+    if (!sourceCategory) {
+      await this.showCategoryCard(user, categoryId, type, page, subpage, source);
+      return;
+    }
+    const allCategories = (await this.repo.listCategories(user.id, type, false, 0, 200, type === "expense" ? user.sortModeExpense : user.sortModeIncome))
+      .filter((item) => item.id !== categoryId);
+    const pageSize = showAll ? 6 : 3;
+    const visibleItems = allCategories.slice(chooserPage * pageSize, chooserPage * pageSize + pageSize);
     await this.sendMessage({
       chat_id: user.chatId,
       text:
         `<b>${BOT_TITLE}</b>\n\n` +
-        "перенести все записи\n\n" +
-        "пришли категорию сообщением\n\n" +
-        "если в новой категории нет нужных подкатегорий,\n" +
-        "подкатегории у записей очистятся",
-      reply_markup: kb([[{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]])
+        `перенести все записи\n\n` +
+        `из категории:\n${sourceCategory.name}\n\n` +
+        `выбери, куда перенести записи`,
+      reply_markup: kb([
+        ...visibleItems.map((item) => [{ text: item.name, action: "category:transfer-all-target", payload: { id: categoryId, target: item.id, type, page, subpage, source } }]),
+        ...(!showAll && allCategories.length > pageSize ? [[{ text: BUTTONS.allCategories, action: "category:transfer-all", payload: { id: categoryId, type, page, subpage, source, chooserPage: 0, showAll: 1 } }]] : []),
+        ...(showAll && (chooserPage > 0 || allCategories.length > (chooserPage + 1) * pageSize)
+          ? [buildPageRow(chooserPage, allCategories.length > (chooserPage + 1) * pageSize, "category:transfer-all", { id: categoryId, type, page, subpage, source, showAll: 1 })]
+          : []),
+        [{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
     });
   }
 
@@ -3878,22 +3923,114 @@ export class BotService {
     );
   }
 
-  private async startSubcategoryTransferAll(user: UserRecord, subcategoryId: number, categoryId: number, type: EntryType, page: number, subpage = 0, source = "list"): Promise<void> {
+  private async startCategoryTransferAllTarget(
+    user: UserRecord,
+    categoryId: number,
+    targetCategoryId: number,
+    type: EntryType,
+    page: number,
+    subpage = 0,
+    source = "list"
+  ): Promise<void> {
+    if (categoryId === targetCategoryId) {
+      await this.sendMessage({
+        chat_id: user.chatId,
+        text:
+          `<b>${BOT_TITLE}</b>\n\n` +
+          `перенести все записи\n\n` +
+          `это уже эта категория`,
+        reply_markup: kb([[{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]])
+      });
+      return;
+    }
+    const sourceSubcategories = await this.repo.getSubcategories(user.id, categoryId, user.sortModeSubcategories);
+    const targetSubcategories = await this.repo.getSubcategories(user.id, targetCategoryId, user.sortModeSubcategories);
+    const targetNames = new Set(targetSubcategories.map((item) => normalizeName(item.name)));
+    const needsWarning = sourceSubcategories.some((item) => !targetNames.has(normalizeName(item.name)));
+    if (!needsWarning) {
+      await this.applyCategoryTransferAllTarget(user, categoryId, targetCategoryId, type, page, subpage, source);
+      return;
+    }
+    await this.sendMessage({
+      chat_id: user.chatId,
+      text:
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `если в новой категории нет таких подкатегорий,\n` +
+        `они будут убраны у записей`,
+      reply_markup: kb([
+        [{ text: BUTTONS.continue, action: "category:transfer-all-apply", payload: { id: categoryId, target: targetCategoryId, type, page, subpage, source } }],
+        [{ text: BUTTONS.back, action: "category:transfer-all", payload: { id: categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async applyCategoryTransferAllTarget(
+    user: UserRecord,
+    categoryId: number,
+    targetCategoryId: number,
+    type: EntryType,
+    page: number,
+    subpage = 0,
+    source = "list"
+  ): Promise<void> {
+    const targetCategory = await this.repo.getCategory(user.id, targetCategoryId);
+    if (!targetCategory) {
+      await this.startCategoryTransferAll(user, categoryId, type, page, subpage, source);
+      return;
+    }
+    const result = await this.repo.transferAllCategoryEntries(user, categoryId, type, targetCategory.name);
+    if (result.status === "same") {
+      await this.sendMessage({
+        chat_id: user.chatId,
+        text:
+          `<b>${BOT_TITLE}</b>\n\n` +
+          `перенести все записи\n\n` +
+          `это уже эта категория`,
+        reply_markup: kb([[{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]])
+      });
+      return;
+    }
+    await this.showCategoryCard(
+      user,
+      categoryId,
+      type,
+      page,
+      subpage,
+      source,
+      `записи перенесены: ${result.movedCount}` +
+        (result.clearedSubcategoryCount > 0 ? `\nбез подкатегории: ${result.clearedSubcategoryCount}` : "")
+    );
+  }
+
+  private async startSubcategoryTransferAll(
+    user: UserRecord,
+    subcategoryId: number,
+    categoryId: number,
+    type: EntryType,
+    page: number,
+    subpage = 0,
+    source = "list",
+    chooserPage = 0,
+    showAll = false
+  ): Promise<void> {
     const subcategories = (await this.repo.getSubcategories(user.id, categoryId, user.sortModeSubcategories)).filter((item) => item.id !== subcategoryId && !item.hiddenAt);
-    const visibleItems = subcategories.slice(page * 6, page * 6 + 6);
-    const lines = visibleItems.length ? visibleItems.map((item, index) => `${index + 1}. ${item.name}`).join("\n") : "";
+    const currentSubcategory = await this.repo.getSubcategory(user.id, subcategoryId);
+    const pageSize = showAll ? 6 : 3;
+    const visibleItems = subcategories.slice(chooserPage * pageSize, chooserPage * pageSize + pageSize);
     await this.sendMessage({
       chat_id: user.chatId,
       text:
         `<b>${BOT_TITLE}</b>\n\n` +
         `перенести все записи\n\n` +
-        `${subcategories.length ? `${lines}\n\nвыбери подкатегорию` : "можно снять подкатегорию у всех записей"}`,
+        `из подкатегории:\n${currentSubcategory?.name ?? ""}\n\n` +
+        `выбери, куда перенести записи`,
       reply_markup: kb([
-        ...(visibleItems.length
-          ? [visibleItems.map((item, index) => ({ text: `${index + 1}`, action: "subcategory:transfer-to", payload: { id: subcategoryId, target: item.id, categoryId, type, page, subpage, source } }))]
-          : []),
-        ...(subcategories.length && (page > 0 || subcategories.length > 6) ? [buildPageRow(page, subcategories.length > (page + 1) * 6, "subcategory:transfer-all", { id: subcategoryId, categoryId, type, subpage, source })] : []),
+        ...visibleItems.map((item) => [{ text: item.name, action: "subcategory:transfer-to", payload: { id: subcategoryId, target: item.id, categoryId, type, page, subpage, source } }]),
         [{ text: BUTTONS.withoutSubcategory, action: "subcategory:transfer-to", payload: { id: subcategoryId, categoryId, type, page, subpage, source } }],
+        ...(!showAll && subcategories.length > pageSize ? [[{ text: BUTTONS.allSubcategories, action: "subcategory:transfer-all", payload: { id: subcategoryId, categoryId, type, page, subpage, source, chooserPage: 0, showAll: 1 } }]] : []),
+        ...(showAll && (chooserPage > 0 || subcategories.length > (chooserPage + 1) * pageSize)
+          ? [buildPageRow(chooserPage, subcategories.length > (chooserPage + 1) * pageSize, "subcategory:transfer-all", { id: subcategoryId, categoryId, type, subpage, source, showAll: 1 })]
+          : []),
         [{ text: BUTTONS.back, action: "subcategory:view", payload: { id: subcategoryId, categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
