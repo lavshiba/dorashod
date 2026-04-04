@@ -4966,13 +4966,16 @@ export class BotService {
     const text = `${notice ? `${notice}\n\n` : ""}${topBlock}`;
 
     const rows: Array<Array<{ text: string; action: string; payload?: Record<string, string | number | undefined> }>> = previewErrors.length > 0
-      ? [[{ text: `${BUTTONS.addNoun} ${previewEntries.length}`, action: "data:import-entries-add-all", payload: { importId } }]]
+      ? []
       : [
           [{ text: BUTTONS.merge, action: "data:import-entries-merge", payload: { importId } }],
           [{ text: BUTTONS.addAll, action: "data:import-entries-add-all", payload: { importId } }]
         ];
 
     if (previewErrors.length > 0) {
+      if (previewEntries.length > 0) {
+        rows.push([{ text: `${BUTTONS.addNoun} ${previewEntries.length}`, action: "data:import-entries-add-all", payload: { importId } }]);
+      }
       rows.push([{ text: `${BUTTONS.fix} ${previewErrors.length}`, action: "data:import-fix-open", payload: { importId } }]);
     }
 
