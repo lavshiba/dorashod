@@ -2866,11 +2866,9 @@ export class BotService {
         `<b>${BOT_TITLE}</b>\n\n` +
         `поиск записей\n\n` +
         `здесь можно искать\n` +
-        `по сумме, дате, типу,\n` +
-        `категории, подкатегории\n` +
-        `и описанию\n\n` +
-        `чтобы ввести запрос,\n` +
-        `нажми кнопку ниже`,
+        `по сумме, дате, периоду,\n` +
+        `типу, категории,\n` +
+        `подкатегории и описанию`,
       reply_markup: kb([
         [{ text: BUTTONS.enterQuery, action: "search:prompt" }],
         [{ text: BUTTONS.today, action: "search:quick", payload: { period: "today" } }, { text: BUTTONS.yesterday, action: "search:quick", payload: { period: "yesterday" } }],
@@ -2975,7 +2973,8 @@ export class BotService {
         chat_id: user.chatId,
         text:
           `<b>${BOT_TITLE}</b>\n\n` +
-          `записи за ${title}\n\n` +
+          `поиск записей\n\n` +
+          `запрос:\n${title}\n\n` +
           `ничего не найдено`,
         reply_markup: kb([
           [{ text: BUTTONS.newSearch, action: "search:open" }],
@@ -2996,7 +2995,13 @@ export class BotService {
 
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `<b>${BOT_TITLE}</b>\n\nзаписи за ${title}\n\n${notice ? `${notice}\n\n` : ""}${lines}`,
+      text:
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `поиск записей\n\n` +
+        `${notice ? `${notice}\n\n` : ""}` +
+        `запрос:\n${title}\n\n` +
+        `найдено: ${data.total}\n\n` +
+        `${lines}`,
       reply_markup: kb([
         ...chunkButtons(numberButtons, 3),
         [{ text: BUTTONS.newSearch, action: "search:open" }],
@@ -3021,8 +3026,7 @@ export class BotService {
       text:
         `<b>${BOT_TITLE}</b>\n\n` +
         `отчёт\n\n` +
-        `выбери быстрый период\n` +
-        `или задай свой`,
+        `выбери период`,
       reply_markup: kb([
         [{ text: BUTTONS.today, action: "reports:quick", payload: { period: "today" } }, { text: BUTTONS.yesterday, action: "reports:quick", payload: { period: "yesterday" } }],
         [{ text: BUTTONS.week, action: "reports:quick", payload: { period: "week" } }, { text: BUTTONS.month, action: "reports:quick", payload: { period: "month" } }],
@@ -3056,7 +3060,7 @@ export class BotService {
           `за этот период записей нет`,
         reply_markup: kb([
           [{ text: BUTTONS.anotherPeriod, action: "reports:open" }],
-          [{ text: BUTTONS.main, action: "nav:home" }]
+          [{ text: BUTTONS.back, action: "reports:open" }, { text: BUTTONS.main, action: "nav:home" }]
         ])
       });
       return;
@@ -3121,7 +3125,6 @@ export class BotService {
       text:
         `<b>${BOT_TITLE}</b>\n\n` +
         `${type === "expense" ? "расходы" : "доходы"} за ${String(session.context.reportTitle ?? "")}\n\n` +
-        `всего: ${formatAmountByType(breakdown.items.reduce((sum, item) => sum + item.amountMinor, 0), type, user.currencyLabel)}\n\n` +
         `${lines}`,
       reply_markup: kb([
         ...chunkButtons(numberButtons, 4),
@@ -4027,7 +4030,6 @@ export class BotService {
       chat_id: user.chatId,
       text:
         `<b>${BOT_TITLE}</b>\n\n` +
-        `${notice ? `${notice}\n\n` : ""}` +
         `настройки\n\n` +
         `здесь можно настроить,\n` +
         `как бот показывает и сохраняет записи\n\n` +
@@ -4036,7 +4038,8 @@ export class BotService {
         `время — ${formatTimezoneSettingLabel(user.timezoneName)}\n` +
         `подкатегории — ${user.subcategoriesEnabled ? "включены" : "выключены"}\n` +
         `быстрый доступ — ${formatQuickAccessMode(user.quickAccessModeExpense)}\n` +
-        `сортировка — ${formatSortingMode(user.sortModeExpense)}`,
+        `сортировка — ${formatSortingMode(user.sortModeExpense)}` +
+        `${notice ? `\n\n${notice}` : ""}`,
       reply_markup: kb([
         [{ text: BUTTONS.currency, action: "settings:currency" }, { text: BUTTONS.time, action: "settings:time" }],
         [{ text: BUTTONS.subcategories, action: "settings:subcategories" }],
@@ -4162,6 +4165,25 @@ export class BotService {
       await this.showQuickAccessSubcategorySection(user, Number(section.split(":")[1]));
       return;
     }
+    if (section === "subcategories") {
+      await this.sendMessage({
+        chat_id: user.chatId,
+        text:
+          `<b>${BOT_TITLE}</b>\n\n` +
+          `быстрый доступ\n` +
+          `подкатегорий\n\n` +
+          `это подкатегории,\n` +
+          `которые бот показывает сверху\n` +
+          `внутри выбранной категории\n\n` +
+          `что настраиваем?` +
+          `${notice ? `\n\n${notice}` : ""}`,
+        reply_markup: kb([
+          [{ text: BUTTONS.chooseCategory, action: "settings:quick-access-subcategory-categories", payload: { page: 0 } }],
+          [{ text: BUTTONS.back, action: "settings:quick-access" }, { text: BUTTONS.main, action: "nav:home" }]
+        ])
+      });
+      return;
+    }
     const current =
       section === "expense"
         ? user.quickAccessModeExpense
@@ -4172,22 +4194,7 @@ export class BotService {
     const slotRows: Array<Array<{ text: string; action: string; payload?: Record<string, string | number | undefined> }>> = [];
     let extraLines = "";
 
-    if (section === "subcategories" && current === "custom") {
-      const categories = await this.listQuickAccessSubcategoryCategories(user);
-      extraLines =
-        "\n\nэто подкатегории,\n" +
-        "которые бот показывает сверху\n" +
-        "внутри выбранной категории\n\n" +
-        "что настраиваем?";
-      slotRows.push([{ text: BUTTONS.chooseCategory, action: "settings:quick-access-subcategory-categories", payload: { page: 0 } }]);
-      if (categories.length === 0) {
-        extraLines =
-          "\n\nэто подкатегории,\n" +
-          "которые бот показывает сверху\n" +
-          "внутри выбранной категории\n\n" +
-          "что настраиваем?";
-      }
-    } else if (current === "custom") {
+    if (current === "custom") {
       const slots = await this.getQuickAccessSlots(user, section);
       const slotLabels = Array.from({ length: 4 }, (_, index) => {
         const item = slots[index];
@@ -4213,12 +4220,10 @@ export class BotService {
       chat_id: user.chatId,
       text:
         `<b>${BOT_TITLE}</b>\n\n` +
-        `${notice ? `${notice}\n\n` : ""}` +
         `быстрый доступ\n` +
         `${title}` +
-        (section === "subcategories"
-          ? `${extraLines}`
-          : `\n\nэто категории, которые бот\nпоказывает сверху\nдля быстрого выбора\n\nсейчас:\n${current === "custom" ? BUTTONS.own : current === "disabled" ? BUTTONS.off : BUTTONS.automatically}${extraLines}`),
+        `\n\nэто категории, которые бот\nпоказывает сверху\nдля быстрого выбора\n\nсейчас:\n${current === "custom" ? BUTTONS.own : current === "disabled" ? BUTTONS.off : BUTTONS.automatically}${extraLines}` +
+        `${notice ? `\n\n${notice}` : ""}`,
       reply_markup: kb([
         ...modeRows,
         ...slotRows,
@@ -4670,10 +4675,10 @@ export class BotService {
       chat_id: user.chatId,
       text:
         `<b>${BOT_TITLE}</b>\n\n` +
-        `${notice ? `${notice}\n\n` : ""}` +
         `данные\n\n` +
         `выбери, куда хочешь\n` +
-        `сохранить или загрузить данные`,
+        `сохранить или загрузить данные` +
+        `${notice ? `\n\n${notice}` : ""}`,
       reply_markup: kb([
         [{ text: BUTTONS.forThisBot, action: "data:this-bot" }],
         [{ text: BUTTONS.forOtherApps, action: "data:other-apps" }],
