@@ -776,11 +776,17 @@ export class BotService {
           Number(params.id),
           params.source === "report" ? "report" : params.source === "search" ? "search" : params.source === "category" ? "category" : "operations",
           Number(params.page ?? "0"),
-          typeof params.query === "string" ? String(params.query) : undefined
+          this.resolveSearchQuery(session, typeof params.query === "string" ? String(params.query) : undefined)
         );
         return;
       case "entry:move":
-        await this.moveEntryCard(user, Number(params.id), String(params.source ?? "operations"), Number(params.page ?? "0"), typeof params.query === "string" ? String(params.query) : undefined);
+        await this.moveEntryCard(
+          user,
+          Number(params.id),
+          String(params.source ?? "operations"),
+          Number(params.page ?? "0"),
+          this.resolveSearchQuery(session, typeof params.query === "string" ? String(params.query) : undefined)
+        );
         return;
       case "entry:edit":
         await this.startEditEntry(
@@ -788,7 +794,7 @@ export class BotService {
           Number(params.id),
           Number(params.page ?? "0"),
           params.source === "report" ? "report" : params.source === "search" ? "search" : params.source === "category" ? "category" : "operations",
-          typeof params.query === "string" ? String(params.query) : undefined
+          this.resolveSearchQuery(session, typeof params.query === "string" ? String(params.query) : undefined)
         );
         return;
       case "entry:change-time":
@@ -797,7 +803,7 @@ export class BotService {
           Number(params.id),
           Number(params.page ?? "0"),
           params.source === "report" ? "report" : params.source === "search" ? "search" : params.source === "category" ? "category" : "operations",
-          typeof params.query === "string" ? String(params.query) : undefined,
+          this.resolveSearchQuery(session, typeof params.query === "string" ? String(params.query) : undefined),
           "time"
         );
         return;
@@ -807,7 +813,7 @@ export class BotService {
           Number(params.id),
           params.source === "report" ? "report" : params.source === "search" ? "search" : params.source === "category" ? "category" : "operations",
           Number(params.page ?? "0"),
-          typeof params.query === "string" ? String(params.query) : undefined
+          this.resolveSearchQuery(session, typeof params.query === "string" ? String(params.query) : undefined)
         );
         return;
       case "entry:confirm-delete":
@@ -867,7 +873,7 @@ export class BotService {
         await this.showQuickSearch(user, String(params.period));
         return;
       case "search:results":
-        await this.showSearchResults(user, String(params.query ?? ""), Number(params.page ?? "0"));
+        await this.showSearchResults(user, this.resolveSearchQuery(session, typeof params.query === "string" ? String(params.query) : undefined), Number(params.page ?? "0"));
         return;
       case "search:select-mode":
         if (session.context.searchPeriod) {
@@ -881,10 +887,16 @@ export class BotService {
           );
           return;
         }
-        await this.showSearchResults(user, String(params.query ?? ""), Number(params.page ?? "0"), true);
+        await this.showSearchResults(user, this.resolveSearchQuery(session, typeof params.query === "string" ? String(params.query) : undefined), Number(params.page ?? "0"), true);
         return;
       case "search:view":
-        await this.showEntryCard(user, Number(params.id), "search", Number(params.page ?? "0"), String(params.query ?? ""));
+        await this.showEntryCard(
+          user,
+          Number(params.id),
+          "search",
+          Number(params.page ?? "0"),
+          this.resolveSearchQuery(session, typeof params.query === "string" ? String(params.query) : undefined)
+        );
         return;
       case "edit:field":
         await this.promptEditField(user, String(params.field));
@@ -1799,6 +1811,16 @@ export class BotService {
         await sleep(150);
       }
     }
+  }
+
+  private resolveSearchQuery(session: UiSession, query?: string): string {
+    if (typeof query === "string" && query.length > 0) {
+      return query;
+    }
+    if (typeof session.context.query === "string" && session.context.query.length > 0) {
+      return String(session.context.query);
+    }
+    return "";
   }
 
   private async showStart(user: UserRecord): Promise<void> {
