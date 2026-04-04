@@ -4905,6 +4905,12 @@ export class BotService {
       queue?: number;
     };
 
+    await this.saveSessionKeepingScreen(user.id, {
+      mode: "data",
+      stack: ["data"],
+      context: { importId, importStep: "full-preview" }
+    });
+
     await this.sendMessage({
       chat_id: user.chatId,
       text:
@@ -4925,6 +4931,11 @@ export class BotService {
   }
 
   private async showFullImportConfirm(user: UserRecord, importId: number): Promise<void> {
+    await this.saveSessionKeepingScreen(user.id, {
+      mode: "data",
+      stack: ["data"],
+      context: { importId, importStep: "full-confirm" }
+    });
     await this.sendMessage({
       chat_id: user.chatId,
       text:
@@ -5017,6 +5028,12 @@ export class BotService {
 
     rows.push([{ text: BUTTONS.back, action: "data:other-apps" }, { text: BUTTONS.main, action: "nav:home" }]);
 
+    await this.saveSessionKeepingScreen(user.id, {
+      mode: "data",
+      stack: ["data"],
+      context: { importId, importStep: "entries-preview" }
+    });
+
     await this.sendMessage({
       chat_id: user.chatId,
       text: `<b>${BOT_TITLE}</b>\n\n${text}`,
@@ -5039,6 +5056,11 @@ export class BotService {
       rows.push([{ text: `добавить ${analysis.addedEntries}`, action: "data:import-entries-merge-confirm", payload: { importId } }]);
     }
     rows.push([{ text: BUTTONS.back, action: "data:import-preview", payload: { importId } }, { text: BUTTONS.main, action: "nav:home" }]);
+    await this.saveSessionKeepingScreen(user.id, {
+      mode: "data",
+      stack: ["data"],
+      context: { importId, importStep: "entries-merge-plan" }
+    });
     await this.sendMessage({
       chat_id: user.chatId,
       text:
@@ -5065,6 +5087,11 @@ export class BotService {
       await this.showEntriesImportMergePlan(user, importId);
       return;
     }
+    await this.saveSessionKeepingScreen(user.id, {
+      mode: "data",
+      stack: ["data"],
+      context: { importId, importStep: "entries-merge-confirm" }
+    });
     await this.sendMessage({
       chat_id: user.chatId,
       text:
@@ -5093,6 +5120,11 @@ export class BotService {
       rows.push([{ text: `добавить ${analysis.addedEntries}`, action: "data:import-entries-add-all-confirm", payload: { importId } }]);
     }
     rows.push([{ text: BUTTONS.back, action: "data:import-preview", payload: { importId } }, { text: BUTTONS.main, action: "nav:home" }]);
+    await this.saveSessionKeepingScreen(user.id, {
+      mode: "data",
+      stack: ["data"],
+      context: { importId, importStep: "entries-add-all-plan" }
+    });
     await this.sendMessage({
       chat_id: user.chatId,
       text:
@@ -5119,6 +5151,11 @@ export class BotService {
       await this.showEntriesImportAddAllPlan(user, importId);
       return;
     }
+    await this.saveSessionKeepingScreen(user.id, {
+      mode: "data",
+      stack: ["data"],
+      context: { importId, importStep: "entries-add-all-confirm" }
+    });
     await this.sendMessage({
       chat_id: user.chatId,
       text:
@@ -5241,6 +5278,7 @@ export class BotService {
     }
 
     await this.repo.deleteImport(user.id, importId);
+    await this.clearSessionKeepingScreen(user.id);
     await this.sendMessage({
       chat_id: user.chatId,
       text:
