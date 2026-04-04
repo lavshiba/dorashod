@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { formatTelegramScreenText, isTelegramMessageNotModified } from "@/utils/telegram-text";
 
 describe("telegram screen text", () => {
-  it("adds air between single-line blocks without changing wording", () => {
+  it("keeps exact manual line breaks from frozen screens", () => {
     expect(formatTelegramScreenText("пока записей нет\nможно добавить доход\nили просто написать запись")).toBe(
-      "пока записей нет\n\nможно добавить доход\n\nили просто написать запись"
+      "пока записей нет\nможно добавить доход\nили просто написать запись"
     );
   });
 

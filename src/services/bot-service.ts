@@ -41,6 +41,8 @@ export class BotService {
 
   private didEditCurrentCallback = false;
 
+  private readonly lastBotMessageByChat = new Map<string, number>();
+
   constructor(
     private readonly repo: Repository,
     private readonly telegram: TelegramApi
@@ -1208,10 +1210,12 @@ export class BotService {
           reply_markup: payload.reply_markup
         });
         this.didEditCurrentCallback = true;
+        this.lastBotMessageByChat.set(String(payload.chat_id), this.callbackContext.messageId);
         return;
       } catch (error) {
         if (isTelegramMessageNotModified(error)) {
           this.didEditCurrentCallback = true;
+          this.lastBotMessageByChat.set(String(payload.chat_id), this.callbackContext.messageId);
           return;
         }
 
@@ -1219,10 +1223,28 @@ export class BotService {
       }
     }
 
-    await this.telegram.sendMessage({
+    const knownMessageId = this.lastBotMessageByChat.get(String(payload.chat_id));
+    if (!options?.forceNew && knownMessageId) {
+      try {
+        await this.telegram.editMessageText({
+          chat_id: String(payload.chat_id),
+          message_id: knownMessageId,
+          text,
+          reply_markup: payload.reply_markup
+        });
+        return;
+      } catch (error) {
+        if (isTelegramMessageNotModified(error)) {
+          return;
+        }
+      }
+    }
+
+    const messageId = await this.telegram.sendMessage({
       ...payload,
       text
     });
+    this.lastBotMessageByChat.set(String(payload.chat_id), messageId);
   }
 
   private async showStart(user: UserRecord): Promise<void> {

@@ -15,11 +15,12 @@ export class TelegramApi {
     this.fileBaseUrl = `https://api.telegram.org/file/bot${token}`;
   }
 
-  async sendMessage(payload: TelegramMessagePayload): Promise<void> {
-    await this.call("sendMessage", {
+  async sendMessage(payload: TelegramMessagePayload): Promise<number> {
+    const result = await this.call<{ message_id: number }>("sendMessage", {
       ...payload,
       parse_mode: "HTML"
     });
+    return result.message_id;
   }
 
   async editMessageText(payload: TelegramEditMessagePayload): Promise<void> {

@@ -4,9 +4,7 @@ export function formatTelegramScreenText(text: string): string {
     return normalized;
   }
 
-  return normalized
-    .replace(/\n{3,}/g, "\n\n")
-    .replace(/([^\n])\n([^\n])/g, "$1\n\n$2");
+  return normalized.replace(/\n{3,}/g, "\n\n");
 }
 
 export function isTelegramMessageNotModified(error: unknown): boolean {
