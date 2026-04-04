@@ -4999,6 +4999,7 @@ export class BotService {
 
     const parsed = parseFixCandidate(String(current.rawText ?? ""));
     const understood = this.describeQueueParsed(parsed, user.currencyLabel) || "пока ничего не удалось понять";
+    const missingLabel = parsed.missing.length > 0 ? formatMissingField(String(parsed.missing[0])) : BUTTONS.edit;
     const buttons =
       parsed.type && parsed.amountMinor && parsed.category
         ? [
@@ -5008,7 +5009,7 @@ export class BotService {
             [{ text: BUTTONS.main, action: "nav:home" }]
           ]
         : [
-            [{ text: BUTTONS.edit, action: "data:import-fix-edit", payload: { importId, index } }],
+            [{ text: missingLabel, action: "data:import-fix-edit", payload: { importId, index } }],
             [{ text: BUTTONS.skip, action: "data:import-fix-skip", payload: { importId, index } }],
             [{ text: BUTTONS.main, action: "nav:home" }]
           ];
@@ -5519,7 +5520,16 @@ export class BotService {
       subcategoryName: parsed.subcategory ? String(parsed.subcategory) : undefined,
       description: parsed.description ? String(parsed.description) : undefined
     };
-    return this.describeDraft(draft, currencyLabel);
+    const lines = this.describeDraft(draft, currencyLabel)
+      .split("\n")
+      .filter(Boolean);
+    const entryDate = typeof parsed.entryDate === "string" || parsed.entryDate === null ? (parsed.entryDate as string | null) : undefined;
+    const entryTime = typeof parsed.entryTime === "string" || parsed.entryTime === null ? (parsed.entryTime as string | null) : undefined;
+    const isDateMissing = Boolean(parsed.isDateMissing);
+    if (typeof entryDate !== "undefined" || typeof entryTime !== "undefined") {
+      lines.push(`дата и время: ${formatEntryReadableDate(entryDate ?? null, entryTime ?? null, isDateMissing)}`);
+    }
+    return lines.join("\n");
   }
 
   private describeDraftDateTime(draft: DraftPayload): string {
