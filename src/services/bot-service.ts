@@ -715,6 +715,25 @@ export class BotService {
       case "bulk:transfer":
         await this.startBulkTransfer(user, String(params.origin), Number(params.page ?? "0"));
         return;
+      case "bulk:transfer-category":
+        if (String(params.showAll ?? "") === "2" && params.id) {
+          const category = await this.repo.getCategory(user.id, Number(params.id));
+          if (category) {
+            await this.promptBulkTransferSubcategory(user, String(params.origin), Number(params.page ?? "0"), category.id, category.name);
+            return;
+          }
+        }
+        await this.startBulkTransferCategoryChooser(user, String(params.origin), Number(params.page ?? "0"));
+        return;
+      case "bulk:transfer-pick-category":
+        await this.pickBulkTransferCategory(user, String(params.origin), Number(params.page ?? "0"), Number(params.id));
+        return;
+      case "bulk:transfer-subcategory":
+        await this.startBulkTransferSubcategoryMode(user, String(params.origin), Number(params.page ?? "0"));
+        return;
+      case "bulk:transfer-pick-subcategory":
+        await this.pickBulkTransferSubcategory(user, String(params.origin), Number(params.page ?? "0"), Number(params.id));
+        return;
       case "bulk:transfer-skip-subcategory":
         await this.applyBulkTransfer(user);
         return;
@@ -5508,7 +5527,6 @@ export class BotService {
       mode: "operations",
       context: {
         ...session.context,
-        awaiting: "bulk-transfer-category",
         bulkOrigin: origin,
         bulkPage: page,
         bulkTransferType: entries[0]?.type
@@ -5521,9 +5539,176 @@ export class BotService {
         `<b>${BOT_TITLE}</b>\n\n` +
         "перенести записи\n\n" +
         `выбрано: ${selectedIds.length}\n\n` +
-        "пришли категорию сообщением",
-      reply_markup: kb([[{ text: BUTTONS.cancel, action: "select:actions", payload: { origin, page } }, { text: BUTTONS.main, action: "nav:home" }]])
+        "что хочешь изменить?",
+      reply_markup: kb([
+        [{ text: BUTTONS.categoryOnly, action: "bulk:transfer-category", payload: { origin, page } }],
+        [{ text: BUTTONS.subcategoryOnly, action: "bulk:transfer-subcategory", payload: { origin, page } }],
+        [{ text: BUTTONS.back, action: "select:actions", payload: { origin, page } }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
     });
+  }
+
+  private async startBulkTransferCategoryChooser(
+    user: UserRecord,
+    origin: string,
+    page: number
+  ): Promise<void> {
+    const session = await this.repo.getSession(user.id);
+    const selectedIds = Array.isArray(session.context.selectedIds) ? (session.context.selectedIds as number[]) : [];
+    const type = String(session.context.bulkTransferType ?? "") as EntryType;
+    if (!selectedIds.length || (type !== "income" && type !== "expense")) {
+      await this.showBulkActions(user, origin, page);
+      return;
+    }
+
+    const allCategories = await this.repo.listCategories(user.id, type, false, 0, 200, type === "expense" ? user.sortModeExpense : user.sortModeIncome);
+    const numberButtons = allCategories.map((item) => ({
+      text: item.name,
+      action: "bulk:transfer-pick-category",
+      payload: { origin, page, id: item.id }
+    }));
+
+    await this.sendMessage({
+      chat_id: user.chatId,
+      text:
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `перенести записи\n\n` +
+        `выбрано: ${selectedIds.length}\n\n` +
+        `куда перенести?`,
+      reply_markup: kb([
+        ...chunkButtons(numberButtons, 2),
+        [{ text: BUTTONS.back, action: "bulk:transfer", payload: { origin, page } }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async pickBulkTransferCategory(user: UserRecord, origin: string, page: number, categoryId: number): Promise<void> {
+    const session = await this.repo.getSession(user.id);
+    const type = String(session.context.bulkTransferType ?? "") as EntryType;
+    const category = await this.repo.getCategory(user.id, categoryId);
+    if (!category || category.type !== type) {
+      await this.startBulkTransferCategoryChooser(user, origin, page);
+      return;
+    }
+
+    const shouldAskSubcategory = user.subcategoriesEnabled && (await this.repo.getSubcategoryCount(user.id, category.id)) > 0;
+    await this.repo.saveSession(user.id, {
+      ...session,
+      context: {
+        ...session.context,
+        transferCategoryName: category.name,
+        transferSubcategoryName: undefined,
+        awaiting: shouldAskSubcategory ? "bulk-transfer-subcategory" : undefined
+      }
+    });
+
+    if (!shouldAskSubcategory) {
+      await this.applyBulkTransfer(user);
+      return;
+    }
+
+    await this.promptBulkTransferSubcategory(user, origin, page, category.id, category.name);
+  }
+
+  private async promptBulkTransferSubcategory(
+    user: UserRecord,
+    origin: string,
+    page: number,
+    categoryId: number,
+    categoryName: string,
+    chooserPage = 0,
+    showAll = false
+  ): Promise<void> {
+    const subcategories = await this.repo.getSubcategories(user.id, categoryId, user.sortModeSubcategories);
+    const items = showAll ? subcategories : subcategories.slice(chooserPage * 6, chooserPage * 6 + 6);
+    const rows = chunkButtons(
+      items.map((item) => ({
+        text: item.name,
+        action: "bulk:transfer-pick-subcategory",
+        payload: { origin, page, id: item.id }
+      })),
+      2
+    );
+
+    await this.sendMessage({
+      chat_id: user.chatId,
+      text:
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `перенести записи\n\n` +
+        `категория: ${categoryName}\n\n` +
+        `выбери подкатегорию\n` +
+        `или напиши её сообщением`,
+      reply_markup: kb([
+        ...rows,
+        [{ text: BUTTONS.withoutSubcategory, action: "bulk:transfer-skip-subcategory" }],
+        [{ text: BUTTONS.back, action: "bulk:transfer-category", payload: { origin, page } }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async startBulkTransferSubcategoryMode(user: UserRecord, origin: string, page: number): Promise<void> {
+    const session = await this.repo.getSession(user.id);
+    const selectedIds = Array.isArray(session.context.selectedIds) ? (session.context.selectedIds as number[]) : [];
+    const entries = (await Promise.all(selectedIds.map((id) => this.repo.getEntryById(user.id, id)))).filter(Boolean) as EntryRecord[];
+    if (!entries.length) {
+      await this.showBulkActions(user, origin, page);
+      return;
+    }
+
+    const categoryIds = new Set(entries.map((entry) => entry.categoryId));
+    if (categoryIds.size !== 1) {
+      await this.sendMessage({
+        chat_id: user.chatId,
+        text:
+          `<b>${BOT_TITLE}</b>\n\n` +
+          `перенести записи\n\n` +
+          `подкатегорию можно изменить\n` +
+          `только у записей\n` +
+          `из одной категории`,
+        reply_markup: kb([
+          [{ text: BUTTONS.back, action: "bulk:transfer", payload: { origin, page } }],
+          [{ text: BUTTONS.main, action: "nav:home" }]
+        ])
+      });
+      return;
+    }
+
+    const first = entries[0];
+    const category = await this.repo.getCategory(user.id, first.categoryId);
+    const currentSubcategory = first.subcategoryId ? await this.repo.getSubcategory(user.id, first.subcategoryId) : null;
+    await this.sendMessage({
+      chat_id: user.chatId,
+      text:
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `перенести записи\n\n` +
+        `выбрано: ${selectedIds.length}\n` +
+        `сейчас: ${category?.name ?? ""}${currentSubcategory ? ` → ${currentSubcategory.name}` : ""}\n\n` +
+        `куда перенести?`,
+      reply_markup: kb([
+        [{ text: BUTTONS.toAnotherSubcategory, action: "bulk:transfer-category", payload: { origin, page, id: first.categoryId, showAll: 2 } }],
+        [{ text: BUTTONS.withoutSubcategory, action: "bulk:remove-subcategory-confirm", payload: { origin, page } }],
+        [{ text: BUTTONS.toAnotherCategory, action: "bulk:transfer-category", payload: { origin, page } }],
+        [{ text: BUTTONS.back, action: "bulk:transfer", payload: { origin, page } }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async pickBulkTransferSubcategory(user: UserRecord, origin: string, page: number, subcategoryId: number): Promise<void> {
+    const session = await this.repo.getSession(user.id);
+    const subcategory = await this.repo.getSubcategory(user.id, subcategoryId);
+    if (!subcategory) {
+      await this.showBulkActions(user, origin, page);
+      return;
+    }
+    await this.repo.saveSession(user.id, {
+      ...session,
+      context: {
+        ...session.context,
+        transferSubcategoryName: subcategory.name,
+        awaiting: undefined
+      }
+    });
+    await this.applyBulkTransfer(user);
   }
 
   private async applyBulkTransfer(user: UserRecord): Promise<void> {
