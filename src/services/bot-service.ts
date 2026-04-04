@@ -126,8 +126,17 @@ export class BotService {
       if (shouldAskSubcategory) {
         await this.sendMessage({
           chat_id: user.chatId,
-          text: "Напиши подкатегорию.",
-          reply_markup: kb([[{ text: BUTTONS.skip, action: "bulk:transfer-skip-subcategory" }, { text: BUTTONS.main, action: "nav:home" }]])
+          text:
+            `<b>${BOT_TITLE}</b>\n\n` +
+            `перенести записи\n\n` +
+            `выбрано: ${(Array.isArray(session.context.selectedIds) ? (session.context.selectedIds as number[]) : []).length}\n` +
+            `категория: ${category.name}\n\n` +
+            `выбери подкатегорию\n` +
+            `или напиши её сообщением`,
+          reply_markup: kb([
+            [{ text: BUTTONS.withoutSubcategory, action: "bulk:transfer-skip-subcategory" }],
+            [{ text: BUTTONS.back, action: "select:actions", payload: { origin: String(session.context.bulkOrigin ?? "operations"), page: Number(session.context.bulkPage ?? 0) } }, { text: BUTTONS.main, action: "nav:home" }]
+          ])
         });
         return;
       }
@@ -250,17 +259,28 @@ export class BotService {
         });
         await this.sendMessage({
           chat_id: user.chatId,
-          text: `период понят не до конца\n\nкак бот понял:\n${parsed.label}\n\nподтверди или напиши период ещё раз`,
+          text:
+            `<b>${BOT_TITLE}</b>\n\n` +
+            `я понял так:\n\n` +
+            `${parsed.label}`,
           reply_markup: kb([
-            [{ text: BUTTONS.save, action: "reports:custom-confirm" }],
-            [{ text: BUTTONS.back, action: "reports:open" }, { text: BUTTONS.main, action: "nav:home" }]
+            [{ text: "показать отчёт", action: "reports:custom-confirm" }],
+            [{ text: BUTTONS.fix, action: "reports:custom" }],
+            [{ text: BUTTONS.main, action: "nav:home" }]
           ])
         });
         return;
       }
       await this.sendMessage({
         chat_id: user.chatId,
-        text: `период понят не до конца\n\nкак бот понял:\n${text}\n\nподтверди или напиши период ещё раз`,
+        text:
+          `<b>${BOT_TITLE}</b>\n\n` +
+          `не понял период\n\n` +
+          `пришли ещё раз\n\n` +
+          `например:\n` +
+          `03.04\n` +
+          `апрель 2024\n` +
+          `03.04–10.04`,
         reply_markup: kb([[{ text: BUTTONS.back, action: "reports:open" }, { text: BUTTONS.main, action: "nav:home" }]])
       });
       return;
@@ -405,7 +425,11 @@ export class BotService {
       if (session.mode !== "data" || !session.context.awaitingUploadType) {
         await this.sendMessage({
           chat_id: user.chatId,
-          text: "данные\n\nвыбери, куда хочешь\nсохранить или загрузить данные",
+          text:
+            `<b>${BOT_TITLE}</b>\n\n` +
+            `данные\n\n` +
+            `выбери, куда хочешь\n` +
+            `сохранить или загрузить данные`,
           reply_markup: kb([[{ text: BUTTONS.data, action: "data:open" }, { text: BUTTONS.main, action: "nav:home" }]])
         });
         return;
@@ -419,7 +443,11 @@ export class BotService {
       if (!snapshot) {
         await this.sendMessage({
           chat_id: user.chatId,
-          text: "не удалось прочитать файл\n\nпришли другой файл\nили вернись назад",
+          text:
+            `<b>${BOT_TITLE}</b>\n\n` +
+            `не удалось прочитать файл\n\n` +
+            `пришли другой файл\n` +
+            `или вернись назад`,
           reply_markup: kb([[{ text: BUTTONS.back, action: "data:this-bot" }, { text: BUTTONS.main, action: "nav:home" }]])
         });
         return;
@@ -778,7 +806,10 @@ export class BotService {
         await this.repo.saveSession(user.id, { mode: "search", stack: ["home"], context: { awaiting: "query" } });
         await this.sendMessage({
           chat_id: user.chatId,
-          text: "поиск записей\n\nпришли запрос сообщением",
+          text:
+            `<b>${BOT_TITLE}</b>\n\n` +
+            `поиск записей\n\n` +
+            `пришли запрос сообщением`,
           reply_markup: kb([[{ text: BUTTONS.cancel, action: "search:open" }, { text: BUTTONS.main, action: "nav:home" }]])
         });
         return;
@@ -1356,7 +1387,10 @@ export class BotService {
         });
         await this.sendMessage({
           chat_id: user.chatId,
-          text: "пришли исправленную строку сообщением",
+          text:
+            `<b>${BOT_TITLE}</b>\n\n` +
+            `исправить импорт\n\n` +
+            `пришли исправленную строку сообщением`,
           reply_markup: kb([[{ text: BUTTONS.cancel, action: "data:import-fix-open", payload: { importId: params.importId } }, { text: BUTTONS.main, action: "nav:home" }]])
         });
         return;
@@ -1961,8 +1995,17 @@ export class BotService {
     }
     await this.sendMessage({
       chat_id: user.chatId,
-      text: "Напиши описание.",
-      reply_markup: kb([[{ text: BUTTONS.skip, action: "add:skip-description" }]])
+      text:
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `новая запись\n\n` +
+        `${this.describeDraft(draft.payload, user.currencyLabel)}\n\n` +
+        `пришли описание сообщением\n` +
+        `или пропусти этот шаг`,
+      reply_markup: kb([
+        [{ text: BUTTONS.skip, action: "add:skip-description" }],
+        [{ text: BUTTONS.back, action: "add:pick-category", payload: { id: category.id } }],
+        [{ text: BUTTONS.main, action: "nav:home" }]
+      ])
     });
   }
 
@@ -3467,7 +3510,10 @@ export class BotService {
     const lines = visibleItems.length ? visibleItems.map((item, index) => `${index + 1}. ${item.name}`).join("\n") : "";
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `перенести все записи\n\n${subcategories.length ? `${lines}\n\nвыбери подкатегорию` : "можно снять подкатегорию у всех записей"}`,
+      text:
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `перенести все записи\n\n` +
+        `${subcategories.length ? `${lines}\n\nвыбери подкатегорию` : "можно снять подкатегорию у всех записей"}`,
       reply_markup: kb([
         ...(visibleItems.length
           ? [visibleItems.map((item, index) => ({ text: `${index + 1}`, action: "subcategory:transfer-to", payload: { id: subcategoryId, target: item.id, categoryId, type, page, subpage, source } }))]
@@ -3634,7 +3680,11 @@ export class BotService {
   private async showCurrencySettings(user: UserRecord, notice?: string): Promise<void> {
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `${notice ? `${notice}\n\n` : ""}валюта\n\nвыбери, как показывать суммы`,
+      text:
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `${notice ? `${notice}\n\n` : ""}` +
+        `валюта\n\n` +
+        `выбери, как показывать суммы`,
       reply_markup: kb([
         [{ text: BUTTONS.ruble, action: "settings:set-currency", payload: { code: "RUB", label: "₽" } }],
         [{ text: BUTTONS.dollar, action: "settings:set-currency", payload: { code: "USD", label: "$" } }],
@@ -3899,7 +3949,12 @@ export class BotService {
     const lines = items.map((item, index) => `${index + 1}. ${item.name}`).join("\n");
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `быстрый доступ\nподкатегорий\n\n${lines}\n\nвыбери категорию`,
+      text:
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `быстрый доступ\n` +
+        `подкатегорий\n\n` +
+        `${lines}\n\n` +
+        `выбери категорию`,
       reply_markup: kb([
         items.map((item, index) => ({ text: String(index + 1), action: "settings:quick-access-slot", payload: { section: `subcategory:${item.id}`, slot } })),
         ...(page > 0 || merged.length > (page + 1) * 6 ? [buildPageRow(page, merged.length > (page + 1) * 6, "settings:quick-access-slot", { section: "subcategories", slot })] : []),
@@ -4052,7 +4107,9 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
-        `быстрый доступ\nподкатегорий\n\n` +
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `быстрый доступ\n` +
+        `подкатегорий\n\n` +
         `${items
           .map((item, index) => `${index + 1}. ${item.type === "expense" ? BUTTONS.expense : BUTTONS.income} · ${item.name}`)
           .join("\n")}\n\n` +
@@ -4137,7 +4194,12 @@ export class BotService {
     if (categories.length === 0) {
       await this.sendMessage({
         chat_id: user.chatId,
-        text: "пока категорий нет\nможно вернуться назад",
+        text:
+          `<b>${BOT_TITLE}</b>\n\n` +
+          `сортировка\n` +
+          `подкатегорий\n\n` +
+          `пока категорий нет\n\n` +
+          `можно вернуться назад`,
         reply_markup: kb([[{ text: BUTTONS.back, action: "settings:sorting-section", payload: { section: "subcategories" } }, { text: BUTTONS.main, action: "nav:home" }]])
       });
       return;
@@ -4146,7 +4208,12 @@ export class BotService {
     const lines = categories.map((item, index) => `${index + 1}. ${item.name}`).join("\n");
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `сортировка\nподкатегорий\n\n${lines}\n\nвыбери категорию`,
+      text:
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `сортировка\n` +
+        `подкатегорий\n\n` +
+        `${lines}\n\n` +
+        `выбери категорию`,
       reply_markup: kb([
         categories.map((item, index) => ({
           text: String(index + 1),
