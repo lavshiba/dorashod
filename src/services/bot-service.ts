@@ -732,6 +732,16 @@ export class BotService {
       case "subcategory:entries":
         await this.showCategoryEntries(user, Number(params.categoryId), Number(params.id), String(params.type) as EntryType, Number(params.page ?? "0"));
         return;
+      case "category:entries-select":
+        await this.showCategoryEntries(
+          user,
+          Number(params.categoryId),
+          params.id ? Number(params.id) : undefined,
+          String(params.type) as EntryType,
+          Number(params.page ?? "0"),
+          true
+        );
+        return;
       case "settings:open":
         await this.showSettings(user);
         return;
@@ -2111,7 +2121,24 @@ export class BotService {
       text: `все записи\n\n${lines}`,
       reply_markup: kb([
         numberButtons,
-        [{ text: BUTTONS.multipleSelect, action: "noop" }],
+        [
+          {
+            text: BUTTONS.multipleSelect,
+            action: "category:entries-select",
+            payload: {
+              categoryId,
+              ...(typeof subcategoryId === "number" ? { id: subcategoryId } : {}),
+              type,
+              page
+            }
+          }
+        ],
+        ...(selectMode
+          ? [
+              [{ text: BUTTONS.chooseAll, action: "select:all", payload: { origin: "category", page } }],
+              ...(selectedIds.size > 0 ? [[{ text: `действия: ${selectedIds.size}`, action: "select:actions", payload: { origin: "category", page } }]] : [])
+            ]
+          : []),
         [{ text: BUTTONS.back, action: subcategoryId ? "subcategory:view" : "category:view", payload: subcategoryId ? { id: subcategoryId, categoryId, type, page: 0 } : { id: categoryId, type, page: 0 } }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
@@ -2439,6 +2466,17 @@ export class BotService {
       );
       return;
     }
+    if (origin === "category") {
+      await this.showCategoryEntries(
+        user,
+        Number(session.context.categoryEntriesCategoryId),
+        typeof session.context.categoryEntriesSubcategoryId === "number" ? (session.context.categoryEntriesSubcategoryId as number) : undefined,
+        String(session.context.categoryEntriesType) as EntryType,
+        page,
+        true
+      );
+      return;
+    }
     await this.showOperations(user, page, true);
   }
 
@@ -2469,6 +2507,16 @@ export class BotService {
                 subcategoryId: typeof session.context.reportEntriesSubcategoryId === "number" ? (session.context.reportEntriesSubcategoryId as number) : undefined
               })
             ).items
+          : origin === "category"
+            ? (
+                await this.repo.getEntriesByDateRange({
+                  userId: user.id,
+                  page,
+                  type: String(session.context.categoryEntriesType) as EntryType,
+                  categoryId: Number(session.context.categoryEntriesCategoryId),
+                  subcategoryId: typeof session.context.categoryEntriesSubcategoryId === "number" ? (session.context.categoryEntriesSubcategoryId as number) : undefined
+                })
+              ).items
           : await this.repo.getEntryList(user.id, page);
     for (const item of items) {
       selectedIds.add(item.id);
@@ -2501,6 +2549,17 @@ export class BotService {
           categoryId: typeof session.context.reportEntriesCategoryId === "number" ? (session.context.reportEntriesCategoryId as number) : undefined,
           subcategoryId: typeof session.context.reportEntriesSubcategoryId === "number" ? (session.context.reportEntriesSubcategoryId as number) : undefined
         },
+        true
+      );
+      return;
+    }
+    if (origin === "category") {
+      await this.showCategoryEntries(
+        user,
+        Number(session.context.categoryEntriesCategoryId),
+        typeof session.context.categoryEntriesSubcategoryId === "number" ? (session.context.categoryEntriesSubcategoryId as number) : undefined,
+        String(session.context.categoryEntriesType) as EntryType,
+        page,
         true
       );
       return;
@@ -2554,6 +2613,16 @@ export class BotService {
         categoryId: typeof session.context.reportEntriesCategoryId === "number" ? (session.context.reportEntriesCategoryId as number) : undefined,
         subcategoryId: typeof session.context.reportEntriesSubcategoryId === "number" ? (session.context.reportEntriesSubcategoryId as number) : undefined
       });
+      return;
+    }
+    if (origin === "category") {
+      await this.showCategoryEntries(
+        user,
+        Number(session.context.categoryEntriesCategoryId),
+        typeof session.context.categoryEntriesSubcategoryId === "number" ? (session.context.categoryEntriesSubcategoryId as number) : undefined,
+        String(session.context.categoryEntriesType) as EntryType,
+        page
+      );
       return;
     }
     await this.showOperations(user, page);
