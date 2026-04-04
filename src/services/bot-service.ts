@@ -1648,7 +1648,7 @@ export class BotService {
     if (draft.step === "amount") {
       const parsed = parseEntryAttempt(`${payload.type === "income" ? "+" : "-"}${text}`);
       if (!parsed.amountMinor) {
-        await this.sendMessage({ chat_id: user.chatId, text: "Не удалось понять сумму. Напиши сумму ещё раз." });
+        await this.sendMessage({ chat_id: user.chatId, text: "не получилось понять сумму\n\nпришли сумму сообщением ещё раз" });
         return;
       }
       payload.amountMinor = parsed.amountMinor;
@@ -1674,11 +1674,7 @@ export class BotService {
     if (draft.step === "subcategory") {
       payload.subcategoryName = text.trim();
       await this.repo.saveDraft(user.id, payload, "description");
-      await this.sendMessage({
-        chat_id: user.chatId,
-        text: "Напиши описание.",
-        reply_markup: kb([[{ text: BUTTONS.skip, action: "add:skip-description" }]])
-      });
+      await this.showAddDescriptionStep(user, payload);
       return;
     }
 
@@ -1726,14 +1722,14 @@ export class BotService {
     if (field === "amount") {
       const parsed = parseEntryAttempt(`${draft.payload.type === "income" ? "+" : "-"}${text}`);
       if (!parsed.amountMinor) {
-        await this.sendMessage({ chat_id: user.chatId, text: "Не удалось понять сумму. Напиши сумму ещё раз." });
+        await this.sendMessage({ chat_id: user.chatId, text: "не получилось понять сумму\n\nпришли сумму сообщением ещё раз" });
         return;
       }
       draft.payload.amountMinor = parsed.amountMinor;
     } else if (field === "type") {
       const normalized = text.trim().toLowerCase();
       if (normalized !== "доход" && normalized !== "расход") {
-        await this.sendMessage({ chat_id: user.chatId, text: "Не удалось понять тип. Напиши тип ещё раз." });
+        await this.sendMessage({ chat_id: user.chatId, text: "не получилось понять тип\n\nпришли тип сообщением ещё раз" });
         return;
       }
       draft.payload.type = normalized === "доход" ? "income" : "expense";
@@ -1747,7 +1743,7 @@ export class BotService {
     } else if (field === "date") {
       const parsed = parseEditableDate(text);
       if (!parsed) {
-        await this.sendMessage({ chat_id: user.chatId, text: "Не удалось понять дату. Напиши дату ещё раз." });
+        await this.sendMessage({ chat_id: user.chatId, text: "не получилось понять дату\n\nпришли дату сообщением ещё раз" });
         return;
       }
       draft.payload.entryDate = parsed.entryDate;
@@ -1762,7 +1758,7 @@ export class BotService {
     } else if (field === "time") {
       const parsed = parseEditableTime(text);
       if (!parsed) {
-        await this.sendMessage({ chat_id: user.chatId, text: "Не удалось понять время. Напиши время ещё раз." });
+        await this.sendMessage({ chat_id: user.chatId, text: "не получилось понять время\n\nпришли время сообщением ещё раз" });
         return;
       }
       draft.payload.entryTime = parsed.entryTime;
@@ -1774,7 +1770,7 @@ export class BotService {
     } else if (field === "datetime") {
       const parsed = parseEditableDateTime(text);
       if (!parsed) {
-        await this.sendMessage({ chat_id: user.chatId, text: "Не удалось понять дату и время. Напиши дату и время ещё раз." });
+        await this.sendMessage({ chat_id: user.chatId, text: "не получилось понять дату и время\n\nпришли дату и время сообщением ещё раз" });
         return;
       }
       draft.payload.entryDate = parsed.entryDate;
@@ -2322,19 +2318,19 @@ export class BotService {
     });
 
     const prompts: Record<string, string> = {
-      amount: "Напиши сумму.",
-      type: "Напиши тип.",
-      category: "Напиши категорию.",
-      subcategory: "Напиши подкатегорию.",
-      description: "Напиши описание.",
-      date: "Напиши дату.",
-      time: "Напиши время.",
-      datetime: "Напиши дату и время."
+      amount: "пришли сумму сообщением",
+      type: "пришли тип сообщением",
+      category: "пришли категорию сообщением",
+      subcategory: "пришли подкатегорию сообщением",
+      description: "пришли описание сообщением",
+      date: "пришли дату сообщением",
+      time: "пришли время сообщением",
+      datetime: "пришли дату и время сообщением"
     };
 
     await this.sendMessage({
       chat_id: user.chatId,
-      text: prompts[field] ?? "Напиши значение.",
+      text: prompts[field] ?? "пришли значение сообщением",
       reply_markup: kb([[{ text: BUTTONS.cancel, action: "edit:back" }, { text: BUTTONS.main, action: "nav:home" }]])
     });
   }
