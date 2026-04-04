@@ -149,13 +149,22 @@ export class BotService {
         String(session.context.type) as EntryType,
         Number(session.context.page ?? "0"),
         text,
-        Number(session.context.subpage ?? "0")
+        Number(session.context.subpage ?? "0"),
+        String(session.context.source ?? "list")
       );
       return;
     }
 
     if (session.mode === "categories" && session.context.awaiting === "rename-category") {
-      await this.handleCategoryRename(user, Number(session.context.categoryId), String(session.context.type) as EntryType, Number(session.context.page ?? "0"), text);
+      await this.handleCategoryRename(
+        user,
+        Number(session.context.categoryId),
+        String(session.context.type) as EntryType,
+        Number(session.context.page ?? "0"),
+        text,
+        Number(session.context.subpage ?? "0"),
+        String(session.context.source ?? "list")
+      );
       return;
     }
 
@@ -167,7 +176,8 @@ export class BotService {
         String(session.context.type) as EntryType,
         Number(session.context.page ?? "0"),
         text,
-        Number(session.context.subpage ?? "0")
+        Number(session.context.subpage ?? "0"),
+        String(session.context.source ?? "list")
       );
       return;
     }
@@ -179,7 +189,8 @@ export class BotService {
         String(session.context.type) as EntryType,
         Number(session.context.page ?? "0"),
         text,
-        Number(session.context.subpage ?? "0")
+        Number(session.context.subpage ?? "0"),
+        String(session.context.source ?? "list")
       );
       return;
     }
@@ -626,7 +637,9 @@ export class BotService {
             Number(session.context.categoryEntriesCategoryId),
             typeof session.context.categoryEntriesSubcategoryId === "number" ? (session.context.categoryEntriesSubcategoryId as number) : undefined,
             String(session.context.categoryEntriesType) as EntryType,
-            Number(params.page ?? "0")
+            Number(params.page ?? "0"),
+            false,
+            String(session.context.categoryEntriesSource ?? "list")
           );
           return;
         }
@@ -785,7 +798,8 @@ export class BotService {
           Number(params.id),
           String(params.type) as EntryType,
           Number(params.page ?? "0"),
-          Number(params.subpage ?? "0")
+          Number(params.subpage ?? "0"),
+          String(params.source ?? "list")
         );
         return;
       case "subcategory:view":
@@ -795,7 +809,8 @@ export class BotService {
           Number(params.categoryId),
           String(params.type) as EntryType,
           Number(params.page ?? "0"),
-          Number(params.subpage ?? "0")
+          Number(params.subpage ?? "0"),
+          String(params.source ?? "list")
         );
         return;
       case "category:hide":
@@ -804,7 +819,14 @@ export class BotService {
         return;
       case "category:restore":
         await this.repo.restoreCategory(user.id, Number(params.id));
-        await this.showCategoryList(user, String(params.type) as EntryType, Number(params.page ?? "0"));
+        await this.showCategoryCard(
+          user,
+          Number(params.id),
+          String(params.type) as EntryType,
+          Number(params.page ?? "0"),
+          Number(params.subpage ?? "0"),
+          "list"
+        );
         return;
       case "categories:hidden":
         await this.showHiddenCategoryList(user, String(params.type) as EntryType, Number(params.page ?? "0"));
@@ -822,17 +844,21 @@ export class BotService {
         await this.repo.saveSession(user.id, {
           mode: "categories",
           stack: ["categories"],
-          context: { awaiting: "new-subcategory", categoryId: Number(params.categoryId), type: params.type, page: Number(params.page ?? "0"), subpage: Number(params.subpage ?? "0") }
+          context: { awaiting: "new-subcategory", categoryId: Number(params.categoryId), type: params.type, page: Number(params.page ?? "0"), subpage: Number(params.subpage ?? "0"), source: String(params.source ?? "list") }
         });
         await this.telegram.sendMessage({
           chat_id: user.chatId,
           text: "Напиши название подкатегории.",
-          reply_markup: kb([[{ text: BUTTONS.cancel, action: "category:view", payload: { id: params.categoryId, type: params.type, page: params.page, subpage: params.subpage } }, { text: BUTTONS.main, action: "nav:home" }]])
+          reply_markup: kb([[{ text: BUTTONS.cancel, action: "category:view", payload: { id: params.categoryId, type: params.type, page: params.page, subpage: params.subpage, source: params.source } }, { text: BUTTONS.main, action: "nav:home" }]])
         });
         return;
       case "subcategory:hide":
         await this.repo.hideSubcategory(user.id, Number(params.id));
-        await this.showCategoryCard(user, Number(params.categoryId), String(params.type) as EntryType, Number(params.page ?? "0"), Number(params.subpage ?? "0"));
+        if (params.source === "hidden") {
+          await this.showHiddenSubcategoryList(user, Number(params.categoryId), String(params.type) as EntryType, Number(params.page ?? "0"), Number(params.subpage ?? "0"));
+          return;
+        }
+        await this.showCategoryCard(user, Number(params.categoryId), String(params.type) as EntryType, Number(params.page ?? "0"), Number(params.subpage ?? "0"), "list");
         return;
       case "category:edit":
         await this.startCategoryRename(
@@ -840,7 +866,8 @@ export class BotService {
           Number(params.id),
           String(params.type) as EntryType,
           Number(params.page ?? "0"),
-          Number(params.subpage ?? "0")
+          Number(params.subpage ?? "0"),
+          String(params.source ?? "list")
         );
         return;
       case "subcategory:edit":
@@ -850,12 +877,21 @@ export class BotService {
           Number(params.categoryId),
           String(params.type) as EntryType,
           Number(params.page ?? "0"),
-          Number(params.subpage ?? "0")
+          Number(params.subpage ?? "0"),
+          String(params.source ?? "list")
         );
         return;
       case "subcategory:restore":
         await this.repo.restoreSubcategory(user.id, Number(params.id));
-        await this.showSubcategoryCard(user, Number(params.id), Number(params.categoryId), String(params.type) as EntryType, Number(params.page ?? "0"), Number(params.subpage ?? "0"));
+        await this.showSubcategoryCard(
+          user,
+          Number(params.id),
+          Number(params.categoryId),
+          String(params.type) as EntryType,
+          Number(params.page ?? "0"),
+          Number(params.subpage ?? "0"),
+          params.source === "hidden" ? "list" : String(params.source ?? "list")
+        );
         return;
       case "category:delete":
         await this.handleCategoryDelete(
@@ -863,17 +899,41 @@ export class BotService {
           Number(params.id),
           String(params.type) as EntryType,
           Number(params.page ?? "0"),
-          Number(params.subpage ?? "0")
+          Number(params.subpage ?? "0"),
+          String(params.source ?? "list")
         );
         return;
       case "subcategory:delete":
-        await this.handleSubcategoryDelete(user, Number(params.id), Number(params.categoryId), String(params.type) as EntryType, Number(params.page ?? "0"), Number(params.subpage ?? "0"));
+        await this.handleSubcategoryDelete(
+          user,
+          Number(params.id),
+          Number(params.categoryId),
+          String(params.type) as EntryType,
+          Number(params.page ?? "0"),
+          Number(params.subpage ?? "0"),
+          String(params.source ?? "list")
+        );
         return;
       case "category:transfer-all":
-        await this.startCategoryTransferAll(user, Number(params.id), String(params.type) as EntryType, Number(params.page ?? "0"), Number(params.subpage ?? "0"));
+        await this.startCategoryTransferAll(
+          user,
+          Number(params.id),
+          String(params.type) as EntryType,
+          Number(params.page ?? "0"),
+          Number(params.subpage ?? "0"),
+          String(params.source ?? "list")
+        );
         return;
       case "subcategory:transfer-all":
-        await this.startSubcategoryTransferAll(user, Number(params.id), Number(params.categoryId), String(params.type) as EntryType, Number(params.page ?? "0"), Number(params.subpage ?? "0"));
+        await this.startSubcategoryTransferAll(
+          user,
+          Number(params.id),
+          Number(params.categoryId),
+          String(params.type) as EntryType,
+          Number(params.page ?? "0"),
+          Number(params.subpage ?? "0"),
+          String(params.source ?? "list")
+        );
         return;
       case "subcategory:transfer-to":
         await this.applySubcategoryTransferAll(
@@ -883,14 +943,31 @@ export class BotService {
           String(params.type) as EntryType,
           Number(params.page ?? "0"),
           Number(params.subpage ?? "0"),
-          params.target ? Number(params.target) : null
+          params.target ? Number(params.target) : null,
+          String(params.source ?? "list")
         );
         return;
       case "category:entries":
-        await this.showCategoryEntries(user, Number(params.categoryId), undefined, String(params.type) as EntryType, Number(params.page ?? "0"));
+        await this.showCategoryEntries(
+          user,
+          Number(params.categoryId),
+          undefined,
+          String(params.type) as EntryType,
+          Number(params.page ?? "0"),
+          false,
+          String(params.source ?? "list")
+        );
         return;
       case "subcategory:entries":
-        await this.showCategoryEntries(user, Number(params.categoryId), Number(params.id), String(params.type) as EntryType, Number(params.page ?? "0"));
+        await this.showCategoryEntries(
+          user,
+          Number(params.categoryId),
+          Number(params.id),
+          String(params.type) as EntryType,
+          Number(params.page ?? "0"),
+          false,
+          String(params.source ?? "list")
+        );
         return;
       case "category:entries-select":
         await this.showCategoryEntries(
@@ -899,7 +976,8 @@ export class BotService {
           params.id ? Number(params.id) : undefined,
           String(params.type) as EntryType,
           Number(params.page ?? "0"),
-          true
+          true,
+          String(params.source ?? "list")
         );
         return;
       case "settings:open":
@@ -2319,7 +2397,7 @@ export class BotService {
     const numberButtons = categories.map((item, index) => ({
       text: String(index + 1),
       action: "category:view",
-      payload: { id: item.id, page, type }
+      payload: { id: item.id, page, type, source: "hidden" }
     }));
     await this.telegram.sendMessage({
       chat_id: user.chatId,
@@ -2364,9 +2442,13 @@ export class BotService {
     });
   }
 
-  private async showCategoryCard(user: UserRecord, categoryId: number, type: EntryType, page: number, subpage = 0): Promise<void> {
+  private async showCategoryCard(user: UserRecord, categoryId: number, type: EntryType, page: number, subpage = 0, source = "list"): Promise<void> {
     const category = await this.repo.getCategory(user.id, categoryId);
     if (!category) {
+      if (source === "hidden") {
+        await this.showHiddenCategoryList(user, type, page);
+        return;
+      }
       await this.showCategoryList(user, type, page);
       return;
     }
@@ -2382,17 +2464,17 @@ export class BotService {
         `подкатегории:\n${visibleSubcategories.length ? visibleSubcategories.map((item, index) => `${index + 1}. ${item.name}`).join("\n") : "пока нет"}`,
       reply_markup: kb([
         visibleSubcategories.length
-          ? visibleSubcategories.map((item, index) => ({ text: String(index + 1), action: "subcategory:view", payload: { id: item.id, categoryId: category.id, page, subpage, type } }))
-          : [{ text: BUTTONS.addSubcategory, action: "subcategory:add", payload: { categoryId: category.id, page, subpage, type } }],
-        ...(subcategories.length > 6 || subpage > 0 ? [buildPageRow(subpage, subcategories.length > (subpage + 1) * 6, "category:view", { id: category.id, page, subpage, type })] : []),
-        [{ text: BUTTONS.addSubcategory, action: "subcategory:add", payload: { categoryId: category.id, page, subpage, type } }],
+          ? visibleSubcategories.map((item, index) => ({ text: String(index + 1), action: "subcategory:view", payload: { id: item.id, categoryId: category.id, page, subpage, type, source } }))
+          : [{ text: BUTTONS.addSubcategory, action: "subcategory:add", payload: { categoryId: category.id, page, subpage, type, source } }],
+        ...(subcategories.length > 6 || subpage > 0 ? [buildPageRow(subpage, subcategories.length > (subpage + 1) * 6, "category:view", { id: category.id, page, subpage, type, source })] : []),
+        [{ text: BUTTONS.addSubcategory, action: "subcategory:add", payload: { categoryId: category.id, page, subpage, type, source } }],
         ...(hiddenSubcategoryCount > 0 ? [[{ text: BUTTONS.hidden, action: "subcategories:hidden", payload: { categoryId: category.id, page, subpage, type } }]] : []),
-        [{ text: BUTTONS.edit, action: "category:edit", payload: { id: category.id, page, subpage, type } }],
-        [{ text: category.hiddenAt ? BUTTONS.restore : BUTTONS.hide, action: category.hiddenAt ? "category:restore" : "category:hide", payload: { id: category.id, page, subpage, type } }],
-        [{ text: BUTTONS.delete, action: "category:delete", payload: { id: category.id, page, subpage, type } }],
-        ...(usageCount > 0 ? [[{ text: BUTTONS.transferAllEntries, action: "category:transfer-all", payload: { id: category.id, page, subpage, type } }]] : []),
-        [{ text: BUTTONS.allEntries, action: "category:entries", payload: { categoryId: category.id, type, page: 0 } }],
-        [{ text: BUTTONS.back, action: "categories:list", payload: { type, page } }, { text: BUTTONS.main, action: "nav:home" }]
+        [{ text: BUTTONS.edit, action: "category:edit", payload: { id: category.id, page, subpage, type, source } }],
+        [{ text: category.hiddenAt ? BUTTONS.restore : BUTTONS.hide, action: category.hiddenAt ? "category:restore" : "category:hide", payload: { id: category.id, page, subpage, type, source } }],
+        [{ text: BUTTONS.delete, action: "category:delete", payload: { id: category.id, page, subpage, type, source } }],
+        ...(usageCount > 0 ? [[{ text: BUTTONS.transferAllEntries, action: "category:transfer-all", payload: { id: category.id, page, subpage, type, source } }]] : []),
+        [{ text: BUTTONS.allEntries, action: "category:entries", payload: { categoryId: category.id, type, page: 0, source } }],
+        [{ text: BUTTONS.back, action: source === "hidden" ? "categories:hidden" : "categories:list", payload: { type, page } }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
   }
@@ -2403,7 +2485,7 @@ export class BotService {
       await this.telegram.sendMessage({
         chat_id: user.chatId,
         text: "пока скрытых подкатегорий нет\nможно вернуться назад",
-        reply_markup: kb([[{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page, subpage } }, { text: BUTTONS.main, action: "nav:home" }]])
+        reply_markup: kb([[{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page, subpage, source: "list" } }, { text: BUTTONS.main, action: "nav:home" }]])
       });
       return;
     }
@@ -2413,7 +2495,7 @@ export class BotService {
     const numberButtons = items.map((item, index) => ({
       text: String(index + 1),
       action: "subcategory:view",
-      payload: { id: item.id, categoryId, type, page, subpage }
+      payload: { id: item.id, categoryId, type, page, subpage, source: "hidden" }
     }));
     await this.telegram.sendMessage({
       chat_id: user.chatId,
@@ -2421,15 +2503,15 @@ export class BotService {
       reply_markup: kb([
         numberButtons,
         ...(page > 0 || allItems.length > (page + 1) * 6 ? [buildPageRow(page, allItems.length > (page + 1) * 6, "subcategories:hidden", { categoryId, type, subpage })] : []),
-        [{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page, subpage } }, { text: BUTTONS.main, action: "nav:home" }]
+        [{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page, subpage, source: "list" } }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
   }
 
-  private async showSubcategoryCard(user: UserRecord, subcategoryId: number, categoryId: number, type: EntryType, page: number, subpage = 0): Promise<void> {
+  private async showSubcategoryCard(user: UserRecord, subcategoryId: number, categoryId: number, type: EntryType, page: number, subpage = 0, source = "list"): Promise<void> {
     const subcategory = await this.repo.getSubcategory(user.id, subcategoryId);
     if (!subcategory) {
-      await this.showCategoryCard(user, categoryId, type, page, subpage);
+      await this.showCategoryCard(user, categoryId, type, page, subpage, source);
       return;
     }
     const usageCount = await this.repo.getSubcategoryUsageCount(subcategoryId);
@@ -2437,75 +2519,87 @@ export class BotService {
       chat_id: user.chatId,
       text: `${subcategory.name}\n\nзаписей: ${usageCount}`,
       reply_markup: kb([
-        [{ text: BUTTONS.edit, action: "subcategory:edit", payload: { id: subcategory.id, categoryId, page, subpage, type } }],
-        [{ text: subcategory.hiddenAt ? BUTTONS.restore : BUTTONS.hide, action: subcategory.hiddenAt ? "subcategory:restore" : "subcategory:hide", payload: { id: subcategory.id, categoryId, page, subpage, type } }],
-        [{ text: BUTTONS.delete, action: "subcategory:delete", payload: { id: subcategory.id, categoryId, page, subpage, type } }],
-        ...(usageCount > 0 ? [[{ text: BUTTONS.transferAllEntries, action: "subcategory:transfer-all", payload: { id: subcategory.id, categoryId, page, subpage, type } }]] : []),
-        [{ text: BUTTONS.allEntries, action: "subcategory:entries", payload: { id: subcategory.id, categoryId, type, page: 0 } }],
-        [{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page, subpage } }, { text: BUTTONS.main, action: "nav:home" }]
+        [{ text: BUTTONS.edit, action: "subcategory:edit", payload: { id: subcategory.id, categoryId, page, subpage, type, source } }],
+        [{ text: subcategory.hiddenAt ? BUTTONS.restore : BUTTONS.hide, action: subcategory.hiddenAt ? "subcategory:restore" : "subcategory:hide", payload: { id: subcategory.id, categoryId, page, subpage, type, source } }],
+        [{ text: BUTTONS.delete, action: "subcategory:delete", payload: { id: subcategory.id, categoryId, page, subpage, type, source } }],
+        ...(usageCount > 0 ? [[{ text: BUTTONS.transferAllEntries, action: "subcategory:transfer-all", payload: { id: subcategory.id, categoryId, page, subpage, type, source } }]] : []),
+        [{ text: BUTTONS.allEntries, action: "subcategory:entries", payload: { id: subcategory.id, categoryId, type, page: 0, source } }],
+        [{
+          text: BUTTONS.back,
+          action: source === "hidden" ? "subcategories:hidden" : "category:view",
+          payload: source === "hidden" ? { categoryId, type, page, subpage } : { id: categoryId, type, page, subpage, source }
+        }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
   }
 
-  private async handleCategoryDelete(user: UserRecord, categoryId: number, type: EntryType, page: number, subpage = 0): Promise<void> {
+  private async handleCategoryDelete(user: UserRecord, categoryId: number, type: EntryType, page: number, subpage = 0, source = "list"): Promise<void> {
     const usageCount = await this.repo.getCategoryUsageCount(categoryId);
     if (usageCount > 0) {
       await this.telegram.sendMessage({
         chat_id: user.chatId,
         text: "Удалить категорию нельзя, пока в ней есть записи.\n\nМожно скрыть её или потом перенести все записи.",
         reply_markup: kb([
-          [{ text: BUTTONS.hide, action: "category:hide", payload: { id: categoryId, page, subpage, type } }],
-          [{ text: BUTTONS.transferAllEntries, action: "category:transfer-all", payload: { id: categoryId, page, subpage, type } }],
-          [{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, page, subpage, type } }, { text: BUTTONS.main, action: "nav:home" }]
+          [{ text: BUTTONS.hide, action: "category:hide", payload: { id: categoryId, page, subpage, type, source } }],
+          [{ text: BUTTONS.transferAllEntries, action: "category:transfer-all", payload: { id: categoryId, page, subpage, type, source } }],
+          [{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, page, subpage, type, source } }, { text: BUTTONS.main, action: "nav:home" }]
         ])
       });
       return;
     }
     await this.repo.deleteCategory(user.id, categoryId);
+    if (source === "hidden") {
+      await this.showHiddenCategoryList(user, type, page);
+      return;
+    }
     await this.showCategoryList(user, type, page);
   }
 
-  private async handleSubcategoryDelete(user: UserRecord, subcategoryId: number, categoryId: number, type: EntryType, page: number, subpage = 0): Promise<void> {
+  private async handleSubcategoryDelete(user: UserRecord, subcategoryId: number, categoryId: number, type: EntryType, page: number, subpage = 0, source = "list"): Promise<void> {
     const usageCount = await this.repo.getSubcategoryUsageCount(subcategoryId);
     if (usageCount > 0) {
       await this.telegram.sendMessage({
         chat_id: user.chatId,
         text: "Удалить подкатегорию нельзя, пока в ней есть записи.\n\nМожно скрыть её или потом перенести все записи.",
         reply_markup: kb([
-          [{ text: BUTTONS.hide, action: "subcategory:hide", payload: { id: subcategoryId, categoryId, page, subpage, type } }],
-          [{ text: BUTTONS.transferAllEntries, action: "subcategory:transfer-all", payload: { id: subcategoryId, categoryId, page, subpage, type } }],
-          [{ text: BUTTONS.back, action: "subcategory:view", payload: { id: subcategoryId, categoryId, page, subpage, type } }, { text: BUTTONS.main, action: "nav:home" }]
+          [{ text: BUTTONS.hide, action: "subcategory:hide", payload: { id: subcategoryId, categoryId, page, subpage, type, source } }],
+          [{ text: BUTTONS.transferAllEntries, action: "subcategory:transfer-all", payload: { id: subcategoryId, categoryId, page, subpage, type, source } }],
+          [{ text: BUTTONS.back, action: "subcategory:view", payload: { id: subcategoryId, categoryId, page, subpage, type, source } }, { text: BUTTONS.main, action: "nav:home" }]
         ])
       });
       return;
     }
     await this.repo.deleteSubcategory(user.id, subcategoryId);
-    await this.showCategoryCard(user, categoryId, type, page, subpage);
+    if (source === "hidden") {
+      await this.showHiddenSubcategoryList(user, categoryId, type, page, subpage);
+      return;
+    }
+    await this.showCategoryCard(user, categoryId, type, page, subpage, "list");
   }
 
-  private async startCategoryRename(user: UserRecord, categoryId: number, type: EntryType, page: number, subpage = 0): Promise<void> {
+  private async startCategoryRename(user: UserRecord, categoryId: number, type: EntryType, page: number, subpage = 0, source = "list"): Promise<void> {
     await this.repo.saveSession(user.id, {
       mode: "categories",
       stack: ["categories"],
-      context: { awaiting: "rename-category", categoryId, type, page, subpage }
+      context: { awaiting: "rename-category", categoryId, type, page, subpage, source }
     });
     await this.telegram.sendMessage({
       chat_id: user.chatId,
       text: "Напиши новое название категории.",
-      reply_markup: kb([[{ text: BUTTONS.cancel, action: "category:view", payload: { id: categoryId, type, page, subpage } }, { text: BUTTONS.main, action: "nav:home" }]])
+      reply_markup: kb([[{ text: BUTTONS.cancel, action: "category:view", payload: { id: categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]])
     });
   }
 
-  private async startSubcategoryRename(user: UserRecord, subcategoryId: number, categoryId: number, type: EntryType, page: number, subpage = 0): Promise<void> {
+  private async startSubcategoryRename(user: UserRecord, subcategoryId: number, categoryId: number, type: EntryType, page: number, subpage = 0, source = "list"): Promise<void> {
     await this.repo.saveSession(user.id, {
       mode: "categories",
       stack: ["categories"],
-      context: { awaiting: "rename-subcategory", subcategoryId, categoryId, type, page, subpage }
+      context: { awaiting: "rename-subcategory", subcategoryId, categoryId, type, page, subpage, source }
     });
     await this.telegram.sendMessage({
       chat_id: user.chatId,
       text: "Напиши новое название подкатегории.",
-      reply_markup: kb([[{ text: BUTTONS.cancel, action: "subcategory:view", payload: { id: subcategoryId, categoryId, type, page, subpage } }, { text: BUTTONS.main, action: "nav:home" }]])
+      reply_markup: kb([[{ text: BUTTONS.cancel, action: "subcategory:view", payload: { id: subcategoryId, categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]])
     });
   }
 
@@ -2526,99 +2620,99 @@ export class BotService {
     await this.showCategoryList(user, type, 0);
   }
 
-  private async handleSubcategoryCreate(user: UserRecord, categoryId: number, type: EntryType, page: number, text: string, subpage = 0): Promise<void> {
+  private async handleSubcategoryCreate(user: UserRecord, categoryId: number, type: EntryType, page: number, text: string, subpage = 0, source = "list"): Promise<void> {
     const existing = await this.repo.findSubcategoryByNormalizedName(categoryId, text);
     if (existing?.hiddenAt) {
       await this.telegram.sendMessage({
         chat_id: user.chatId,
         text: "Такая подкатегория уже есть в скрытых.\n\nМожно вернуть её.",
         reply_markup: kb([
-          [{ text: BUTTONS.restore, action: "subcategory:restore", payload: { id: existing.id, categoryId, type, page, subpage } }],
-          [{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page, subpage } }, { text: BUTTONS.main, action: "nav:home" }]
+          [{ text: BUTTONS.restore, action: "subcategory:restore", payload: { id: existing.id, categoryId, type, page, subpage, source } }],
+          [{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]
         ])
       });
       return;
     }
     await this.repo.ensureSubcategory(user.id, categoryId, text);
-    await this.showCategoryCard(user, categoryId, type, page, subpage);
+    await this.showCategoryCard(user, categoryId, type, page, subpage, source);
   }
 
-  private async handleCategoryRename(user: UserRecord, categoryId: number, type: EntryType, page: number, text: string, subpage = 0): Promise<void> {
+  private async handleCategoryRename(user: UserRecord, categoryId: number, type: EntryType, page: number, text: string, subpage = 0, source = "list"): Promise<void> {
     const existing = await this.repo.findCategoryByNormalizedName(user.id, type, text);
     if (existing && existing.id !== categoryId) {
       if (existing.hiddenAt) {
         await this.telegram.sendMessage({
           chat_id: user.chatId,
-          text: "Такая категория уже есть в скрытых.\n\nМожно вернуть её.",
-          reply_markup: kb([
-            [{ text: BUTTONS.restore, action: "category:restore", payload: { id: existing.id, type, page: 0 } }],
-            [{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page, subpage } }, { text: BUTTONS.main, action: "nav:home" }]
-          ])
-        });
-        return;
+        text: "Такая категория уже есть в скрытых.\n\nМожно вернуть её.",
+        reply_markup: kb([
+          [{ text: BUTTONS.restore, action: "category:restore", payload: { id: existing.id, type, page: 0 } }],
+          [{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]
+        ])
+      });
+      return;
       }
       await this.telegram.sendMessage({
         chat_id: user.chatId,
         text: "Такая категория уже есть.",
-        reply_markup: kb([[{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page, subpage } }, { text: BUTTONS.main, action: "nav:home" }]])
+        reply_markup: kb([[{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]])
       });
       return;
     }
     await this.repo.renameCategory(user.id, categoryId, text);
-    await this.showCategoryCard(user, categoryId, type, page, subpage);
+    await this.showCategoryCard(user, categoryId, type, page, subpage, source);
   }
 
-  private async handleSubcategoryRename(user: UserRecord, subcategoryId: number, categoryId: number, type: EntryType, page: number, text: string, subpage = 0): Promise<void> {
+  private async handleSubcategoryRename(user: UserRecord, subcategoryId: number, categoryId: number, type: EntryType, page: number, text: string, subpage = 0, source = "list"): Promise<void> {
     const existing = await this.repo.findSubcategoryByNormalizedName(categoryId, text);
     if (existing && existing.id !== subcategoryId) {
       if (existing.hiddenAt) {
         await this.telegram.sendMessage({
           chat_id: user.chatId,
-          text: "Такая подкатегория уже есть в скрытых.\n\nМожно вернуть её.",
-          reply_markup: kb([
-            [{ text: BUTTONS.restore, action: "subcategory:restore", payload: { id: existing.id, categoryId, type, page, subpage } }],
-            [{ text: BUTTONS.back, action: "subcategory:view", payload: { id: subcategoryId, categoryId, type, page, subpage } }, { text: BUTTONS.main, action: "nav:home" }]
-          ])
-        });
-        return;
+        text: "Такая подкатегория уже есть в скрытых.\n\nМожно вернуть её.",
+        reply_markup: kb([
+          [{ text: BUTTONS.restore, action: "subcategory:restore", payload: { id: existing.id, categoryId, type, page, subpage, source } }],
+          [{ text: BUTTONS.back, action: "subcategory:view", payload: { id: subcategoryId, categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]
+        ])
+      });
+      return;
       }
       await this.telegram.sendMessage({
         chat_id: user.chatId,
         text: "Такая подкатегория уже есть.",
-        reply_markup: kb([[{ text: BUTTONS.back, action: "subcategory:view", payload: { id: subcategoryId, categoryId, type, page, subpage } }, { text: BUTTONS.main, action: "nav:home" }]])
+        reply_markup: kb([[{ text: BUTTONS.back, action: "subcategory:view", payload: { id: subcategoryId, categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]])
       });
       return;
     }
     await this.repo.renameSubcategory(user.id, subcategoryId, text);
-    await this.showSubcategoryCard(user, subcategoryId, categoryId, type, page, subpage);
+    await this.showSubcategoryCard(user, subcategoryId, categoryId, type, page, subpage, source);
   }
 
-  private async startCategoryTransferAll(user: UserRecord, categoryId: number, type: EntryType, page: number, subpage = 0): Promise<void> {
+  private async startCategoryTransferAll(user: UserRecord, categoryId: number, type: EntryType, page: number, subpage = 0, source = "list"): Promise<void> {
     await this.repo.saveSession(user.id, {
       mode: "categories",
       stack: ["categories"],
-      context: { awaiting: "transfer-category-name", categoryId, type, page, subpage }
+      context: { awaiting: "transfer-category-name", categoryId, type, page, subpage, source }
     });
     await this.telegram.sendMessage({
       chat_id: user.chatId,
       text: "Напиши категорию.\n\nЕсли в новой категории нет нужных подкатегорий, подкатегории у записей очистятся.",
-      reply_markup: kb([[{ text: BUTTONS.cancel, action: "category:view", payload: { id: categoryId, type, page, subpage } }, { text: BUTTONS.main, action: "nav:home" }]])
+      reply_markup: kb([[{ text: BUTTONS.cancel, action: "category:view", payload: { id: categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]])
     });
   }
 
-  private async handleCategoryTransferAll(user: UserRecord, categoryId: number, type: EntryType, page: number, text: string, subpage = 0): Promise<void> {
+  private async handleCategoryTransferAll(user: UserRecord, categoryId: number, type: EntryType, page: number, text: string, subpage = 0, source = "list"): Promise<void> {
     const result = await this.repo.transferAllCategoryEntries(user, categoryId, type, text);
     if (result.status === "same") {
       await this.repo.clearSession(user.id);
       await this.telegram.sendMessage({
         chat_id: user.chatId,
         text: "Это уже эта категория.",
-        reply_markup: kb([[{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page, subpage } }, { text: BUTTONS.main, action: "nav:home" }]])
+        reply_markup: kb([[{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]])
       });
       return;
     }
     await this.repo.clearSession(user.id);
-    await this.showCategoryCard(user, categoryId, type, page, subpage);
+    await this.showCategoryCard(user, categoryId, type, page, subpage, source);
     await this.telegram.sendMessage({
       chat_id: user.chatId,
       text:
@@ -2627,7 +2721,7 @@ export class BotService {
     });
   }
 
-  private async startSubcategoryTransferAll(user: UserRecord, subcategoryId: number, categoryId: number, type: EntryType, page: number, subpage = 0): Promise<void> {
+  private async startSubcategoryTransferAll(user: UserRecord, subcategoryId: number, categoryId: number, type: EntryType, page: number, subpage = 0, source = "list"): Promise<void> {
     const subcategories = (await this.repo.getSubcategories(user.id, categoryId, user.sortModeSubcategories)).filter((item) => item.id !== subcategoryId && !item.hiddenAt);
     const visibleItems = subcategories.slice(page * 6, page * 6 + 6);
     const lines = visibleItems.length ? visibleItems.map((item, index) => `${index + 1}. ${item.name}`).join("\n") : "";
@@ -2636,11 +2730,11 @@ export class BotService {
       text: `перенести все записи\n\n${subcategories.length ? `${lines}\n\nвыбери подкатегорию` : "можно снять подкатегорию у всех записей"}`,
       reply_markup: kb([
         ...(visibleItems.length
-          ? [visibleItems.map((item, index) => ({ text: `${index + 1}`, action: "subcategory:transfer-to", payload: { id: subcategoryId, target: item.id, categoryId, type, page, subpage } }))]
+          ? [visibleItems.map((item, index) => ({ text: `${index + 1}`, action: "subcategory:transfer-to", payload: { id: subcategoryId, target: item.id, categoryId, type, page, subpage, source } }))]
           : []),
-        ...(subcategories.length && (page > 0 || subcategories.length > 6) ? [buildPageRow(page, subcategories.length > (page + 1) * 6, "subcategory:transfer-all", { id: subcategoryId, categoryId, type, subpage })] : []),
-        [{ text: BUTTONS.withoutSubcategory, action: "subcategory:transfer-to", payload: { id: subcategoryId, categoryId, type, page, subpage } }],
-        [{ text: BUTTONS.back, action: "subcategory:view", payload: { id: subcategoryId, categoryId, type, page, subpage } }, { text: BUTTONS.main, action: "nav:home" }]
+        ...(subcategories.length && (page > 0 || subcategories.length > 6) ? [buildPageRow(page, subcategories.length > (page + 1) * 6, "subcategory:transfer-all", { id: subcategoryId, categoryId, type, subpage, source })] : []),
+        [{ text: BUTTONS.withoutSubcategory, action: "subcategory:transfer-to", payload: { id: subcategoryId, categoryId, type, page, subpage, source } }],
+        [{ text: BUTTONS.back, action: "subcategory:view", payload: { id: subcategoryId, categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
   }
@@ -2652,11 +2746,12 @@ export class BotService {
     type: EntryType,
     page: number,
     subpage: number,
-    targetSubcategoryId: number | null
+    targetSubcategoryId: number | null,
+    source = "list"
   ): Promise<void> {
     const movedCount = await this.repo.getSubcategoryUsageCount(subcategoryId);
     await this.repo.transferAllSubcategoryEntries(user.id, subcategoryId, targetSubcategoryId);
-    await this.showSubcategoryCard(user, subcategoryId, categoryId, type, page, subpage);
+    await this.showSubcategoryCard(user, subcategoryId, categoryId, type, page, subpage, source);
     await this.telegram.sendMessage({
       chat_id: user.chatId,
       text: `записи перенесены: ${movedCount}`
@@ -2669,7 +2764,8 @@ export class BotService {
     subcategoryId: number | undefined,
     type: EntryType,
     page: number,
-    selectMode = false
+    selectMode = false,
+    source = "list"
   ): Promise<void> {
     const data = await this.repo.getEntriesByDateRange({
       userId: user.id,
@@ -2683,7 +2779,7 @@ export class BotService {
       await this.telegram.sendMessage({
         chat_id: user.chatId,
         text: "пока записей нет\nможно вернуться назад",
-        reply_markup: kb([[{ text: BUTTONS.back, action: subcategoryId ? "subcategory:view" : "category:view", payload: subcategoryId ? { id: subcategoryId, categoryId, type, page: 0 } : { id: categoryId, type, page: 0 } }, { text: BUTTONS.main, action: "nav:home" }]])
+        reply_markup: kb([[{ text: BUTTONS.back, action: subcategoryId ? "subcategory:view" : "category:view", payload: subcategoryId ? { id: subcategoryId, categoryId, type, page: 0, source } : { id: categoryId, type, page: 0, source } }, { text: BUTTONS.main, action: "nav:home" }]])
       });
       return;
     }
@@ -2698,7 +2794,8 @@ export class BotService {
         visibleSource: "category",
         categoryEntriesCategoryId: categoryId,
         categoryEntriesSubcategoryId: subcategoryId,
-        categoryEntriesType: type
+        categoryEntriesType: type,
+        categoryEntriesSource: source
       }
     });
 
@@ -2723,7 +2820,8 @@ export class BotService {
               categoryId,
               ...(typeof subcategoryId === "number" ? { id: subcategoryId } : {}),
               type,
-              page
+              page,
+              source
             }
           }
         ],
@@ -2736,7 +2834,8 @@ export class BotService {
                     buildPageRow(page, hasNextPage(data.total, page), "category:entries-select", {
                       categoryId,
                       ...(typeof subcategoryId === "number" ? { id: subcategoryId } : {}),
-                      type
+                      type,
+                      source
                     })
                   ]
                 : [])
@@ -2747,11 +2846,12 @@ export class BotService {
               buildPageRow(page, hasNextPage(data.total, page), subcategoryId ? "subcategory:entries" : "category:entries", {
                 ...(typeof subcategoryId === "number" ? { id: subcategoryId } : {}),
                 categoryId,
-                type
+                type,
+                source
               })
             ]
           : []),
-        [{ text: BUTTONS.back, action: subcategoryId ? "subcategory:view" : "category:view", payload: subcategoryId ? { id: subcategoryId, categoryId, type, page: 0 } : { id: categoryId, type, page: 0 } }, { text: BUTTONS.main, action: "nav:home" }]
+        [{ text: BUTTONS.back, action: subcategoryId ? "subcategory:view" : "category:view", payload: subcategoryId ? { id: subcategoryId, categoryId, type, page: 0, source } : { id: categoryId, type, page: 0, source } }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
   }
@@ -3436,7 +3536,8 @@ export class BotService {
         typeof session.context.categoryEntriesSubcategoryId === "number" ? (session.context.categoryEntriesSubcategoryId as number) : undefined,
         String(session.context.categoryEntriesType) as EntryType,
         page,
-        true
+        true,
+        String(session.context.categoryEntriesSource ?? "list")
       );
       return;
     }
@@ -3529,7 +3630,8 @@ export class BotService {
         typeof session.context.categoryEntriesSubcategoryId === "number" ? (session.context.categoryEntriesSubcategoryId as number) : undefined,
         String(session.context.categoryEntriesType) as EntryType,
         page,
-        true
+        true,
+        String(session.context.categoryEntriesSource ?? "list")
       );
       return;
     }
@@ -3594,7 +3696,9 @@ export class BotService {
         Number(session.context.categoryEntriesCategoryId),
         typeof session.context.categoryEntriesSubcategoryId === "number" ? (session.context.categoryEntriesSubcategoryId as number) : undefined,
         String(session.context.categoryEntriesType) as EntryType,
-        page
+        page,
+        false,
+        String(session.context.categoryEntriesSource ?? "list")
       );
       return;
     }
@@ -3752,7 +3856,9 @@ export class BotService {
         Number(session.context.categoryEntriesCategoryId),
         typeof session.context.categoryEntriesSubcategoryId === "number" ? (session.context.categoryEntriesSubcategoryId as number) : undefined,
         String(session.context.categoryEntriesType) as EntryType,
-        page
+        page,
+        false,
+        String(session.context.categoryEntriesSource ?? "list")
       );
       return;
     }
