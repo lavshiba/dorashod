@@ -2246,7 +2246,15 @@ export class BotService {
     await this.repo.saveSession(user.id, { mode: "search", stack: ["home"], context: {} });
     await this.sendMessage({
       chat_id: user.chatId,
-      text: "поиск",
+      text:
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `поиск записей\n\n` +
+        `здесь можно искать\n` +
+        `по сумме, дате, типу,\n` +
+        `категории, подкатегории\n` +
+        `и описанию\n\n` +
+        `чтобы ввести запрос,\n` +
+        `нажми кнопку ниже`,
       reply_markup: kb([
         [{ text: BUTTONS.enterQuery, action: "search:prompt" }],
         [{ text: BUTTONS.today, action: "search:quick", payload: { period: "today" } }, { text: BUTTONS.yesterday, action: "search:quick", payload: { period: "yesterday" } }],
@@ -2273,7 +2281,12 @@ export class BotService {
     if (data.total === 0) {
       await this.sendMessage({
         chat_id: user.chatId,
-        text: `Запрос: ${query}\nНайдено: 0\n\nПока ничего не найдено.\nМожно сделать новый поиск или вернуться назад.`,
+        text:
+          `<b>${BOT_TITLE}</b>\n\n` +
+          `поиск записей\n\n` +
+          `ничего не найдено\n\n` +
+          `попробуй другой запрос\n` +
+          `или начни новый поиск`,
         reply_markup: kb([
           [{ text: BUTTONS.newSearch, action: "search:open" }],
           [{ text: BUTTONS.back, action: "search:open" }, { text: BUTTONS.main, action: "nav:home" }]
@@ -2282,7 +2295,9 @@ export class BotService {
       return;
     }
 
-    const lines = data.items.map((item, index) => `${index + 1}. ${formatEntryLine(item, user.currencyLabel)}${item.description ? ` — ${item.description}` : ""}`).join("\n");
+    const lines = data.items
+      .map((item, index) => `${index + 1}. ${formatSearchResultBlock(item, user.currencyLabel)}`)
+      .join("\n\n");
     const session = await this.repo.getSession(user.id);
     const selectedIds = new Set<number>(Array.isArray(session.context.selectedIds) ? (session.context.selectedIds as number[]) : []);
     const numberButtons = data.items.map((item, index) => ({
@@ -2293,9 +2308,14 @@ export class BotService {
 
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `запрос: ${query}\nнайдено: ${data.total}\n\n${lines}`,
+      text:
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `поиск записей\n\n` +
+        `запрос:\n${query}\n\n` +
+        `найдено: ${data.total}\n\n` +
+        `${lines}`,
       reply_markup: kb([
-        numberButtons,
+        ...chunkButtons(numberButtons, 3),
         [{ text: BUTTONS.multipleSelect, action: "search:select-mode", payload: { query, page } }],
         ...(selectMode
           ? [
@@ -2335,7 +2355,10 @@ export class BotService {
     if (data.total === 0) {
       await this.sendMessage({
         chat_id: user.chatId,
-        text: `запрос: ${title}\nнайдено: 0\n\nпока ничего не найдено\nможно сделать новый поиск или вернуться назад`,
+        text:
+          `<b>${BOT_TITLE}</b>\n\n` +
+          `записи за ${title}\n\n` +
+          `ничего не найдено`,
         reply_markup: kb([
           [{ text: BUTTONS.newSearch, action: "search:open" }],
           [{ text: BUTTONS.back, action: "search:open" }, { text: BUTTONS.main, action: "nav:home" }]
@@ -2344,7 +2367,7 @@ export class BotService {
       return;
     }
 
-    const lines = data.items.map((item, index) => `${index + 1}. ${formatEntryLine(item, user.currencyLabel)}`).join("\n");
+    const lines = data.items.map((item, index) => `${index + 1}. ${formatEntryListBlock(item, user.currencyLabel)}`).join("\n\n");
     const session = await this.repo.getSession(user.id);
     const selectedIds = new Set<number>(Array.isArray(session.context.selectedIds) ? (session.context.selectedIds as number[]) : []);
     const numberButtons = data.items.map((item, index) => ({
@@ -2355,19 +2378,20 @@ export class BotService {
 
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `запрос: ${title}\nнайдено: ${data.total}\n\n${lines}`,
+      text: `<b>${BOT_TITLE}</b>\n\nзаписи за ${title}\n\n${lines}`,
       reply_markup: kb([
-        numberButtons,
-        [{ text: BUTTONS.multipleSelect, action: "search:select-mode", payload: { query: title, page } }],
+        ...chunkButtons(numberButtons, 3),
+        [{ text: BUTTONS.newSearch, action: "search:open" }],
         ...(selectMode
           ? [
+              [{ text: BUTTONS.multipleSelect, action: "search:select-mode", payload: { query: title, page } }],
               [{ text: BUTTONS.chooseAll, action: "select:all", payload: { origin: "search", page, query: title } }],
               ...(selectedIds.size > 0 ? [[{ text: `действия: ${selectedIds.size}`, action: "select:actions", payload: { origin: "search", page, query: title } }]] : []),
               ...(page > 0 || hasNextPage(data.total, page) ? [buildPageRow(page, hasNextPage(data.total, page), "search:quick", { period: periodLabel })] : [])
             ]
-          : []),
-        ...(!selectMode && (page > 0 || hasNextPage(data.total, page)) ? [buildPageRow(page, hasNextPage(data.total, page), "search:quick", { period: periodLabel })] : []),
-        [{ text: BUTTONS.newSearch, action: "search:open" }],
+          : page > 0 || hasNextPage(data.total, page)
+            ? [buildPageRow(page, hasNextPage(data.total, page), "search:quick", { period: periodLabel })]
+            : []),
         [{ text: BUTTONS.back, action: "search:open" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
@@ -2376,7 +2400,11 @@ export class BotService {
   private async showReportsEntry(user: UserRecord): Promise<void> {
     await this.sendMessage({
       chat_id: user.chatId,
-      text: "отчёт",
+      text:
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `отчёт\n\n` +
+        `выбери быстрый период\n` +
+        `или задай свой`,
       reply_markup: kb([
         [{ text: BUTTONS.today, action: "reports:quick", payload: { period: "today" } }, { text: BUTTONS.yesterday, action: "reports:quick", payload: { period: "yesterday" } }],
         [{ text: BUTTONS.week, action: "reports:quick", payload: { period: "week" } }, { text: BUTTONS.month, action: "reports:quick", payload: { period: "month" } }],
@@ -2401,9 +2429,29 @@ export class BotService {
       context: { reportPeriod: periodKey, reportTitle: title, reportFrom: from, reportTo: to }
     });
     const summary = await this.repo.getSummaryByDateRange(user.id, from, to);
+    if (summary.entries === 0) {
+      await this.sendMessage({
+        chat_id: user.chatId,
+        text:
+          `<b>${BOT_TITLE}</b>\n\n` +
+          `отчёт за ${title}\n\n` +
+          `за этот период записей нет`,
+        reply_markup: kb([
+          [{ text: BUTTONS.anotherPeriod, action: "reports:open" }],
+          [{ text: BUTTONS.main, action: "nav:home" }]
+        ])
+      });
+      return;
+    }
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `доход\n${formatAmountByType(summary.income, "income", user.currencyLabel)}\n\nрасход\n${formatAmountByType(summary.expense, "expense", user.currencyLabel)}\n\nбаланс\n${formatAmountFromMinor(summary.income - summary.expense, user.currencyLabel)}\n\nзаписей\n${summary.entries}`,
+      text:
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `отчёт за ${title}\n\n` +
+        `доход: ${formatAmountByType(summary.income, "income", user.currencyLabel)}\n` +
+        `расход: ${formatAmountByType(summary.expense, "expense", user.currencyLabel)}\n` +
+        `баланс: ${formatAmountFromMinor(summary.income - summary.expense, user.currencyLabel)}\n` +
+        `записей: ${summary.entries}`,
       reply_markup: kb([
         [{ text: BUTTONS.expenseBreakdown, action: "reports:breakdown", payload: { type: "expense", page: 0 } }],
         [{ text: BUTTONS.incomeBreakdown, action: "reports:breakdown", payload: { type: "income", page: 0 } }],
@@ -2429,7 +2477,10 @@ export class BotService {
     if (breakdown.total === 0) {
       await this.sendMessage({
         chat_id: user.chatId,
-        text: `пока записей нет\nможно выбрать другой период`,
+        text:
+          `<b>${BOT_TITLE}</b>\n\n` +
+          `${type === "expense" ? "расходы" : "доходы"} за ${String(session.context.reportTitle ?? "")}\n\n` +
+          `за этот период записей нет`,
         reply_markup: kb([
           [{ text: BUTTONS.anotherPeriod, action: "reports:open" }],
           [{ text: BUTTONS.back, action: "reports:open" }, { text: BUTTONS.main, action: "nav:home" }]
@@ -2439,8 +2490,8 @@ export class BotService {
     }
 
     const lines = breakdown.items
-      .map((item, index) => `${index + 1}. ${item.categoryName} · ${formatAmountByType(item.amountMinor, type, user.currencyLabel)} · записей: ${item.entries}`)
-      .join("\n");
+      .map((item, index) => `${index + 1}. ${item.categoryName} — ${formatAmountByType(item.amountMinor, type, user.currencyLabel)}\nзаписей: ${item.entries}`)
+      .join("\n\n");
     const numberButtons = breakdown.items.map((item, index) => ({
       text: String(index + 1),
       action: "report:category",
@@ -2449,10 +2500,16 @@ export class BotService {
 
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `${type === "expense" ? "по расходам" : "по доходам"}\n\n${lines}`,
+      text:
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `${type === "expense" ? "расходы" : "доходы"} за ${String(session.context.reportTitle ?? "")}\n\n` +
+        `всего: ${formatAmountByType(breakdown.items.reduce((sum, item) => sum + item.amountMinor, 0), type, user.currencyLabel)}\n\n` +
+        `${lines}`,
       reply_markup: kb([
-        numberButtons,
+        ...chunkButtons(numberButtons, 4),
         ...(page > 0 || hasNextPage(breakdown.total, page, 4) ? [buildPageRow(page, hasNextPage(breakdown.total, page, 4), "reports:breakdown", { type })] : []),
+        [{ text: type === "expense" ? "к доходам" : "к расходам", action: "reports:breakdown", payload: { type: type === "expense" ? "income" : "expense", page: 0 } }],
+        [{ text: BUTTONS.allEntries, action: "report:entries", payload: { page: 0, type } }],
         [{ text: BUTTONS.back, action: "reports:current" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
@@ -2496,10 +2553,12 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
-        `${card.category.name}\n\n` +
-        `сумма\n${formatAmountByType(card.amountMinor, type, user.currencyLabel)}\n\n` +
-        `записей\n${card.entries}\n\n` +
-        `${shareLabel}\n${shareText}\n\n` +
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `${card.category.name}\n` +
+        `за ${String(session.context.reportTitle ?? "")}\n\n` +
+        `сумма: ${formatAmountByType(card.amountMinor, type, user.currencyLabel)}\n` +
+        `записей: ${card.entries}\n` +
+        `${shareLabel}: ${shareText}\n\n` +
         `${subcategoryLines}`,
       reply_markup: kb([
         ...subcategoryButtons,
@@ -2540,12 +2599,14 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
-        `${card.subcategory.name}\n\n` +
-        `сумма\n${formatAmountByType(card.amountMinor, type, user.currencyLabel)}\n\n` +
-        `записей\n${card.entries}\n\n` +
-        `внутри категории\n${formatShare(card.amountMinor, card.totalInCategory)}`,
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `${card.category.name} → ${card.subcategory.name}\n` +
+        `за ${String(session.context.reportTitle ?? "")}\n\n` +
+        `сумма: ${formatAmountByType(card.amountMinor, type, user.currencyLabel)}\n` +
+        `записей: ${card.entries}\n` +
+        `внутри категории: ${formatShare(card.amountMinor, card.totalInCategory)}`,
       reply_markup: kb([
-        [{ text: BUTTONS.allEntries, action: "report:entries", payload: { page: 0, type, categoryId, subcategoryId } }],
+        [{ text: "записи", action: "report:entries", payload: { page: 0, type, categoryId, subcategoryId } }],
         [{ text: BUTTONS.back, action: "report:category", payload: { id: categoryId, type, page, subpage } }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
@@ -2594,7 +2655,8 @@ export class BotService {
       return;
     }
 
-    const lines = data.items.map((item, index) => `${index + 1}. ${formatEntryLine(item, user.currencyLabel)}`).join("\n");
+    const title = String(session.context.reportTitle ?? "");
+    const lines = data.items.map((item, index) => `${index + 1}. ${formatEntryListBlock(item, user.currencyLabel)}`).join("\n\n");
     const selectedIds = new Set<number>(Array.isArray(session.context.selectedIds) ? (session.context.selectedIds as number[]) : []);
     const numberButtons = data.items.map((item, index) => ({
       text: selectedIds.has(item.id) ? `✓${index + 1}` : String(index + 1),
@@ -2604,9 +2666,12 @@ export class BotService {
 
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `все записи\n\n${lines}`,
+      text:
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `${reportEntriesTitle(input, title)}\n\n` +
+        `${lines}`,
       reply_markup: kb([
-        numberButtons,
+        ...chunkButtons(numberButtons, 3),
         [
           {
             text: BUTTONS.multipleSelect,
@@ -2665,7 +2730,12 @@ export class BotService {
   private async showCategoryRoot(user: UserRecord): Promise<void> {
     await this.sendMessage({
       chat_id: user.chatId,
-      text: "категории",
+      text:
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `категории\n\n` +
+        `здесь можно посмотреть\n` +
+        `и изменить категории\n` +
+        `для расходов и доходов`,
       reply_markup: kb([
         [{ text: BUTTONS.expenseCategories, action: "categories:list", payload: { type: "expense", page: 0 } }],
         [{ text: BUTTONS.incomeCategories, action: "categories:list", payload: { type: "income", page: 0 } }],
@@ -2681,7 +2751,11 @@ export class BotService {
     if (categories.length === 0) {
       await this.sendMessage({
         chat_id: user.chatId,
-        text: `${notice ? `${notice}\n\n` : ""}пока категорий нет\nможно создать категорию`,
+        text:
+          `<b>${BOT_TITLE}</b>\n\n` +
+          `${type === "expense" ? "категории расходов" : "категории доходов"}\n\n` +
+          `категорий пока нет\n\n` +
+          `можешь добавить первую`,
         reply_markup: kb([
           [{ text: BUTTONS.addCategory, action: "categories:add", payload: { type } }],
           ...(hiddenCount > 0 ? [[{ text: BUTTONS.hidden, action: "categories:hidden", payload: { type, page: 0 } }]] : []),
@@ -2691,7 +2765,7 @@ export class BotService {
       return;
     }
 
-    const lines = categories.map((item, index) => `${index + 1}. ${item.name} · записей: ${item.usageCountCache}`).join("\n");
+    const lines = categories.map((item, index) => `${index + 1}. ${item.name}\nзаписей: ${item.usageCountCache}`).join("\n\n");
     const numberButtons = categories.map((item, index) => ({
       text: String(index + 1),
       action: "category:view",
@@ -2699,9 +2773,13 @@ export class BotService {
     }));
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `${notice ? `${notice}\n\n` : ""}${type === "expense" ? "расходы" : "доходы"}\n\n${lines}`,
+      text:
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `${notice ? `${notice}\n\n` : ""}` +
+        `${type === "expense" ? "категории расходов" : "категории доходов"}\n\n` +
+        `${lines}`,
       reply_markup: kb([
-        numberButtons,
+        ...chunkButtons(numberButtons, 3),
         [{ text: BUTTONS.addCategory, action: "categories:add", payload: { type } }],
         ...(hiddenCount > 0 ? [[{ text: BUTTONS.hidden, action: "categories:hidden", payload: { type, page: 0 } }]] : []),
         ...(page > 0 || categories.length === 6 ? [buildPageRow(page, categories.length === 6, "categories:list", { type })] : []),
@@ -2757,14 +2835,16 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `${category.name}\n\n` +
         `${notice ? `${notice}\n\n` : ""}` +
         `тип: ${type === "expense" ? "расход" : "доход"}\n` +
-        `записей: ${usageCount}\n` +
-        `подкатегории:\n${visibleSubcategories.length ? visibleSubcategories.map((item, index) => `${index + 1}. ${item.name}`).join("\n") : "пока нет"}`,
+        `записей: ${usageCount}\n\n` +
+        `${visibleSubcategories.length ? `подкатегории:\n\n${visibleSubcategories.map((item, index) => `${index + 1}. ${item.name}\nзаписей: ${item.usageCountCache}`).join("\n\n")}` : "подкатегорий пока нет"}`,
       reply_markup: kb([
-        visibleSubcategories.length
-          ? visibleSubcategories.map((item, index) => ({ text: String(index + 1), action: "subcategory:view", payload: { id: item.id, categoryId: category.id, page, subpage, type, source } }))
-          : [{ text: BUTTONS.addSubcategory, action: "subcategory:add", payload: { categoryId: category.id, page, subpage, type, source } }],
+        ...(visibleSubcategories.length
+          ? [visibleSubcategories.map((item, index) => ({ text: String(index + 1), action: "subcategory:view", payload: { id: item.id, categoryId: category.id, page, subpage, type, source } }))]
+          : []),
         ...(subcategories.length > 6 || subpage > 0 ? [buildPageRow(subpage, subcategories.length > (subpage + 1) * 6, "category:view", { id: category.id, page, subpage, type, source })] : []),
         [{ text: BUTTONS.addSubcategory, action: "subcategory:add", payload: { categoryId: category.id, page, subpage, type, source } }],
         ...(hiddenSubcategoryCount > 0 ? [[{ text: BUTTONS.hidden, action: "subcategories:hidden", payload: { categoryId: category.id, page, subpage, type } }]] : []),
@@ -4296,14 +4376,22 @@ function formatAmountByType(amountMinor: number, type: EntryType, currencyLabel:
 
 function formatEntryLine(item: EntryRecord, currencyLabel: string): string {
   const amount = formatAmountByType(item.amountMinor, item.type, currencyLabel);
-  const date = item.isDateMissing ? "дата не указана" : `${item.entryDate} ${item.entryTime ?? ""}`.trim();
+  const date = formatEntryReadableDate(item.entryDate, item.entryTime, item.isDateMissing);
   return `${amount} · ${item.categoryName}${item.subcategoryName ? ` · ${item.subcategoryName}` : ""} · ${date}`;
 }
 
 function formatEntryListBlock(item: EntryRecord, currencyLabel: string): string {
   const amount = formatAmountByType(item.amountMinor, item.type, currencyLabel);
-  const date = item.isDateMissing ? "дата не указана" : `${item.entryDate}, ${item.entryTime ?? ""}`.replace(", ", ", ").trim().replace(/,\s*$/, "");
+  const date = formatEntryReadableDate(item.entryDate, item.entryTime, item.isDateMissing);
   return `${amount} • ${item.categoryName}${item.subcategoryName ? ` → ${item.subcategoryName}` : ""}\n${date}`;
+}
+
+function formatSearchResultBlock(item: EntryRecord, currencyLabel: string): string {
+  const base = formatEntryListBlock(item, currencyLabel);
+  if (!item.description) {
+    return base;
+  }
+  return `${base.replace(/\n([^\n]+)$/, `\n${truncateDescription(item.description)}\n$1`)}`;
 }
 
 function chunkButtons<T>(items: T[], size: number): T[][] {
@@ -4322,6 +4410,38 @@ function formatMissingField(field: string): string {
     return "сумма";
   }
   return "категория";
+}
+
+function formatEntryReadableDate(entryDate: string | null, entryTime: string | null, isDateMissing: boolean): string {
+  if (isDateMissing || !entryDate) {
+    return "дата не указана";
+  }
+
+  const [year, month, day] = entryDate.split("-").map(Number);
+  if (!year || !month || !day) {
+    return entryTime ? `${entryDate}, ${entryTime}` : entryDate;
+  }
+
+  const monthNames = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+  const dateLabel = `${String(day).padStart(2, "0")} ${monthNames[month - 1]}${year !== new Date().getUTCFullYear() ? ` ${year}` : ""}`;
+  return entryTime ? `${dateLabel}, ${entryTime}` : dateLabel;
+}
+
+function truncateDescription(value: string): string {
+  return value.length > 20 ? `${value.slice(0, 17)}...` : value;
+}
+
+function reportEntriesTitle(
+  input: { type?: EntryType; categoryId?: number; subcategoryId?: number },
+  reportTitle: string
+): string {
+  if (typeof input.subcategoryId === "number") {
+    return `записи\nза ${reportTitle}`;
+  }
+  if (typeof input.categoryId === "number") {
+    return `записи\nза ${reportTitle}`;
+  }
+  return `записи за ${reportTitle}`;
 }
 
 function periodToLabel(period: string): string {
