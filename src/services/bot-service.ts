@@ -143,7 +143,7 @@ export class BotService {
       }
       const category = await this.repo.ensureCategory(user.id, type, text.trim());
       const shouldAskSubcategory = user.subcategoriesEnabled && (await this.repo.getSubcategoryCount(user.id, category.id)) > 0;
-      await this.repo.saveSession(user.id, {
+      await this.saveSessionKeepingScreen(user.id, {
         ...session,
         context: {
           ...session.context,
@@ -174,7 +174,7 @@ export class BotService {
     }
 
     if (session.mode === "operations" && session.context.awaiting === "bulk-transfer-subcategory") {
-      await this.repo.saveSession(user.id, {
+      await this.saveSessionKeepingScreen(user.id, {
         ...session,
         context: { ...session.context, transferSubcategoryName: text.trim(), awaiting: undefined }
       });
@@ -183,7 +183,7 @@ export class BotService {
       }
 
       if (session.mode === "search" && session.context.awaiting === "query") {
-      await this.repo.saveSession(user.id, { ...session, context: { ...session.context, query: text, awaiting: undefined } });
+      await this.saveSessionKeepingScreen(user.id, { ...session, context: { ...session.context, query: text, awaiting: undefined } });
       await this.showSearchResults(user, text, 0);
       return;
     }
@@ -275,7 +275,7 @@ export class BotService {
         return;
       }
       if (parsed.status === "ambiguous") {
-        await this.repo.saveSession(user.id, {
+        await this.saveSessionKeepingScreen(user.id, {
           ...session,
           mode: "reports",
           context: {
@@ -355,7 +355,7 @@ export class BotService {
           [{ text: BUTTONS.back, action: "search:open" }, { text: BUTTONS.main, action: "nav:home" }]
         ])
       });
-      await this.repo.saveSession(user.id, { ...session, context: { ...session.context, pendingText: text } });
+      await this.saveSessionKeepingScreen(user.id, { ...session, context: { ...session.context, pendingText: text } });
       return;
       }
 
@@ -2586,7 +2586,7 @@ export class BotService {
     const lines = items.map((item, index) => `${index + 1}. ${formatEntryListBlock(item, user.currencyLabel)}`).join("\n\n");
     const session = await this.repo.getSession(user.id);
     const selectedIds = new Set<number>(Array.isArray(session.context.selectedIds) ? (session.context.selectedIds as number[]) : []);
-    await this.repo.saveSession(user.id, {
+    await this.saveSessionKeepingScreen(user.id, {
       ...session,
       mode: "operations",
       context: { ...session.context, visibleEntryIds: items.map((item) => item.id), visibleSource: "operations" }
@@ -2775,7 +2775,7 @@ export class BotService {
 
   private async promptEditField(user: UserRecord, field: string): Promise<void> {
     const session = await this.repo.getSession(user.id);
-    await this.repo.saveSession(user.id, {
+    await this.saveSessionKeepingScreen(user.id, {
       ...session,
       mode: "edit",
       context: { ...session.context, awaitingField: field }
@@ -2935,7 +2935,7 @@ export class BotService {
   private async showSearchResults(user: UserRecord, query: string, page: number, selectMode = false, notice?: string): Promise<void> {
     const currentSession = await this.repo.getSession(user.id);
     const data = await this.repo.searchEntries(user.id, query, page);
-    await this.repo.saveSession(user.id, {
+    await this.saveSessionKeepingScreen(user.id, {
       ...currentSession,
       mode: "search",
       context: { ...currentSession.context, query, visibleEntryIds: data.items.map((item) => item.id), visibleSource: "search" }
@@ -3011,7 +3011,7 @@ export class BotService {
       from,
       to
     });
-    await this.repo.saveSession(user.id, {
+    await this.saveSessionKeepingScreen(user.id, {
       ...currentSession,
       mode: "search",
       context: { ...currentSession.context, query: title, searchPeriod: periodLabel, searchFrom: from, searchTo: to, visibleEntryIds: data.items.map((item) => item.id), visibleSource: "search" }
@@ -3307,7 +3307,7 @@ export class BotService {
       subcategoryId: input.subcategoryId
     });
 
-    await this.repo.saveSession(user.id, {
+    await this.saveSessionKeepingScreen(user.id, {
       ...session,
       mode: "reports",
       context: {
@@ -4122,7 +4122,7 @@ export class BotService {
     }
 
     const session = await this.repo.getSession(user.id);
-    await this.repo.saveSession(user.id, {
+    await this.saveSessionKeepingScreen(user.id, {
       ...session,
       mode: "categories",
       context: {
@@ -5378,7 +5378,7 @@ export class BotService {
     } else {
       selectedIds.add(entryId);
     }
-    await this.repo.saveSession(user.id, {
+    await this.saveSessionKeepingScreen(user.id, {
       ...session,
       context: { ...session.context, selectedIds: Array.from(selectedIds) }
     });
@@ -5472,7 +5472,7 @@ export class BotService {
         selectedIds.add(itemId);
       }
     }
-    await this.repo.saveSession(user.id, {
+    await this.saveSessionKeepingScreen(user.id, {
       ...session,
       context: { ...session.context, selectedIds: Array.from(selectedIds) }
     });
@@ -5548,7 +5548,7 @@ export class BotService {
 
   private async clearBulkSelection(user: UserRecord, origin: string, page: number): Promise<void> {
     const session = await this.repo.getSession(user.id);
-    await this.repo.saveSession(user.id, {
+    await this.saveSessionKeepingScreen(user.id, {
       ...session,
       context: { ...session.context, selectedIds: [] }
     });
@@ -5629,7 +5629,7 @@ export class BotService {
       return;
     }
 
-    await this.repo.saveSession(user.id, {
+    await this.saveSessionKeepingScreen(user.id, {
       ...session,
       mode: "operations",
       context: {
@@ -5699,7 +5699,7 @@ export class BotService {
     }
 
     const shouldAskSubcategory = user.subcategoriesEnabled && (await this.repo.getSubcategoryCount(user.id, category.id)) > 0;
-    await this.repo.saveSession(user.id, {
+    await this.saveSessionKeepingScreen(user.id, {
       ...session,
       context: {
         ...session.context,
@@ -5807,7 +5807,7 @@ export class BotService {
       await this.showBulkActions(user, origin, page);
       return;
     }
-    await this.repo.saveSession(user.id, {
+    await this.saveSessionKeepingScreen(user.id, {
       ...session,
       context: {
         ...session.context,
@@ -5840,7 +5840,7 @@ export class BotService {
       subcategoryName: subcategoryNameRaw || undefined
     });
 
-    await this.repo.saveSession(user.id, {
+    await this.saveSessionKeepingScreen(user.id, {
       ...session,
       mode: "idle",
       context: {
@@ -5860,7 +5860,7 @@ export class BotService {
     const session = await this.repo.getSession(user.id);
     const selectedIds = Array.isArray(session.context.selectedIds) ? (session.context.selectedIds as number[]) : [];
     await this.repo.deleteEntries(user.id, selectedIds);
-    await this.repo.saveSession(user.id, {
+    await this.saveSessionKeepingScreen(user.id, {
       ...session,
       context: { ...session.context, selectedIds: [] }
     });
@@ -5871,7 +5871,7 @@ export class BotService {
     const session = await this.repo.getSession(user.id);
     const selectedIds = Array.isArray(session.context.selectedIds) ? (session.context.selectedIds as number[]) : [];
     await this.repo.clearSubcategoryForEntries(user.id, selectedIds);
-    await this.repo.saveSession(user.id, {
+    await this.saveSessionKeepingScreen(user.id, {
       ...session,
       context: { ...session.context, selectedIds: [] }
     });
