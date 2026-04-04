@@ -120,14 +120,29 @@ export class BotService {
     }
 
     if (session.mode === "categories" && session.context.awaiting === "new-category") {
-      await this.repo.ensureCategory(user.id, String(session.context.type) as EntryType, text);
-      await this.showCategoryList(user, String(session.context.type) as EntryType, 0);
+      await this.handleCategoryCreate(user, String(session.context.type) as EntryType, text);
       return;
     }
 
     if (session.mode === "categories" && session.context.awaiting === "new-subcategory") {
-      await this.repo.ensureSubcategory(user.id, Number(session.context.categoryId), text);
-      await this.showCategoryCard(user, Number(session.context.categoryId), String(session.context.type) as EntryType, Number(session.context.page ?? "0"));
+      await this.handleSubcategoryCreate(user, Number(session.context.categoryId), String(session.context.type) as EntryType, Number(session.context.page ?? "0"), text);
+      return;
+    }
+
+    if (session.mode === "categories" && session.context.awaiting === "rename-category") {
+      await this.handleCategoryRename(user, Number(session.context.categoryId), String(session.context.type) as EntryType, Number(session.context.page ?? "0"), text);
+      return;
+    }
+
+    if (session.mode === "categories" && session.context.awaiting === "rename-subcategory") {
+      await this.handleSubcategoryRename(
+        user,
+        Number(session.context.subcategoryId),
+        Number(session.context.categoryId),
+        String(session.context.type) as EntryType,
+        Number(session.context.page ?? "0"),
+        text
+      );
       return;
     }
 
@@ -715,6 +730,12 @@ export class BotService {
       case "subcategory:hide":
         await this.repo.hideSubcategory(user.id, Number(params.id));
         await this.showCategoryCard(user, Number(params.categoryId), String(params.type) as EntryType, Number(params.page ?? "0"));
+        return;
+      case "category:edit":
+        await this.startCategoryRename(user, Number(params.id), String(params.type) as EntryType, Number(params.page ?? "0"));
+        return;
+      case "subcategory:edit":
+        await this.startSubcategoryRename(user, Number(params.id), Number(params.categoryId), String(params.type) as EntryType, Number(params.page ?? "0"));
         return;
       case "subcategory:restore":
         await this.repo.restoreSubcategory(user.id, Number(params.id));
@@ -1997,7 +2018,7 @@ export class BotService {
           : [{ text: BUTTONS.addSubcategory, action: "subcategory:add", payload: { categoryId: category.id, page, type } }],
         [{ text: BUTTONS.addSubcategory, action: "subcategory:add", payload: { categoryId: category.id, page, type } }],
         ...(hiddenSubcategoryCount > 0 ? [[{ text: BUTTONS.hidden, action: "subcategories:hidden", payload: { categoryId: category.id, page, type } }]] : []),
-        [{ text: BUTTONS.edit, action: "noop" }],
+        [{ text: BUTTONS.edit, action: "category:edit", payload: { id: category.id, page, type } }],
         [{ text: category.hiddenAt ? BUTTONS.restore : BUTTONS.hide, action: category.hiddenAt ? "category:restore" : "category:hide", payload: { id: category.id, page, type } }],
         [{ text: BUTTONS.delete, action: "category:delete", payload: { id: category.id, page, type } }],
         [{ text: BUTTONS.allEntries, action: "category:entries", payload: { categoryId: category.id, type, page: 0 } }],
@@ -2044,7 +2065,7 @@ export class BotService {
       chat_id: user.chatId,
       text: `${subcategory.name}\n\nзаписей: ${usageCount}`,
       reply_markup: kb([
-        [{ text: BUTTONS.edit, action: "noop" }],
+        [{ text: BUTTONS.edit, action: "subcategory:edit", payload: { id: subcategory.id, categoryId, page, type } }],
         [{ text: subcategory.hiddenAt ? BUTTONS.restore : BUTTONS.hide, action: subcategory.hiddenAt ? "subcategory:restore" : "subcategory:hide", payload: { id: subcategory.id, categoryId, page, type } }],
         [{ text: BUTTONS.delete, action: "subcategory:delete", payload: { id: subcategory.id, categoryId, page, type } }],
         [{ text: BUTTONS.allEntries, action: "subcategory:entries", payload: { id: subcategory.id, categoryId, type, page: 0 } }],
@@ -2085,6 +2106,116 @@ export class BotService {
     }
     await this.repo.deleteSubcategory(user.id, subcategoryId);
     await this.showCategoryCard(user, categoryId, type, page);
+  }
+
+  private async startCategoryRename(user: UserRecord, categoryId: number, type: EntryType, page: number): Promise<void> {
+    await this.repo.saveSession(user.id, {
+      mode: "categories",
+      stack: ["categories"],
+      context: { awaiting: "rename-category", categoryId, type, page }
+    });
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: "Напиши новое название категории.",
+      reply_markup: kb([[{ text: BUTTONS.cancel, action: "category:view", payload: { id: categoryId, type, page } }, { text: BUTTONS.main, action: "nav:home" }]])
+    });
+  }
+
+  private async startSubcategoryRename(user: UserRecord, subcategoryId: number, categoryId: number, type: EntryType, page: number): Promise<void> {
+    await this.repo.saveSession(user.id, {
+      mode: "categories",
+      stack: ["categories"],
+      context: { awaiting: "rename-subcategory", subcategoryId, categoryId, type, page }
+    });
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: "Напиши новое название подкатегории.",
+      reply_markup: kb([[{ text: BUTTONS.cancel, action: "subcategory:view", payload: { id: subcategoryId, categoryId, type, page } }, { text: BUTTONS.main, action: "nav:home" }]])
+    });
+  }
+
+  private async handleCategoryCreate(user: UserRecord, type: EntryType, text: string): Promise<void> {
+    const existing = await this.repo.findCategoryByNormalizedName(user.id, type, text);
+    if (existing?.hiddenAt) {
+      await this.telegram.sendMessage({
+        chat_id: user.chatId,
+        text: "Такая категория уже есть в скрытых.\n\nМожно вернуть её.",
+        reply_markup: kb([
+          [{ text: BUTTONS.restore, action: "category:restore", payload: { id: existing.id, type, page: 0 } }],
+          [{ text: BUTTONS.back, action: "categories:list", payload: { type, page: 0 } }, { text: BUTTONS.main, action: "nav:home" }]
+        ])
+      });
+      return;
+    }
+    await this.repo.ensureCategory(user.id, type, text);
+    await this.showCategoryList(user, type, 0);
+  }
+
+  private async handleSubcategoryCreate(user: UserRecord, categoryId: number, type: EntryType, page: number, text: string): Promise<void> {
+    const existing = await this.repo.findSubcategoryByNormalizedName(categoryId, text);
+    if (existing?.hiddenAt) {
+      await this.telegram.sendMessage({
+        chat_id: user.chatId,
+        text: "Такая подкатегория уже есть в скрытых.\n\nМожно вернуть её.",
+        reply_markup: kb([
+          [{ text: BUTTONS.restore, action: "subcategory:restore", payload: { id: existing.id, categoryId, type, page } }],
+          [{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page } }, { text: BUTTONS.main, action: "nav:home" }]
+        ])
+      });
+      return;
+    }
+    await this.repo.ensureSubcategory(user.id, categoryId, text);
+    await this.showCategoryCard(user, categoryId, type, page);
+  }
+
+  private async handleCategoryRename(user: UserRecord, categoryId: number, type: EntryType, page: number, text: string): Promise<void> {
+    const existing = await this.repo.findCategoryByNormalizedName(user.id, type, text);
+    if (existing && existing.id !== categoryId) {
+      if (existing.hiddenAt) {
+        await this.telegram.sendMessage({
+          chat_id: user.chatId,
+          text: "Такая категория уже есть в скрытых.\n\nМожно вернуть её.",
+          reply_markup: kb([
+            [{ text: BUTTONS.restore, action: "category:restore", payload: { id: existing.id, type, page: 0 } }],
+            [{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page } }, { text: BUTTONS.main, action: "nav:home" }]
+          ])
+        });
+        return;
+      }
+      await this.telegram.sendMessage({
+        chat_id: user.chatId,
+        text: "Такая категория уже есть.",
+        reply_markup: kb([[{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page } }, { text: BUTTONS.main, action: "nav:home" }]])
+      });
+      return;
+    }
+    await this.repo.renameCategory(user.id, categoryId, text);
+    await this.showCategoryCard(user, categoryId, type, page);
+  }
+
+  private async handleSubcategoryRename(user: UserRecord, subcategoryId: number, categoryId: number, type: EntryType, page: number, text: string): Promise<void> {
+    const existing = await this.repo.findSubcategoryByNormalizedName(categoryId, text);
+    if (existing && existing.id !== subcategoryId) {
+      if (existing.hiddenAt) {
+        await this.telegram.sendMessage({
+          chat_id: user.chatId,
+          text: "Такая подкатегория уже есть в скрытых.\n\nМожно вернуть её.",
+          reply_markup: kb([
+            [{ text: BUTTONS.restore, action: "subcategory:restore", payload: { id: existing.id, categoryId, type, page } }],
+            [{ text: BUTTONS.back, action: "subcategory:view", payload: { id: subcategoryId, categoryId, type, page } }, { text: BUTTONS.main, action: "nav:home" }]
+          ])
+        });
+        return;
+      }
+      await this.telegram.sendMessage({
+        chat_id: user.chatId,
+        text: "Такая подкатегория уже есть.",
+        reply_markup: kb([[{ text: BUTTONS.back, action: "subcategory:view", payload: { id: subcategoryId, categoryId, type, page } }, { text: BUTTONS.main, action: "nav:home" }]])
+      });
+      return;
+    }
+    await this.repo.renameSubcategory(user.id, subcategoryId, text);
+    await this.showSubcategoryCard(user, subcategoryId, categoryId, type, page);
   }
 
   private async showCategoryEntries(

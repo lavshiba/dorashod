@@ -248,6 +248,14 @@ export class Repository {
     return mapCategory(row);
   }
 
+  async findCategoryByNormalizedName(userId: number, type: EntryType, name: string): Promise<CategoryRecord | null> {
+    const row = await this.db
+      .prepare("SELECT * FROM categories WHERE user_id = ? AND type = ? AND normalized_name = ?")
+      .bind(userId, type, normalizeName(name))
+      .first<Record<string, D1Value>>();
+    return row ? mapCategory(row) : null;
+  }
+
   async ensureSubcategory(userId: number, categoryId: number, name: string): Promise<SubcategoryRecord> {
     const normalized = normalizeName(name);
     const existing = await this.db
@@ -288,6 +296,14 @@ export class Repository {
     }
 
     return mapSubcategory(row);
+  }
+
+  async findSubcategoryByNormalizedName(categoryId: number, name: string): Promise<SubcategoryRecord | null> {
+    const row = await this.db
+      .prepare("SELECT * FROM subcategories WHERE category_id = ? AND normalized_name = ?")
+      .bind(categoryId, normalizeName(name))
+      .first<Record<string, D1Value>>();
+    return row ? mapSubcategory(row) : null;
   }
 
   async createEntry(input: {
@@ -1122,6 +1138,20 @@ export class Repository {
 
   async deleteSubcategory(userId: number, subcategoryId: number): Promise<void> {
     await this.db.prepare("DELETE FROM subcategories WHERE user_id = ? AND id = ?").bind(userId, subcategoryId).run();
+  }
+
+  async renameCategory(userId: number, categoryId: number, name: string): Promise<void> {
+    await this.db
+      .prepare("UPDATE categories SET name = ?, normalized_name = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND id = ?")
+      .bind(name.trim(), normalizeName(name), userId, categoryId)
+      .run();
+  }
+
+  async renameSubcategory(userId: number, subcategoryId: number, name: string): Promise<void> {
+    await this.db
+      .prepare("UPDATE subcategories SET name = ?, normalized_name = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND id = ?")
+      .bind(name.trim(), normalizeName(name), userId, subcategoryId)
+      .run();
   }
 
   async createCronRun(jobName: string, status: string, summary: string): Promise<void> {
