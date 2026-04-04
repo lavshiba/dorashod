@@ -3375,10 +3375,10 @@ export class BotService {
       categoryName: parsed.category,
       subcategoryName: parsed.subcategory ?? null,
       description: parsed.description ?? null,
-      entryDate: null,
-      entryTime: null,
-      isTimeAuto: true,
-      isDateMissing: true
+      entryDate: parsed.entryDate ?? null,
+      entryTime: parsed.entryTime ?? null,
+      isTimeAuto: parsed.isTimeAuto,
+      isDateMissing: parsed.isDateMissing
     };
 
     await this.repo.createEntry({
@@ -3388,10 +3388,10 @@ export class BotService {
       categoryName: entry.categoryName,
       subcategoryName: entry.subcategoryName ?? undefined,
       description: entry.description ?? undefined,
-      entryDate: null,
-      entryTime: null,
-      isTimeAuto: true,
-      isDateMissing: true,
+      entryDate: entry.entryDate,
+      entryTime: entry.entryTime,
+      isTimeAuto: entry.isTimeAuto,
+      isDateMissing: entry.isDateMissing,
       source: "import-fix"
     });
 
@@ -4110,17 +4110,54 @@ function parseFixCandidate(rawText: string): {
   category?: string;
   subcategory?: string;
   description?: string;
+  entryDate?: string | null;
+  entryTime?: string | null;
+  isDateMissing: boolean;
+  isTimeAuto: boolean;
   missing: string[];
 } {
   const parsed = parseEntryAttempt(rawText);
+  const extractedDate = extractDateFromText(rawText);
+  const extractedTime = extractTimeFromText(rawText);
   return {
     type: parsed.type,
     amountMinor: parsed.amountMinor,
     category: parsed.category,
     subcategory: parsed.subcategory,
     description: parsed.description,
+    entryDate: extractedDate,
+    entryTime: extractedTime,
+    isDateMissing: !extractedDate,
+    isTimeAuto: !extractedTime,
     missing: parsed.missing
   };
+}
+
+function extractDateFromText(rawText: string): string | null {
+  const isoMatch = rawText.match(/\b\d{4}-\d{2}-\d{2}\b/);
+  if (isoMatch) {
+    const parsed = parseImportedDate(isoMatch[0]);
+    return parsed.readable ? parsed.value : null;
+  }
+  const dottedMatch = rawText.match(/\b\d{1,2}\.\d{1,2}\.\d{4}\b/);
+  if (dottedMatch) {
+    const parsed = parseImportedDate(dottedMatch[0]);
+    return parsed.readable ? parsed.value : null;
+  }
+  const slashMatch = rawText.match(/\b\d{4}\/\d{1,2}\/\d{1,2}\b/);
+  if (slashMatch) {
+    const parsed = parseImportedDate(slashMatch[0]);
+    return parsed.readable ? parsed.value : null;
+  }
+  return null;
+}
+
+function extractTimeFromText(rawText: string): string | null {
+  const timeMatch = rawText.match(/\b\d{1,2}:\d{2}(?::\d{2})?\b/);
+  if (!timeMatch) {
+    return null;
+  }
+  return parseImportedTime(timeMatch[0]);
 }
 
 function parseImportedAmount(value: unknown): number | null {
