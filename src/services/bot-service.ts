@@ -559,11 +559,7 @@ export class BotService {
     }
 
     if (screenMessageId && callbackMessageId && screenMessageId !== callbackMessageId) {
-      try {
-        await this.telegram.deleteMessage(user.chatId, callbackMessageId);
-      } catch {
-        // Stale screen may already be gone.
-      }
+      await this.safeDeleteMessage(user.chatId, callbackMessageId);
       this.currentUserId = null;
       return;
     }
@@ -1721,11 +1717,7 @@ export class BotService {
     }
 
     if (staleMessageId) {
-      try {
-        await this.telegram.deleteMessage(String(payload.chat_id), staleMessageId);
-      } catch {
-        // Old screen may already be gone or may be non-deletable at this point.
-      }
+      await this.safeDeleteMessage(String(payload.chat_id), staleMessageId);
       this.lastBotMessageByChat.delete(String(payload.chat_id));
     }
 
@@ -1756,19 +1748,11 @@ export class BotService {
     const persistedScreenMessageId = typeof session.context.screenMessageId === "number" ? session.context.screenMessageId : undefined;
 
     if (typeof commandMessageId === "number") {
-      try {
-        await this.telegram.deleteMessage(user.chatId, commandMessageId);
-      } catch {
-        // Telegram can refuse deletion in some client/server cases; keep start flow working anyway.
-      }
+      await this.safeDeleteMessage(user.chatId, commandMessageId);
     }
 
     if (typeof persistedScreenMessageId === "number") {
-      try {
-        await this.telegram.deleteMessage(user.chatId, persistedScreenMessageId);
-      } catch {
-        // Old screen may already be gone; ignore and recreate a fresh one below.
-      }
+      await this.safeDeleteMessage(user.chatId, persistedScreenMessageId);
     }
 
     this.lastBotMessageByChat.delete(user.chatId);
@@ -1784,11 +1768,7 @@ export class BotService {
       return;
     }
 
-    try {
-      await this.telegram.deleteMessage(chatId, messageId);
-    } catch {
-      // Telegram can refuse deletion for old, already removed or non-deletable messages.
-    }
+    await this.safeDeleteMessage(chatId, messageId);
   }
 
   private async acquireUserUpdateLock(userId: number, lockToken: string): Promise<boolean> {
@@ -1799,6 +1779,20 @@ export class BotService {
       await sleep(120);
     }
     return false;
+  }
+
+  private async safeDeleteMessage(chatId: string, messageId: number): Promise<void> {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        await this.telegram.deleteMessage(chatId, messageId);
+        return;
+      } catch {
+        if (attempt === 2) {
+          return;
+        }
+        await sleep(150);
+      }
+    }
   }
 
   private async showStart(user: UserRecord): Promise<void> {
