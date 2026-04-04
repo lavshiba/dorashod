@@ -1077,6 +1077,29 @@ export class Repository {
     return row?.count ?? 0;
   }
 
+  async getHiddenSubcategoryCount(userId: number, categoryId: number): Promise<number> {
+    const row = await this.db
+      .prepare("SELECT COUNT(*) as count FROM subcategories WHERE user_id = ? AND category_id = ? AND hidden_at IS NOT NULL")
+      .bind(userId, categoryId)
+      .first<{ count: number }>();
+    return row?.count ?? 0;
+  }
+
+  async listHiddenSubcategories(userId: number, categoryId: number): Promise<SubcategoryRecord[]> {
+    const rows = await this.db
+      .prepare(
+        `
+        SELECT *
+        FROM subcategories
+        WHERE user_id = ? AND category_id = ? AND hidden_at IS NOT NULL
+        ORDER BY usage_count_cache DESC, updated_at DESC, id DESC
+      `
+      )
+      .bind(userId, categoryId)
+      .all<Record<string, D1Value>>();
+    return (rows.results ?? []).map(mapSubcategory);
+  }
+
   async hideCategory(userId: number, categoryId: number): Promise<void> {
     await this.db.prepare("UPDATE categories SET hidden_at = CURRENT_TIMESTAMP WHERE user_id = ? AND id = ?").bind(userId, categoryId).run();
   }
@@ -1091,6 +1114,14 @@ export class Repository {
 
   async restoreSubcategory(userId: number, subcategoryId: number): Promise<void> {
     await this.db.prepare("UPDATE subcategories SET hidden_at = NULL WHERE user_id = ? AND id = ?").bind(userId, subcategoryId).run();
+  }
+
+  async deleteCategory(userId: number, categoryId: number): Promise<void> {
+    await this.db.prepare("DELETE FROM categories WHERE user_id = ? AND id = ?").bind(userId, categoryId).run();
+  }
+
+  async deleteSubcategory(userId: number, subcategoryId: number): Promise<void> {
+    await this.db.prepare("DELETE FROM subcategories WHERE user_id = ? AND id = ?").bind(userId, subcategoryId).run();
   }
 
   async createCronRun(jobName: string, status: string, summary: string): Promise<void> {

@@ -685,6 +685,9 @@ export class BotService {
       case "categories:hidden":
         await this.showHiddenCategoryList(user, String(params.type) as EntryType, Number(params.page ?? "0"));
         return;
+      case "subcategories:hidden":
+        await this.showHiddenSubcategoryList(user, Number(params.categoryId), String(params.type) as EntryType, Number(params.page ?? "0"));
+        return;
       case "subcategory:add":
         await this.repo.saveSession(user.id, {
           mode: "categories",
@@ -704,6 +707,12 @@ export class BotService {
       case "subcategory:restore":
         await this.repo.restoreSubcategory(user.id, Number(params.id));
         await this.showSubcategoryCard(user, Number(params.id), Number(params.categoryId), String(params.type) as EntryType, Number(params.page ?? "0"));
+        return;
+      case "category:delete":
+        await this.handleCategoryDelete(user, Number(params.id), String(params.type) as EntryType, Number(params.page ?? "0"));
+        return;
+      case "subcategory:delete":
+        await this.handleSubcategoryDelete(user, Number(params.id), Number(params.categoryId), String(params.type) as EntryType, Number(params.page ?? "0"));
         return;
       case "category:entries":
         await this.showCategoryEntries(user, Number(params.categoryId), undefined, String(params.type) as EntryType, Number(params.page ?? "0"));
@@ -1849,6 +1858,7 @@ export class BotService {
     }
     const subcategories = await this.repo.getSubcategories(user.id, category.id);
     const usageCount = await this.repo.getCategoryUsageCount(category.id);
+    const hiddenSubcategoryCount = await this.repo.getHiddenSubcategoryCount(user.id, category.id);
     await this.telegram.sendMessage({
       chat_id: user.chatId,
       text:
@@ -1860,11 +1870,39 @@ export class BotService {
           ? subcategories.map((item, index) => ({ text: String(index + 1), action: "subcategory:view", payload: { id: item.id, categoryId: category.id, page, type } }))
           : [{ text: BUTTONS.addSubcategory, action: "subcategory:add", payload: { categoryId: category.id, page, type } }],
         [{ text: BUTTONS.addSubcategory, action: "subcategory:add", payload: { categoryId: category.id, page, type } }],
+        ...(hiddenSubcategoryCount > 0 ? [[{ text: BUTTONS.hidden, action: "subcategories:hidden", payload: { categoryId: category.id, page, type } }]] : []),
         [{ text: BUTTONS.edit, action: "noop" }],
         [{ text: category.hiddenAt ? BUTTONS.restore : BUTTONS.hide, action: category.hiddenAt ? "category:restore" : "category:hide", payload: { id: category.id, page, type } }],
-        [{ text: BUTTONS.delete, action: "noop" }],
+        [{ text: BUTTONS.delete, action: "category:delete", payload: { id: category.id, page, type } }],
         [{ text: BUTTONS.allEntries, action: "category:entries", payload: { categoryId: category.id, type, page: 0 } }],
         [{ text: BUTTONS.back, action: "categories:list", payload: { type, page } }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async showHiddenSubcategoryList(user: UserRecord, categoryId: number, type: EntryType, page: number): Promise<void> {
+    const items = await this.repo.listHiddenSubcategories(user.id, categoryId);
+    if (items.length === 0) {
+      await this.telegram.sendMessage({
+        chat_id: user.chatId,
+        text: "пока скрытых подкатегорий нет\nможно вернуться назад",
+        reply_markup: kb([[{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page } }, { text: BUTTONS.main, action: "nav:home" }]])
+      });
+      return;
+    }
+
+    const lines = items.map((item, index) => `${index + 1}. ${item.name}`).join("\n");
+    const numberButtons = items.map((item, index) => ({
+      text: String(index + 1),
+      action: "subcategory:view",
+      payload: { id: item.id, categoryId, type, page }
+    }));
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: `скрытые\n\n${lines}`,
+      reply_markup: kb([
+        numberButtons,
+        [{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page } }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
   }
@@ -1882,11 +1920,45 @@ export class BotService {
       reply_markup: kb([
         [{ text: BUTTONS.edit, action: "noop" }],
         [{ text: subcategory.hiddenAt ? BUTTONS.restore : BUTTONS.hide, action: subcategory.hiddenAt ? "subcategory:restore" : "subcategory:hide", payload: { id: subcategory.id, categoryId, page, type } }],
-        [{ text: BUTTONS.delete, action: "noop" }],
+        [{ text: BUTTONS.delete, action: "subcategory:delete", payload: { id: subcategory.id, categoryId, page, type } }],
         [{ text: BUTTONS.allEntries, action: "subcategory:entries", payload: { id: subcategory.id, categoryId, type, page: 0 } }],
         [{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page } }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
+  }
+
+  private async handleCategoryDelete(user: UserRecord, categoryId: number, type: EntryType, page: number): Promise<void> {
+    const usageCount = await this.repo.getCategoryUsageCount(categoryId);
+    if (usageCount > 0) {
+      await this.telegram.sendMessage({
+        chat_id: user.chatId,
+        text: "Удалить категорию нельзя, пока в ней есть записи.\n\nМожно скрыть её или потом перенести все записи.",
+        reply_markup: kb([
+          [{ text: BUTTONS.hide, action: "category:hide", payload: { id: categoryId, page, type } }],
+          [{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, page, type } }, { text: BUTTONS.main, action: "nav:home" }]
+        ])
+      });
+      return;
+    }
+    await this.repo.deleteCategory(user.id, categoryId);
+    await this.showCategoryList(user, type, page);
+  }
+
+  private async handleSubcategoryDelete(user: UserRecord, subcategoryId: number, categoryId: number, type: EntryType, page: number): Promise<void> {
+    const usageCount = await this.repo.getSubcategoryUsageCount(subcategoryId);
+    if (usageCount > 0) {
+      await this.telegram.sendMessage({
+        chat_id: user.chatId,
+        text: "Удалить подкатегорию нельзя, пока в ней есть записи.\n\nМожно скрыть её или потом перенести все записи.",
+        reply_markup: kb([
+          [{ text: BUTTONS.hide, action: "subcategory:hide", payload: { id: subcategoryId, categoryId, page, type } }],
+          [{ text: BUTTONS.back, action: "subcategory:view", payload: { id: subcategoryId, categoryId, page, type } }, { text: BUTTONS.main, action: "nav:home" }]
+        ])
+      });
+      return;
+    }
+    await this.repo.deleteSubcategory(user.id, subcategoryId);
+    await this.showCategoryCard(user, categoryId, type, page);
   }
 
   private async showCategoryEntries(
