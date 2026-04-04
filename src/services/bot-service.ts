@@ -1196,9 +1196,21 @@ export class BotService {
         return;
       }
       case "data:import-entries-merge":
-        await this.applyEntriesImport(user, Number(params.importId), true);
+        await this.showEntriesImportMergePlan(user, Number(params.importId));
         return;
       case "data:import-entries-add-all":
+        await this.showEntriesImportAddAllPlan(user, Number(params.importId));
+        return;
+      case "data:import-entries-merge-confirm":
+        await this.showEntriesImportMergeConfirm(user, Number(params.importId));
+        return;
+      case "data:import-entries-merge-apply":
+        await this.applyEntriesImport(user, Number(params.importId), true);
+        return;
+      case "data:import-entries-add-all-confirm":
+        await this.showEntriesImportAddAllConfirm(user, Number(params.importId));
+        return;
+      case "data:import-entries-add-all-apply":
         await this.applyEntriesImport(user, Number(params.importId), false);
         return;
       case "data:import-fix-open":
@@ -4020,15 +4032,12 @@ export class BotService {
     const previewErrors = Array.isArray(pendingImport.previewJson.errors)
       ? (pendingImport.previewJson.errors as Array<Record<string, unknown>>)
       : [];
-    const reasonLines = previewErrors
-      .slice(0, 3)
-      .map((item) => `- ${String(item.reason ?? "не удалось прочитать строку")}`)
-      .join("\n");
+    const reasonLines = summarizeImportErrorReasons(previewErrors);
 
     const topBlock =
       previewErrors.length > 0
         ? `добавить всё из файла\n\nбудет добавлено:\n${previewEntries.length} записей\n\nне удалось прочитать:\n${previewErrors.length} строк` +
-          (reasonLines ? `\n\nчаще всего:\n${reasonLines.replace(/^- /gm, "")}` : "")
+          (reasonLines ? `\n\nчаще всего:\n${reasonLines}` : "")
         : `файл загружен\n\nнашёл:\n${previewEntries.length} записей\n\nиз файла будут взяты:\nсумма, тип, категория,\nподкатегория, описание,\nдата и время\n\nтекущие данные пока не меняются\n\nчто сделать?`;
     const text = `${notice ? `${notice}\n\n` : ""}${topBlock}`;
 
@@ -4050,6 +4059,153 @@ export class BotService {
     });
   }
 
+  private async showEntriesImportMergePlan(user: UserRecord, importId: number): Promise<void> {
+    const pendingImport = await this.repo.getImport(user.id, importId);
+    if (!pendingImport) {
+      await this.showDataOtherApps(user);
+      return;
+    }
+    const previewEntries = Array.isArray(pendingImport.previewJson.entries)
+      ? (pendingImport.previewJson.entries as Array<Record<string, unknown>>)
+      : [];
+    const analysis = await this.analyzeEntriesImport(user, previewEntries, true);
+    await this.sendMessage({
+      chat_id: user.chatId,
+      text:
+        "объединить с текущими данными\n\n" +
+        `будет добавлено:\n${analysis.addedEntries} записей\n\n` +
+        `уже есть:\n${analysis.skippedEntries} записи\n\n` +
+        `будет создано:\n${analysis.createdCategories} категории\n${analysis.createdSubcategories} подкатегорий`,
+      reply_markup: kb([
+        [{ text: `добавить ${analysis.addedEntries}`, action: "data:import-entries-merge-confirm", payload: { importId } }],
+        [{ text: BUTTONS.back, action: "data:other-apps" }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async showEntriesImportMergeConfirm(user: UserRecord, importId: number): Promise<void> {
+    const pendingImport = await this.repo.getImport(user.id, importId);
+    if (!pendingImport) {
+      await this.showDataOtherApps(user);
+      return;
+    }
+    const previewEntries = Array.isArray(pendingImport.previewJson.entries)
+      ? (pendingImport.previewJson.entries as Array<Record<string, unknown>>)
+      : [];
+    const analysis = await this.analyzeEntriesImport(user, previewEntries, true);
+    await this.sendMessage({
+      chat_id: user.chatId,
+      text:
+        "добавить новые записи?\n\n" +
+        `в бот попадут:\n${analysis.addedEntries} записей\n${analysis.createdCategories} категории\n${analysis.createdSubcategories} подкатегорий`,
+      reply_markup: kb([
+        [{ text: BUTTONS.yesAdd, action: "data:import-entries-merge-apply", payload: { importId } }],
+        [{ text: BUTTONS.back, action: "data:other-apps" }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async showEntriesImportAddAllPlan(user: UserRecord, importId: number): Promise<void> {
+    const pendingImport = await this.repo.getImport(user.id, importId);
+    if (!pendingImport) {
+      await this.showDataOtherApps(user);
+      return;
+    }
+    const previewEntries = Array.isArray(pendingImport.previewJson.entries)
+      ? (pendingImport.previewJson.entries as Array<Record<string, unknown>>)
+      : [];
+    const analysis = await this.analyzeEntriesImport(user, previewEntries, false);
+    await this.sendMessage({
+      chat_id: user.chatId,
+      text:
+        "добавить всё из файла\n\n" +
+        `будет добавлено:\n${analysis.addedEntries} записей\n\n` +
+        `будет создано:\n${analysis.createdCategories} категории\n${analysis.createdSubcategories} подкатегорий\n\n` +
+        "повторы тоже будут добавлены",
+      reply_markup: kb([
+        [{ text: `добавить ${analysis.addedEntries}`, action: "data:import-entries-add-all-confirm", payload: { importId } }],
+        [{ text: BUTTONS.back, action: "data:other-apps" }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async showEntriesImportAddAllConfirm(user: UserRecord, importId: number): Promise<void> {
+    await this.sendMessage({
+      chat_id: user.chatId,
+      text:
+        "добавить все записи из файла?\n\n" +
+        "в бот попадут все строки,\n" +
+        "включая возможные повторы",
+      reply_markup: kb([
+        [{ text: BUTTONS.yesAddAll, action: "data:import-entries-add-all-apply", payload: { importId } }],
+        [{ text: BUTTONS.back, action: "data:other-apps" }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async analyzeEntriesImport(
+    user: UserRecord,
+    previewEntries: Array<Record<string, unknown>>,
+    mergeOnly: boolean
+  ): Promise<{ addedEntries: number; skippedEntries: number; createdCategories: number; createdSubcategories: number }> {
+    const existingKeys = mergeOnly ? new Set(await this.repo.getExistingEntryDedupKeys(user.id)) : new Set<string>();
+    const knownCategories = new Set<string>();
+    const knownSubcategories = new Set<string>();
+
+    for (const type of ["expense", "income"] as const) {
+      const categories = await this.repo.listCategories(user.id, type, false, 0, 500, type === "expense" ? user.sortModeExpense : user.sortModeIncome);
+      for (const category of categories) {
+        knownCategories.add(`${type}:${normalizeName(category.name)}`);
+        const subcategories = await this.repo.getSubcategories(user.id, category.id, user.sortModeSubcategories);
+        for (const subcategory of subcategories) {
+          knownSubcategories.add(`${type}:${normalizeName(category.name)}:${normalizeName(subcategory.name)}`);
+        }
+      }
+    }
+
+    let addedEntries = 0;
+    let skippedEntries = 0;
+    let createdCategories = 0;
+    let createdSubcategories = 0;
+
+    for (const item of previewEntries) {
+      const type = String(item.type) as EntryType;
+      const categoryName = String(item.categoryName ?? "");
+      const subcategoryName = item.subcategoryName ? String(item.subcategoryName) : null;
+      const key = makeEntryDedupKey({
+        type,
+        amountMinor: Number(item.amountMinor),
+        entryDate: item.entryDate ? String(item.entryDate) : null,
+        entryTime: item.entryTime ? String(item.entryTime) : null,
+        categoryName,
+        subcategoryName,
+        description: item.description ? String(item.description) : null
+      });
+      if (mergeOnly && existingKeys.has(key)) {
+        skippedEntries += 1;
+        continue;
+      }
+      addedEntries += 1;
+      existingKeys.add(key);
+
+      const categoryKey = `${type}:${normalizeName(categoryName)}`;
+      if (!knownCategories.has(categoryKey)) {
+        knownCategories.add(categoryKey);
+        createdCategories += 1;
+      }
+
+      if (subcategoryName) {
+        const subcategoryKey = `${type}:${normalizeName(categoryName)}:${normalizeName(subcategoryName)}`;
+        if (!knownSubcategories.has(subcategoryKey)) {
+          knownSubcategories.add(subcategoryKey);
+          createdSubcategories += 1;
+        }
+      }
+    }
+
+    return { addedEntries, skippedEntries, createdCategories, createdSubcategories };
+  }
+
   private async applyEntriesImport(user: UserRecord, importId: number, mergeOnly: boolean): Promise<void> {
     const pendingImport = await this.repo.getImport(user.id, importId);
     if (!pendingImport) {
@@ -4060,6 +4216,7 @@ export class BotService {
     const previewEntries = Array.isArray(pendingImport.previewJson.entries)
       ? (pendingImport.previewJson.entries as Array<Record<string, unknown>>)
       : [];
+    const analysis = await this.analyzeEntriesImport(user, previewEntries, mergeOnly);
     const existingKeys = mergeOnly ? new Set(await this.repo.getExistingEntryDedupKeys(user.id)) : new Set<string>();
     let added = 0;
 
@@ -4094,7 +4251,16 @@ export class BotService {
     }
 
     await this.repo.deleteImport(user.id, importId);
-    await this.showDataOtherApps(user, `записи добавлены: ${added}`);
+    await this.sendMessage({
+      chat_id: user.chatId,
+      text:
+        "импорт завершён\n\n" +
+        `добавлено:\n${added} записей\n${analysis.createdCategories} категории\n${analysis.createdSubcategories} подкатегорий`,
+      reply_markup: kb([
+        [{ text: BUTTONS.operations, action: "operations:list", payload: { page: 0 } }],
+        [{ text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
   }
 
   private async showImportFixItem(user: UserRecord, importId: number, index: number): Promise<void> {
@@ -4776,6 +4942,19 @@ function formatSortingMode(mode: string): string {
     return "по алфавиту";
   }
   return "по количеству операций";
+}
+
+function summarizeImportErrorReasons(errors: Array<Record<string, unknown>>): string {
+  const counts = new Map<string, number>();
+  for (const item of errors) {
+    const reason = String(item.reason ?? "не удалось прочитать строку");
+    counts.set(reason, (counts.get(reason) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0], "ru"))
+    .slice(0, 3)
+    .map(([reason, count]) => `${reason} — ${count}`)
+    .join("\n");
 }
 
 function formatCurrencySettingLabel(user: UserRecord): string {
