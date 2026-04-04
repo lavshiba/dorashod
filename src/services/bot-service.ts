@@ -70,7 +70,7 @@ export class BotService {
 
     const user = await this.repo.getOrCreateUser(String(target.fromId), String(target.chatId));
     const lockToken = crypto.randomUUID();
-    const acquired = await this.acquireUserUpdateLock(user.id, lockToken);
+    const acquired = await this.acquireUserUpdateLock(user.id, update.callback_query ? "callback" : "message", lockToken);
     if (!acquired) {
       return;
     }
@@ -1774,12 +1774,15 @@ export class BotService {
     await this.safeDeleteMessage(chatId, messageId);
   }
 
-  private async acquireUserUpdateLock(userId: number, lockToken: string): Promise<boolean> {
-    for (let attempt = 0; attempt < 10; attempt += 1) {
+  private async acquireUserUpdateLock(userId: number, updateKind: "callback" | "message", lockToken: string): Promise<boolean> {
+    const attempts = updateKind === "callback" ? 40 : 80;
+    const delayMs = 150;
+
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
       if (await this.repo.tryAcquireUserUpdateLock(userId, lockToken)) {
         return true;
       }
-      await sleep(120);
+      await sleep(delayMs);
     }
     return false;
   }
