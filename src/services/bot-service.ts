@@ -1094,11 +1094,7 @@ export class BotService {
         }
         await this.repo.replaceUserDataFromSnapshot(user, pendingImport.previewJson);
         await this.repo.deleteImport(user.id, pendingImport.id);
-        await this.sendMessage({
-          chat_id: user.chatId,
-          text: "данные загружены"
-        });
-        await this.showHome(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId));
+        await this.showHome(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), "данные загружены");
         return;
       }
       case "data:import-entries-merge":
@@ -2505,7 +2501,7 @@ export class BotService {
     });
   }
 
-  private async showCategoryCard(user: UserRecord, categoryId: number, type: EntryType, page: number, subpage = 0, source = "list"): Promise<void> {
+  private async showCategoryCard(user: UserRecord, categoryId: number, type: EntryType, page: number, subpage = 0, source = "list", notice?: string): Promise<void> {
     const category = await this.repo.getCategory(user.id, categoryId);
     if (!category) {
       if (source === "hidden") {
@@ -2522,6 +2518,7 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `${notice ? `${notice}\n\n` : ""}` +
         `тип: ${type === "expense" ? "расход" : "доход"}\n` +
         `записей: ${usageCount}\n` +
         `подкатегории:\n${visibleSubcategories.length ? visibleSubcategories.map((item, index) => `${index + 1}. ${item.name}`).join("\n") : "пока нет"}`,
@@ -2571,7 +2568,7 @@ export class BotService {
     });
   }
 
-  private async showSubcategoryCard(user: UserRecord, subcategoryId: number, categoryId: number, type: EntryType, page: number, subpage = 0, source = "list"): Promise<void> {
+  private async showSubcategoryCard(user: UserRecord, subcategoryId: number, categoryId: number, type: EntryType, page: number, subpage = 0, source = "list", notice?: string): Promise<void> {
     const subcategory = await this.repo.getSubcategory(user.id, subcategoryId);
     if (!subcategory) {
       await this.showCategoryCard(user, categoryId, type, page, subpage, source);
@@ -2580,7 +2577,7 @@ export class BotService {
     const usageCount = await this.repo.getSubcategoryUsageCount(subcategoryId);
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `${subcategory.name}\n\nзаписей: ${usageCount}`,
+      text: `${notice ? `${notice}\n\n` : ""}${subcategory.name}\n\nзаписей: ${usageCount}`,
       reply_markup: kb([
         [{ text: BUTTONS.edit, action: "subcategory:edit", payload: { id: subcategory.id, categoryId, page, subpage, type, source } }],
         [{ text: subcategory.hiddenAt ? BUTTONS.restore : BUTTONS.hide, action: subcategory.hiddenAt ? "subcategory:restore" : "subcategory:hide", payload: { id: subcategory.id, categoryId, page, subpage, type, source } }],
@@ -2775,13 +2772,16 @@ export class BotService {
       return;
     }
     await this.repo.clearSession(user.id);
-    await this.showCategoryCard(user, categoryId, type, page, subpage, source);
-    await this.sendMessage({
-      chat_id: user.chatId,
-      text:
-        `записи перенесены: ${result.movedCount}` +
+    await this.showCategoryCard(
+      user,
+      categoryId,
+      type,
+      page,
+      subpage,
+      source,
+      `записи перенесены: ${result.movedCount}` +
         (result.clearedSubcategoryCount > 0 ? `\nбез подкатегории: ${result.clearedSubcategoryCount}` : "")
-    });
+    );
   }
 
   private async startSubcategoryTransferAll(user: UserRecord, subcategoryId: number, categoryId: number, type: EntryType, page: number, subpage = 0, source = "list"): Promise<void> {
@@ -2814,11 +2814,7 @@ export class BotService {
   ): Promise<void> {
     const movedCount = await this.repo.getSubcategoryUsageCount(subcategoryId);
     await this.repo.transferAllSubcategoryEntries(user.id, subcategoryId, targetSubcategoryId);
-    await this.showSubcategoryCard(user, subcategoryId, categoryId, type, page, subpage, source);
-    await this.sendMessage({
-      chat_id: user.chatId,
-      text: `записи перенесены: ${movedCount}`
-    });
+    await this.showSubcategoryCard(user, subcategoryId, categoryId, type, page, subpage, source, `записи перенесены: ${movedCount}`);
   }
 
   private async showCategoryEntries(
@@ -3380,10 +3376,10 @@ export class BotService {
     });
   }
 
-  private async showDataThisBot(user: UserRecord): Promise<void> {
+  private async showDataThisBot(user: UserRecord, notice?: string): Promise<void> {
     await this.sendMessage({
       chat_id: user.chatId,
-        text: "для этого бота",
+      text: `${notice ? `${notice}\n\n` : ""}для этого бота`,
       reply_markup: kb([
         [{ text: BUTTONS.saveToFile, action: "data:export-full" }],
         [{ text: BUTTONS.loadFromFile, action: "data:import-full-open" }],
@@ -3392,10 +3388,10 @@ export class BotService {
     });
   }
 
-  private async showDataOtherApps(user: UserRecord): Promise<void> {
+  private async showDataOtherApps(user: UserRecord, notice?: string): Promise<void> {
     await this.sendMessage({
       chat_id: user.chatId,
-        text: "в другие приложения",
+      text: `${notice ? `${notice}\n\n` : ""}в другие приложения`,
       reply_markup: kb([
         [{ text: BUTTONS.saveToFile, action: "data:export-entries" }],
         [{ text: BUTTONS.loadFromFile, action: "data:import-entries-open" }],
@@ -3404,7 +3400,7 @@ export class BotService {
     });
   }
 
-  private async showEntriesImportPreview(user: UserRecord, importId: number): Promise<void> {
+  private async showEntriesImportPreview(user: UserRecord, importId: number, notice?: string): Promise<void> {
     const pendingImport = await this.repo.getImport(user.id, importId);
     if (!pendingImport) {
       await this.showDataOtherApps(user);
@@ -3423,6 +3419,7 @@ export class BotService {
       .join("\n");
 
     const text =
+      `${notice ? `${notice}\n\n` : ""}` +
       `в другие приложения\n\n` +
       `записей: ${previewEntries.length}` +
       (previewErrors.length > 0
@@ -3491,11 +3488,7 @@ export class BotService {
     }
 
     await this.repo.deleteImport(user.id, importId);
-    await this.sendMessage({
-      chat_id: user.chatId,
-      text: `записи добавлены: ${added}`
-    });
-    await this.showDataOtherApps(user);
+    await this.showDataOtherApps(user, `записи добавлены: ${added}`);
   }
 
   private async showImportFixItem(user: UserRecord, importId: number, index: number): Promise<void> {
@@ -3508,11 +3501,7 @@ export class BotService {
     const errors = Array.isArray(pendingImport.previewJson.errors) ? (pendingImport.previewJson.errors as Array<Record<string, unknown>>) : [];
     const current = errors[index];
     if (!current) {
-      await this.sendMessage({
-        chat_id: user.chatId,
-        text: "проблемных строк больше нет"
-      });
-      await this.showDataOtherApps(user);
+      await this.showEntriesImportPreview(user, importId, "проблемных строк больше нет");
       return;
     }
 
@@ -3600,11 +3589,7 @@ export class BotService {
     });
 
     if (staged.preview.errors.length === 0) {
-      await this.sendMessage({
-        chat_id: user.chatId,
-        text: "проблемных строк больше нет"
-      });
-      await this.showEntriesImportPreview(user, importId);
+      await this.showEntriesImportPreview(user, importId, "проблемных строк больше нет");
       return;
     }
 
