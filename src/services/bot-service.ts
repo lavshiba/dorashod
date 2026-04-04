@@ -4962,15 +4962,18 @@ export class BotService {
       previewErrors.length > 0
         ? `добавить всё из файла\n\nбудет добавлено:\n${previewEntries.length} записей\n\nне удалось прочитать:\n${previewErrors.length} строк` +
           (reasonLines ? `\n\nчаще всего:\n${reasonLines}` : "")
-        : `файл загружен\n\nнашёл:\n${previewEntries.length} записей\n\nиз файла будут взяты:\nсумма, тип, категория,\nподкатегория, описание,\nдата и время\n\nтекущие данные пока не меняются\n\nчто сделать?`;
+        : `файл загружен\n\nнашёл:\n${previewEntries.length} записей\n\nиз файла будут взяты:\nсумма, тип, категория,\nподкатегория, описание,\nдата и время\n\nтекущие данные пока не меняются` +
+          (previewEntries.length > 0 ? `\n\nчто сделать?` : "");
     const text = `${notice ? `${notice}\n\n` : ""}${topBlock}`;
 
     const rows: Array<Array<{ text: string; action: string; payload?: Record<string, string | number | undefined> }>> = previewErrors.length > 0
       ? []
-      : [
+      : previewEntries.length > 0
+        ? [
           [{ text: BUTTONS.merge, action: "data:import-entries-merge", payload: { importId } }],
           [{ text: BUTTONS.addAll, action: "data:import-entries-add-all", payload: { importId } }]
-        ];
+        ]
+        : [];
 
     if (previewErrors.length > 0) {
       if (previewEntries.length > 0) {
@@ -4998,6 +5001,11 @@ export class BotService {
       ? (pendingImport.previewJson.entries as Array<Record<string, unknown>>)
       : [];
     const analysis = await this.analyzeEntriesImport(user, previewEntries, true);
+    const rows: Array<Array<{ text: string; action: string; payload?: Record<string, string | number | undefined> }>> = [];
+    if (analysis.addedEntries > 0) {
+      rows.push([{ text: `добавить ${analysis.addedEntries}`, action: "data:import-entries-merge-confirm", payload: { importId } }]);
+    }
+    rows.push([{ text: BUTTONS.back, action: "data:import-preview", payload: { importId } }, { text: BUTTONS.main, action: "nav:home" }]);
     await this.sendMessage({
       chat_id: user.chatId,
       text:
@@ -5006,10 +5014,7 @@ export class BotService {
         `будет добавлено:\n${analysis.addedEntries} записей\n\n` +
         `уже есть:\n${analysis.skippedEntries} записи\n\n` +
         `будет создано:\n${analysis.createdCategories} категории\n${analysis.createdSubcategories} подкатегорий`,
-      reply_markup: kb([
-        [{ text: `добавить ${analysis.addedEntries}`, action: "data:import-entries-merge-confirm", payload: { importId } }],
-        [{ text: BUTTONS.back, action: "data:import-preview", payload: { importId } }, { text: BUTTONS.main, action: "nav:home" }]
-      ])
+      reply_markup: kb(rows)
     });
   }
 
@@ -5023,6 +5028,10 @@ export class BotService {
       ? (pendingImport.previewJson.entries as Array<Record<string, unknown>>)
       : [];
     const analysis = await this.analyzeEntriesImport(user, previewEntries, true);
+    if (analysis.addedEntries <= 0) {
+      await this.showEntriesImportMergePlan(user, importId);
+      return;
+    }
     await this.sendMessage({
       chat_id: user.chatId,
       text:
