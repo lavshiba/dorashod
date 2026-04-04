@@ -450,15 +450,28 @@ export class BotService {
     const params = decodeCallback(callbackQuery.data);
     const action = params.a;
     const user = await this.repo.getOrCreateUser(String(callbackQuery.from.id), String(callbackQuery.message.chat.id));
+    this.currentUserId = user.id;
     const session = await this.repo.getSession(user.id);
+    const callbackMessageId = Number((callbackQuery.message as { message_id?: number }).message_id ?? 0);
+    const screenMessageId = typeof session.context.screenMessageId === "number" ? session.context.screenMessageId : undefined;
 
     if (callbackQuery.id) {
       await this.telegram.answerCallbackQuery(callbackQuery.id);
     }
 
+    if (screenMessageId && callbackMessageId && screenMessageId !== callbackMessageId) {
+      try {
+        await this.telegram.deleteMessage(user.chatId, callbackMessageId);
+      } catch {
+        // Stale screen may already be gone.
+      }
+      this.currentUserId = null;
+      return;
+    }
+
     this.callbackContext = {
       chatId: String(callbackQuery.message.chat.id),
-      messageId: Number((callbackQuery.message as { message_id?: number }).message_id ?? 0)
+      messageId: callbackMessageId
     };
     this.didEditCurrentCallback = false;
 
@@ -497,7 +510,12 @@ export class BotService {
         return;
       case "onboarding:import":
         await this.repo.completeOnboarding(user.id);
-        await this.showData(user);
+        await this.repo.saveSession(user.id, { mode: "data", stack: ["data"], context: { awaitingUploadType: "entries" } });
+        await this.sendMessage({
+          chat_id: user.chatId,
+          text: "Пришли файл.",
+          reply_markup: kb([[{ text: BUTTONS.back, action: "data:other-apps" }, { text: BUTTONS.main, action: "nav:home" }]])
+        });
         return;
       case "onboarding:complete":
       case "nav:home":
@@ -1205,6 +1223,7 @@ export class BotService {
     } finally {
       this.callbackContext = null;
       this.didEditCurrentCallback = false;
+      this.currentUserId = null;
     }
   }
 
