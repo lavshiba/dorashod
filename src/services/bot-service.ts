@@ -203,7 +203,7 @@ export class BotService {
 
     if (session.mode === "settings" && session.context.awaiting === "currency") {
       await this.updateUserSetting(user.id, "currency_label", text.trim(), "currency_code", "CUSTOM");
-      await this.showSettings(user);
+      await this.showCurrencySettings(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), "значение сохранено");
       return;
     }
 
@@ -218,7 +218,7 @@ export class BotService {
         return;
       }
       await this.updateUserSetting(user.id, "timezone_name", timezone, "timezone_source", "city");
-      await this.showTimeSettings(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId));
+      await this.showTimeSettings(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), "значение сохранено");
       return;
     }
 
@@ -345,7 +345,7 @@ export class BotService {
     if (session.mode === "settings" && session.context.awaiting === "timezone") {
       const timezone = resolveTimezoneFromLocation(location.latitude, location.longitude);
       await this.updateUserSetting(user.id, "timezone_name", timezone, "timezone_source", "location");
-      await this.showTimeSettings(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId));
+      await this.showTimeSettings(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), "значение сохранено");
       return;
     }
     await this.showHome(user);
@@ -1001,7 +1001,7 @@ export class BotService {
         return;
       case "settings:set-currency":
         await this.updateUserSetting(user.id, "currency_label", String(params.label), "currency_code", String(params.code));
-        await this.showCurrencySettings(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId));
+        await this.showCurrencySettings(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), "значение сохранено");
         return;
       case "settings:currency-custom":
         await this.repo.saveSession(user.id, { mode: "settings", stack: ["settings"], context: { awaiting: "currency" } });
@@ -1020,7 +1020,7 @@ export class BotService {
         return;
       case "settings:set-subcategories":
         await this.updateUserSetting(user.id, "subcategories_enabled", params.enabled === "1" ? 1 : 0);
-        await this.showSubcategoriesSettings(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId));
+        await this.showSubcategoriesSettings(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), "значение сохранено");
         return;
       case "settings:quick-access":
         await this.showQuickAccessRoot(user);
@@ -2925,10 +2925,10 @@ export class BotService {
     });
   }
 
-  private async showSettings(user: UserRecord): Promise<void> {
+  private async showSettings(user: UserRecord, notice?: string): Promise<void> {
     await this.sendMessage({
       chat_id: user.chatId,
-        text: "настройки",
+      text: `${notice ? `${notice}\n\n` : ""}настройки`,
       reply_markup: kb([
         [{ text: BUTTONS.currency, action: "settings:currency" }, { text: BUTTONS.time, action: "settings:time" }],
         [{ text: BUTTONS.subcategories, action: "settings:subcategories" }],
@@ -2941,10 +2941,10 @@ export class BotService {
     });
   }
 
-  private async showCurrencySettings(user: UserRecord): Promise<void> {
+  private async showCurrencySettings(user: UserRecord, notice?: string): Promise<void> {
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `валюта\n\nтекущее значение: ${user.currencyLabel}`,
+      text: `${notice ? `${notice}\n\n` : ""}валюта\n\nтекущее значение: ${user.currencyLabel}`,
       reply_markup: kb([
         [{ text: BUTTONS.ruble, action: "settings:set-currency", payload: { code: "RUB", label: "₽" } }],
         [{ text: BUTTONS.dollar, action: "settings:set-currency", payload: { code: "USD", label: "$" } }],
@@ -2955,18 +2955,18 @@ export class BotService {
     });
   }
 
-  private async showTimeSettings(user: UserRecord): Promise<void> {
+  private async showTimeSettings(user: UserRecord, notice?: string): Promise<void> {
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `пришли свой город или отправь геопозицию\n\nнапример:\nсанкт-петербург\nмосква\nхельсинки\n\nтекущее значение: ${user.timezoneName}`,
+      text: `${notice ? `${notice}\n\n` : ""}пришли свой город или отправь геопозицию\n\nнапример:\nсанкт-петербург\nмосква\nхельсинки\n\nтекущее значение: ${user.timezoneName}`,
       reply_markup: kb([[{ text: BUTTONS.back, action: "settings:open" }, { text: BUTTONS.main, action: "nav:home" }]])
     });
   }
 
-  private async showSubcategoriesSettings(user: UserRecord): Promise<void> {
+  private async showSubcategoriesSettings(user: UserRecord, notice?: string): Promise<void> {
     await this.sendMessage({
       chat_id: user.chatId,
-      text: user.subcategoriesEnabled ? "включены" : "выключены",
+      text: `${notice ? `${notice}\n\n` : ""}${user.subcategoriesEnabled ? "включены" : "выключены"}`,
       reply_markup: kb([
         [{ text: user.subcategoriesEnabled ? BUTTONS.disable : BUTTONS.enable, action: "settings:set-subcategories", payload: { enabled: user.subcategoriesEnabled ? 0 : 1 } }],
         [{ text: BUTTONS.quickAccess, action: "settings:quick-access-section", payload: { section: "subcategories" } }],
@@ -2976,10 +2976,10 @@ export class BotService {
     });
   }
 
-  private async showQuickAccessRoot(user: UserRecord): Promise<void> {
+  private async showQuickAccessRoot(user: UserRecord, notice?: string): Promise<void> {
     await this.sendMessage({
       chat_id: user.chatId,
-      text: "быстрый доступ",
+      text: `${notice ? `${notice}\n\n` : ""}быстрый доступ`,
       reply_markup: kb([
         [{ text: BUTTONS.expenseCategories, action: "settings:quick-access-section", payload: { section: "expense" } }],
         [{ text: BUTTONS.incomeCategories, action: "settings:quick-access-section", payload: { section: "income" } }],
@@ -2989,7 +2989,7 @@ export class BotService {
     });
   }
 
-  private async showQuickAccessSection(user: UserRecord, section: string): Promise<void> {
+  private async showQuickAccessSection(user: UserRecord, section: string, notice?: string): Promise<void> {
     if (section.startsWith("subcategory:")) {
       await this.showQuickAccessSubcategorySection(user, Number(section.split(":")[1]));
       return;
@@ -3032,7 +3032,7 @@ export class BotService {
     }
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `${title}\n\nтекущее значение: ${formatQuickAccessMode(current)}${extraLines}`,
+      text: `${notice ? `${notice}\n\n` : ""}${title}\n\nтекущее значение: ${formatQuickAccessMode(current)}${extraLines}`,
       reply_markup: kb([
         [{ text: BUTTONS.automatically, action: "settings:set-quick-access", payload: { section, mode: "automatically" } }],
         [{ text: BUTTONS.own, action: "settings:set-quick-access", payload: { section, mode: "custom" } }],
@@ -3046,7 +3046,7 @@ export class BotService {
   private async applyQuickAccessMode(user: UserRecord, section: string, mode: string): Promise<void> {
     if (section.startsWith("subcategory:")) {
       await this.updateUserSetting(user.id, "quick_access_mode_subcategories", mode);
-      await this.showQuickAccessSubcategorySection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), Number(section.split(":")[1]));
+      await this.showQuickAccessSubcategorySection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), Number(section.split(":")[1]), "значение сохранено");
       return;
     }
     const field =
@@ -3056,7 +3056,7 @@ export class BotService {
           ? "quick_access_mode_income"
           : "quick_access_mode_subcategories";
     await this.updateUserSetting(user.id, field, mode);
-    await this.showQuickAccessSection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), section);
+    await this.showQuickAccessSection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), section, "значение сохранено");
   }
 
   private async getQuickAccessSlots(user: UserRecord, section: string): Promise<Array<CategoryRecord | SubcategoryRecord>> {
@@ -3069,7 +3069,7 @@ export class BotService {
     return [];
   }
 
-  private async showQuickAccessSlotEditor(user: UserRecord, section: string, slot: number, page: number): Promise<void> {
+  private async showQuickAccessSlotEditor(user: UserRecord, section: string, slot: number, page: number, notice?: string): Promise<void> {
     if (section === "subcategories") {
       await this.showQuickAccessSubcategoryCategoryChooser(user, slot, page);
       return;
@@ -3083,7 +3083,7 @@ export class BotService {
       const slotItem = current[slot - 1];
       await this.sendMessage({
         chat_id: user.chatId,
-        text: `быстрый доступ\n\nслот ${slot}${slotItem ? `: ${slotItem.name}` : ""}\n\n${lines}`,
+        text: `${notice ? `${notice}\n\n` : ""}быстрый доступ\n\nслот ${slot}${slotItem ? `: ${slotItem.name}` : ""}\n\n${lines}`,
         reply_markup: kb([
           ...(items.length
             ? [items.map((item, index) => ({ text: String(index + 1), action: "settings:quick-access-slot-pick", payload: { section, slot, id: item.id, page } }))]
@@ -3102,7 +3102,7 @@ export class BotService {
     const slotItem = current[slot - 1];
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `быстрый доступ\n\nслот ${slot}${slotItem ? `: ${slotItem.name}` : ""}\n\n${lines}`,
+      text: `${notice ? `${notice}\n\n` : ""}быстрый доступ\n\nслот ${slot}${slotItem ? `: ${slotItem.name}` : ""}\n\n${lines}`,
       reply_markup: kb([
         ...(items.length
           ? [items.map((item, index) => ({ text: String(index + 1), action: "settings:quick-access-slot-pick", payload: { section, slot, id: item.id, page } }))]
@@ -3147,7 +3147,7 @@ export class BotService {
         entityId
       );
       await this.repo.updateSubcategoryQuickAccessSlots(user.id, categoryId, next);
-      await this.showQuickAccessSubcategorySection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), categoryId);
+      await this.showQuickAccessSubcategorySection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), categoryId, "значение сохранено");
       return;
     }
 
@@ -3158,7 +3158,7 @@ export class BotService {
       entityId
     );
     await this.repo.updateCategoryQuickAccessSlots(user.id, section as EntryType, next);
-    await this.showQuickAccessSlotEditor(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), section, slot, page);
+    await this.showQuickAccessSlotEditor(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), section, slot, page, "значение сохранено");
   }
 
   private async clearQuickAccessSlot(user: UserRecord, section: string, slot: number): Promise<void> {
@@ -3167,14 +3167,14 @@ export class BotService {
       const current = await this.repo.listQuickAccessSubcategories(user.id, categoryId);
       const next = current.map((item) => item.id).filter((_, index) => index !== slot - 1);
       await this.repo.updateSubcategoryQuickAccessSlots(user.id, categoryId, next);
-      await this.showQuickAccessSubcategorySection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), categoryId);
+      await this.showQuickAccessSubcategorySection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), categoryId, "значение сохранено");
       return;
     }
 
     const current = await this.repo.listQuickAccessCategories(user.id, section as EntryType);
     const next = current.map((item) => item.id).filter((_, index) => index !== slot - 1);
     await this.repo.updateCategoryQuickAccessSlots(user.id, section as EntryType, next);
-    await this.showQuickAccessSection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), section);
+    await this.showQuickAccessSection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), section, "значение сохранено");
   }
 
   private applySlotSelection(currentIds: number[], slot: number, entityId: number): number[] {
@@ -3208,7 +3208,7 @@ export class BotService {
     return [...expense, ...income].sort((left, right) => right.usageCountCache - left.usageCountCache || right.id - left.id);
   }
 
-  private async showQuickAccessSubcategorySection(user: UserRecord, categoryId: number): Promise<void> {
+  private async showQuickAccessSubcategorySection(user: UserRecord, categoryId: number, notice?: string): Promise<void> {
     const category = await this.repo.getCategory(user.id, categoryId);
     if (!category) {
       await this.showQuickAccessSection(user, "subcategories");
@@ -3232,7 +3232,7 @@ export class BotService {
 
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `подкатегории\n\n${category.name}\n\nтекущее значение: ${formatQuickAccessMode(current)}${slotLines}`,
+      text: `${notice ? `${notice}\n\n` : ""}подкатегории\n\n${category.name}\n\nтекущее значение: ${formatQuickAccessMode(current)}${slotLines}`,
       reply_markup: kb(rows)
     });
   }
@@ -3264,10 +3264,10 @@ export class BotService {
     });
   }
 
-  private async showSortingRoot(user: UserRecord): Promise<void> {
+  private async showSortingRoot(user: UserRecord, notice?: string): Promise<void> {
     await this.sendMessage({
       chat_id: user.chatId,
-      text: "сортировка",
+      text: `${notice ? `${notice}\n\n` : ""}сортировка`,
       reply_markup: kb([
         [{ text: BUTTONS.expenseCategories, action: "settings:sorting-section", payload: { section: "expense" } }],
         [{ text: BUTTONS.incomeCategories, action: "settings:sorting-section", payload: { section: "income" } }],
@@ -3277,7 +3277,7 @@ export class BotService {
     });
   }
 
-  private async showSortingSection(user: UserRecord, section: string): Promise<void> {
+  private async showSortingSection(user: UserRecord, section: string, notice?: string): Promise<void> {
     const current =
       section === "expense"
         ? user.sortModeExpense
@@ -3294,7 +3294,7 @@ export class BotService {
         : [];
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `${title}\n\nтекущее значение: ${formatSortingMode(current)}`,
+      text: `${notice ? `${notice}\n\n` : ""}${title}\n\nтекущее значение: ${formatSortingMode(current)}`,
       reply_markup: kb([
         [{ text: "по количеству операций", action: "settings:set-sorting", payload: { section, mode: "usage" } }],
         [{ text: "недавние", action: "settings:set-sorting", payload: { section, mode: "recent" } }],
@@ -3313,7 +3313,7 @@ export class BotService {
           ? "sort_mode_income"
           : "sort_mode_subcategories";
     await this.updateUserSetting(user.id, field, mode);
-    await this.showSortingSection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), section);
+    await this.showSortingSection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), section, "значение сохранено");
   }
 
   private async showSubcategorySortingCategoryChooser(user: UserRecord, type: EntryType, page: number): Promise<void> {
@@ -3343,7 +3343,7 @@ export class BotService {
     });
   }
 
-  private async showSubcategorySortingCategory(user: UserRecord, categoryId: number, type: EntryType, page: number): Promise<void> {
+  private async showSubcategorySortingCategory(user: UserRecord, categoryId: number, type: EntryType, page: number, notice?: string): Promise<void> {
     const category = await this.repo.getCategory(user.id, categoryId);
     if (!category) {
       await this.showSubcategorySortingCategoryChooser(user, type, page);
@@ -3352,7 +3352,7 @@ export class BotService {
     const current = category.sortModeOverride ?? user.sortModeSubcategories;
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `подкатегории\n\n${category.name}\n\nтекущее значение: ${formatSortingMode(current)}`,
+      text: `${notice ? `${notice}\n\n` : ""}подкатегории\n\n${category.name}\n\nтекущее значение: ${formatSortingMode(current)}`,
       reply_markup: kb([
         [{ text: "по количеству операций", action: "settings:set-sorting-category", payload: { id: categoryId, type, page, mode: "usage" } }],
         [{ text: "недавние", action: "settings:set-sorting-category", payload: { id: categoryId, type, page, mode: "recent" } }],
@@ -3365,7 +3365,7 @@ export class BotService {
 
   private async applyCategorySortingMode(user: UserRecord, categoryId: number, type: EntryType, page: number, mode: string): Promise<void> {
     await this.repo.updateCategorySortModeOverride(user.id, categoryId, mode === "reset" ? null : mode);
-    await this.showSubcategorySortingCategory(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), categoryId, type, page);
+    await this.showSubcategorySortingCategory(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), categoryId, type, page, "значение сохранено");
   }
 
   private userNow(timezone: string): { date: string; time: string; sort: string } {
