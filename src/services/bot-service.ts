@@ -1636,6 +1636,7 @@ export class BotService {
   ): Promise<void> {
     const text = options?.formatText === false ? payload.text : formatTelegramScreenText(payload.text);
     let persistedMessageId: number | undefined;
+    let staleMessageId: number | undefined;
     if (this.currentUserId !== null) {
       const persistedSession = await this.repo.getSession(this.currentUserId);
       const candidate = persistedSession.context.screenMessageId;
@@ -1664,7 +1665,7 @@ export class BotService {
           return;
         }
 
-        // Fallback to a fresh message if Telegram refuses editing.
+        staleMessageId = this.callbackContext.messageId;
       }
     }
 
@@ -1686,7 +1687,18 @@ export class BotService {
           await this.persistScreenMessageId(knownMessageId);
           return;
         }
+
+        staleMessageId = knownMessageId;
       }
+    }
+
+    if (staleMessageId) {
+      try {
+        await this.telegram.deleteMessage(String(payload.chat_id), staleMessageId);
+      } catch {
+        // Old screen may already be gone or may be non-deletable at this point.
+      }
+      this.lastBotMessageByChat.delete(String(payload.chat_id));
     }
 
     const messageId = await this.telegram.sendMessage({
