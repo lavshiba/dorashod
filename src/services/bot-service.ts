@@ -609,16 +609,22 @@ export class BotService {
       case "bulk:transfer-skip-subcategory":
         await this.applyBulkTransfer(user);
         return;
-      case "bulk:delete":
+      case "bulk:delete": {
+        const bulkSession = await this.repo.getSession(user.id);
+        const bulkCount = Array.isArray(bulkSession.context.selectedIds) ? bulkSession.context.selectedIds.length : 0;
         await this.sendMessage({
           chat_id: user.chatId,
-          text: "Удалить выбранные записи?",
+          text:
+            "удалить записи?\n\n" +
+            `будет удалено:\n${bulkCount} записи\n\n` +
+            "вернуть их потом не получится",
           reply_markup: kb([
-            [{ text: BUTTONS.delete, action: "bulk:delete-confirm", payload: { origin: params.origin, page: params.page } }],
-            [{ text: BUTTONS.back, action: "select:actions", payload: { origin: params.origin, page: params.page } }]
+            [{ text: BUTTONS.yesDelete, action: "bulk:delete-confirm", payload: { origin: params.origin, page: params.page } }],
+            [{ text: BUTTONS.back, action: "select:actions", payload: { origin: params.origin, page: params.page } }, { text: BUTTONS.main, action: "nav:home" }]
           ])
         });
         return;
+      }
       case "bulk:delete-confirm":
         await this.applyBulkDelete(user, String(params.origin), Number(params.page ?? "0"));
         return;
@@ -2960,24 +2966,33 @@ export class BotService {
     if (categories.length === 0) {
       await this.sendMessage({
         chat_id: user.chatId,
-        text: `${notice ? `${notice}\n\n` : ""}пока скрытых категорий нет\nможно вернуться назад`,
+        text:
+          `${notice ? `${notice}\n\n` : ""}` +
+          `скрытые категории\n${type === "expense" ? "расходы" : "доходы"}\n\n` +
+          `пока скрытых категорий нет\n\n` +
+          `можно вернуться назад`,
         reply_markup: kb([[{ text: BUTTONS.back, action: "categories:list", payload: { type, page: 0 } }, { text: BUTTONS.main, action: "nav:home" }]])
       });
       return;
     }
 
-    const lines = categories.map((item, index) => `${index + 1}. ${item.name}`).join("\n");
+    const lines = categories.map((item, index) => `${index + 1}. ${item.name}\nзаписей: ${item.usageCountCache}`).join("\n\n");
     const numberButtons = categories.map((item, index) => ({
       text: String(index + 1),
       action: "category:view",
-      payload: { id: item.id, page, type }
+      payload: { id: item.id, page, type, source: "hidden" }
     }));
 
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `${notice ? `${notice}\n\n` : ""}скрытые\n\n${lines}`,
+      text:
+        `${notice ? `${notice}\n\n` : ""}` +
+        `скрытые категории\n${type === "expense" ? "расходы" : "доходы"}\n\n` +
+        `здесь лежат категории,\n` +
+        `которые убраны из обычного выбора\n\n` +
+        `${lines}`,
       reply_markup: kb([
-        numberButtons,
+        ...chunkButtons(numberButtons, 3),
         ...(page > 0 || categories.length === 6 ? [buildPageRow(page, categories.length === 6, "categories:hidden", { type })] : []),
         [{ text: BUTTONS.back, action: "categories:list", payload: { type, page: 0 } }, { text: BUTTONS.main, action: "nav:home" }]
       ])
@@ -3026,17 +3041,22 @@ export class BotService {
 
   private async showHiddenSubcategoryList(user: UserRecord, categoryId: number, type: EntryType, page: number, subpage = 0, notice?: string): Promise<void> {
     const allItems = await this.repo.listHiddenSubcategories(user.id, categoryId, user.sortModeSubcategories);
+    const category = await this.repo.getCategory(user.id, categoryId);
     if (allItems.length === 0) {
       await this.sendMessage({
         chat_id: user.chatId,
-        text: `${notice ? `${notice}\n\n` : ""}пока скрытых подкатегорий нет\nможно вернуться назад`,
+        text:
+          `${notice ? `${notice}\n\n` : ""}` +
+          `скрытые подкатегории\n${category?.name ?? ""}\n\n` +
+          `пока скрытых подкатегорий нет\n\n` +
+          `можно вернуться назад`,
         reply_markup: kb([[{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page, subpage, source: "list" } }, { text: BUTTONS.main, action: "nav:home" }]])
       });
       return;
     }
 
     const items = allItems.slice(page * 6, page * 6 + 6);
-    const lines = items.map((item, index) => `${index + 1}. ${item.name}`).join("\n");
+    const lines = items.map((item, index) => `${index + 1}. ${item.name}\nзаписей: ${item.usageCountCache}`).join("\n\n");
     const numberButtons = items.map((item, index) => ({
       text: String(index + 1),
       action: "subcategory:view",
@@ -3044,9 +3064,14 @@ export class BotService {
     }));
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `${notice ? `${notice}\n\n` : ""}скрытые\n\n${lines}`,
+      text:
+        `${notice ? `${notice}\n\n` : ""}` +
+        `скрытые подкатегории\n${category?.name ?? ""}\n\n` +
+        `здесь лежат подкатегории,\n` +
+        `которые убраны из обычного выбора\n\n` +
+        `${lines}`,
       reply_markup: kb([
-        numberButtons,
+        ...chunkButtons(numberButtons, 3),
         ...(page > 0 || allItems.length > (page + 1) * 6 ? [buildPageRow(page, allItems.length > (page + 1) * 6, "subcategories:hidden", { categoryId, type, subpage })] : []),
         [{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page, subpage, source: "list" } }, { text: BUTTONS.main, action: "nav:home" }]
       ])
