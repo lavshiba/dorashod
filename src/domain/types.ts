@@ -108,6 +108,10 @@ export interface ParsedEntryAttempt {
   category?: string;
   subcategory?: string;
   description?: string;
+  entryDate?: string | null;
+  entryTime?: string | null;
+  isTimeAuto?: boolean;
+  isDateMissing?: boolean;
   lines: string[];
   missing: Array<"type" | "amount" | "category">;
   isBatch: boolean;

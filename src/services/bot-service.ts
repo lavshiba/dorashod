@@ -396,6 +396,10 @@ export class BotService {
         categoryName: parsed.category,
         subcategoryName: parsed.subcategory,
         description: parsed.description,
+        entryDate: parsed.entryDate,
+        entryTime: parsed.entryTime,
+        isTimeAuto: parsed.isTimeAuto,
+        isDateMissing: parsed.isDateMissing,
         source: "message"
       });
       await this.showHome(user, "запись добавлена");
@@ -638,7 +642,10 @@ export class BotService {
             `новая запись\n\n` +
             `тип: ${String(params.type) === "income" ? "доход" : "расход"}\n\n` +
             `пришли сумму сообщением`,
-          reply_markup: kb([[{ text: BUTTONS.cancel, action: "add:cancel" }, { text: BUTTONS.main, action: "nav:home" }]])
+          reply_markup: kb([
+            [{ text: BUTTONS.back, action: "nav:home" }, { text: BUTTONS.cancel, action: "add:cancel" }],
+            [{ text: BUTTONS.main, action: "nav:home" }]
+          ])
         });
         return;
       case "add:pick-category":
@@ -929,6 +936,12 @@ export class BotService {
       case "edit:field":
         await this.promptEditField(user, String(params.field));
         return;
+      case "edit:clear-subcategory":
+        await this.applyEditClearField(user, "subcategory");
+        return;
+      case "edit:clear-description":
+        await this.applyEditClearField(user, "description");
+        return;
       case "edit:save":
         await this.saveEditedEntry(user);
         return;
@@ -1068,7 +1081,7 @@ export class BotService {
             `новая категория\n` +
             `тип: ${String(params.type) === "expense" ? "расход" : "доход"}\n\n` +
             "пришли название категории сообщением",
-          reply_markup: kb([[{ text: BUTTONS.back, action: "draft:continue" }, { text: BUTTONS.main, action: "nav:home" }]])
+          reply_markup: kb([[{ text: BUTTONS.back, action: "add:back" }, { text: BUTTONS.main, action: "nav:home" }]])
         });
         return;
       case "category:view":
@@ -1182,7 +1195,7 @@ export class BotService {
             "новая подкатегория\n" +
             `категория: ${await this.describeCategoryName(user.id, Number(params.categoryId))}\n\n` +
             "пришли название подкатегории сообщением",
-          reply_markup: kb([[{ text: BUTTONS.back, action: "draft:continue" }, { text: BUTTONS.main, action: "nav:home" }]])
+          reply_markup: kb([[{ text: BUTTONS.back, action: "add:back" }, { text: BUTTONS.main, action: "nav:home" }]])
         });
         return;
       }
@@ -2029,8 +2042,8 @@ export class BotService {
 
     const rows: ReturnType<typeof kb>["inline_keyboard"] = [
       [
-        { text: BUTTONS.income, callback_data: "a=add%3Astart&type=income" },
-        { text: BUTTONS.expense, callback_data: "a=add%3Astart&type=expense" }
+        { text: BUTTONS.expense, callback_data: "a=add%3Astart&type=expense" },
+        { text: BUTTONS.income, callback_data: "a=add%3Astart&type=income" }
       ],
       [
         { text: BUTTONS.operations, callback_data: "a=operations%3Alist&page=0" },
@@ -2398,7 +2411,8 @@ export class BotService {
           ? [buildPageRow(page, totalItems > (page + 1) * 6, "add:all-categories", { type }, Math.max(1, Math.ceil(totalItems / 6)))]
           : []),
         [{ text: BUTTONS.addCategory, action: "categories:create", payload: { type } }],
-        [{ text: BUTTONS.cancel, action: "add:cancel" }, { text: BUTTONS.main, action: "nav:home" }]
+        [{ text: BUTTONS.back, action: "add:back" }, { text: BUTTONS.cancel, action: "add:cancel" }],
+        [{ text: BUTTONS.main, action: "nav:home" }]
       ])
     });
   }
@@ -2427,7 +2441,8 @@ export class BotService {
           : []),
         [{ text: BUTTONS.addSubcategory, action: "subcategory:create", payload: { categoryId } }],
         [{ text: BUTTONS.withoutSubcategory, action: "add:skip-subcategory" }],
-        [{ text: BUTTONS.cancel, action: "add:cancel" }, { text: BUTTONS.main, action: "nav:home" }]
+        [{ text: BUTTONS.back, action: "add:back" }, { text: BUTTONS.cancel, action: "add:cancel" }],
+        [{ text: BUTTONS.main, action: "nav:home" }]
       ])
     });
   }
@@ -2438,7 +2453,8 @@ export class BotService {
       return [];
     }
     if (mode === "custom") {
-      return this.repo.listQuickAccessCategories(user.id, type);
+      const custom = await this.repo.listQuickAccessCategories(user.id, type);
+      return custom.length > 0 ? custom : this.repo.listCategories(user.id, type, false, 0, 4, "usage");
     }
     return this.repo.listCategories(user.id, type, false, 0, 4, "usage");
   }
@@ -2458,7 +2474,15 @@ export class BotService {
   }
 
   private async pickAddCategory(user: UserRecord, categoryId: number): Promise<void> {
-    const draft = await this.repo.getDraft(user.id);
+    let draft = await this.repo.getDraft(user.id);
+    if (!draft?.payload.type) {
+      const session = await this.repo.getSession(user.id);
+      const fallbackType = String(session.context.type ?? session.context.entryType ?? "");
+      if (fallbackType === "income" || fallbackType === "expense") {
+        await this.repo.saveDraft(user.id, { type: fallbackType as EntryType }, "category");
+        draft = await this.repo.getDraft(user.id);
+      }
+    }
     if (!draft?.payload.type) {
       await this.showHome(user);
       return;
@@ -2490,14 +2514,14 @@ export class BotService {
         `или пропусти этот шаг`,
       reply_markup: kb([
         [{ text: BUTTONS.skip, action: "add:skip-description" }],
-        [{ text: BUTTONS.back, action: "add:back" }],
+        [{ text: BUTTONS.back, action: "add:back" }, { text: BUTTONS.cancel, action: "add:cancel" }],
         [{ text: BUTTONS.main, action: "nav:home" }]
       ])
     });
   }
 
   private async pickAddSubcategory(user: UserRecord, subcategoryId: number): Promise<void> {
-    const draft = await this.repo.getDraft(user.id);
+    let draft = await this.repo.getDraft(user.id);
     if (!draft?.payload.categoryId) {
       await this.showHome(user);
       return;
@@ -2701,6 +2725,10 @@ export class BotService {
       categoryName: String(parsed.category),
       subcategoryName: parsed.subcategory ? String(parsed.subcategory) : undefined,
       description: parsed.description ? String(parsed.description) : undefined,
+      entryDate: parsed.entryDate ? String(parsed.entryDate) : undefined,
+      entryTime: parsed.entryTime ? String(parsed.entryTime) : undefined,
+      isTimeAuto: Boolean(parsed.isTimeAuto),
+      isDateMissing: Boolean(parsed.isDateMissing),
       source: "queue"
     });
     await this.repo.markQueueItem(user.id, item.id, "saved");
@@ -2941,13 +2969,29 @@ export class BotService {
       reply_markup: kb([
         [{ text: "сумма", action: "edit:field", payload: { field: "amount" } }, { text: "тип", action: "edit:field", payload: { field: "type" } }],
         [{ text: "категория", action: "edit:field", payload: { field: "category" } }],
-        [{ text: "подкатегория", action: "edit:field", payload: { field: "subcategory" } }],
-        [{ text: "описание", action: "edit:field", payload: { field: "description" } }],
+        [{ text: "подкатегория", action: "edit:field", payload: { field: "subcategory" } }, { text: BUTTONS.withoutSubcategory, action: "edit:clear-subcategory" }],
+        [{ text: "описание", action: "edit:field", payload: { field: "description" } }, { text: "без описания", action: "edit:clear-description" }],
         [{ text: BUTTONS.dateTime, action: "edit:field", payload: { field: "datetime" } }],
         [{ text: BUTTONS.save, action: "edit:save" }],
         [{ text: BUTTONS.back, action: "edit:leave", payload: { target: "source" } }, { text: BUTTONS.main, action: "edit:leave", payload: { target: "home" } }]
       ])
     });
+  }
+
+  private async applyEditClearField(user: UserRecord, field: "subcategory" | "description"): Promise<void> {
+    const draft = await this.repo.getDraft(user.id);
+    if (!draft) {
+      await this.showHome(user);
+      return;
+    }
+    if (field === "subcategory") {
+      draft.payload.subcategoryId = undefined;
+      draft.payload.subcategoryName = undefined;
+    } else {
+      draft.payload.description = undefined;
+    }
+    await this.repo.saveDraft(user.id, draft.payload, "edit-menu");
+    await this.showEditScreen(user);
   }
 
   private async promptEditField(user: UserRecord, field: string): Promise<void> {
@@ -2975,7 +3019,7 @@ export class BotService {
         `<b>${BOT_TITLE}</b>\n\n` +
         `изменить запись\n\n` +
         `${prompts[field] ?? "пришли значение сообщением"}`,
-      reply_markup: kb([[{ text: BUTTONS.cancel, action: "edit:back" }, { text: BUTTONS.main, action: "nav:home" }]])
+      reply_markup: kb([[{ text: BUTTONS.back, action: "edit:back" }, { text: BUTTONS.main, action: "nav:home" }]])
     });
   }
 
@@ -4508,7 +4552,6 @@ export class BotService {
       reply_markup: kb([
         [{ text: user.subcategoriesEnabled ? BUTTONS.disable : BUTTONS.enable, action: "settings:set-subcategories", payload: { enabled: user.subcategoriesEnabled ? 0 : 1 } }],
         [{ text: BUTTONS.quickAccess, action: "settings:quick-access-section", payload: { section: "subcategories" } }],
-        [{ text: BUTTONS.sorting, action: "settings:sorting-section", payload: { section: "subcategories" } }],
         [{ text: BUTTONS.back, action: "settings:open" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });

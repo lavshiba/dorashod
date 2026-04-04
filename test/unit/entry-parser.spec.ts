@@ -31,4 +31,16 @@ describe("parseEntryAttempt", () => {
     expect(parsed.amountMinor).toBeUndefined();
     expect(parsed.missing).toContain("amount");
   });
+
+  it("parses trailing date and time", () => {
+    const parsed = parseEntryAttempt("+3475 зарплата 01.04.2026 00:08");
+    expect(parsed.type).toBe("income");
+    expect(parsed.amountMinor).toBe(347500);
+    expect(parsed.category).toBe("зарплата");
+    expect(parsed.subcategory).toBeUndefined();
+    expect(parsed.description).toBeUndefined();
+    expect(parsed.entryDate).toBe("2026-04-01");
+    expect(parsed.entryTime).toBe("00:08");
+    expect(parsed.isTimeAuto).toBe(false);
+  });
 });
