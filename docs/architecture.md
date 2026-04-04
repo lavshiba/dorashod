@@ -106,6 +106,8 @@
 - context_json
 - updated_at
 
+`context_json` также хранит `screenMessageId` последнего актуального экранного сообщения бота.
+
 ### `saved_views`
 
 - user_id
@@ -123,6 +125,15 @@
 - preview_json
 - created_at
 - updated_at
+
+### `callback_locks`
+
+- user_id
+- message_id
+- callback_data
+- created_at
+
+Используется для дедупликации повторных callback-нажатий Telegram. Если одна и та же кнопка на том же сообщении нажата повторно, Worker обрабатывает только первое нажатие.
 
 ### `import_rows`
 

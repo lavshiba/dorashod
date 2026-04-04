@@ -134,6 +134,20 @@ export class Repository {
     await this.db.prepare("DELETE FROM ui_sessions WHERE user_id = ?").bind(userId).run();
   }
 
+  async tryAcquireCallbackLock(userId: number, messageId: number, callbackData: string): Promise<boolean> {
+    const result = await this.db
+      .prepare(
+        `
+        INSERT OR IGNORE INTO callback_locks (user_id, message_id, callback_data)
+        VALUES (?, ?, ?)
+      `
+      )
+      .bind(userId, messageId, callbackData)
+      .run();
+
+    return Number(result.meta.changes ?? 0) > 0;
+  }
+
   async saveDraft(userId: number, payload: DraftPayload, step: string): Promise<void> {
     await this.db
       .prepare(
@@ -1418,6 +1432,7 @@ export class Repository {
 
   async clearAllUserData(userId: number): Promise<void> {
     await this.db.batch([
+      this.db.prepare("DELETE FROM callback_locks WHERE user_id = ?").bind(userId),
       this.db.prepare("DELETE FROM entries WHERE user_id = ?").bind(userId),
       this.db.prepare("DELETE FROM subcategories WHERE user_id = ?").bind(userId),
       this.db.prepare("DELETE FROM categories WHERE user_id = ?").bind(userId),
@@ -1474,6 +1489,7 @@ export class Repository {
     const intakeQueue = Array.isArray(snapshot.intake_queue) ? (snapshot.intake_queue as Array<Record<string, unknown>>) : [];
 
     const statements: D1PreparedStatement[] = [
+      this.db.prepare("DELETE FROM callback_locks WHERE user_id = ?").bind(user.id),
       this.db.prepare("DELETE FROM entries WHERE user_id = ?").bind(user.id),
       this.db.prepare("DELETE FROM subcategories WHERE user_id = ?").bind(user.id),
       this.db.prepare("DELETE FROM categories WHERE user_id = ?").bind(user.id),

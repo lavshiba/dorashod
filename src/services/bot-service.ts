@@ -459,6 +459,14 @@ export class BotService {
       await this.telegram.answerCallbackQuery(callbackQuery.id);
     }
 
+    if (callbackMessageId > 0 && callbackQuery.data) {
+      const acquired = await this.repo.tryAcquireCallbackLock(user.id, callbackMessageId, callbackQuery.data);
+      if (!acquired) {
+        this.currentUserId = null;
+        return;
+      }
+    }
+
     if (screenMessageId && callbackMessageId && screenMessageId !== callbackMessageId) {
       try {
         await this.telegram.deleteMessage(user.chatId, callbackMessageId);
