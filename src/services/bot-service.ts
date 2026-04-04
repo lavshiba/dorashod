@@ -1734,7 +1734,15 @@ export class BotService {
     if (draft.step === "amount") {
       const parsed = parseEntryAttempt(`${payload.type === "income" ? "+" : "-"}${text}`);
       if (!parsed.amountMinor) {
-        await this.sendMessage({ chat_id: user.chatId, text: "не получилось понять сумму\n\nпришли сумму сообщением ещё раз" });
+        await this.sendMessage({
+          chat_id: user.chatId,
+          text:
+            `<b>${BOT_TITLE}</b>\n\n` +
+            `новая запись\n\n` +
+            `тип: ${payload.type === "income" ? "доход" : "расход"}\n\n` +
+            `не получилось понять сумму\n\n` +
+            `пришли сумму сообщением ещё раз`
+        });
         return;
       }
       payload.amountMinor = parsed.amountMinor;
@@ -1808,14 +1816,20 @@ export class BotService {
     if (field === "amount") {
       const parsed = parseEntryAttempt(`${draft.payload.type === "income" ? "+" : "-"}${text}`);
       if (!parsed.amountMinor) {
-        await this.sendMessage({ chat_id: user.chatId, text: "не получилось понять сумму\n\nпришли сумму сообщением ещё раз" });
+        await this.sendMessage({
+          chat_id: user.chatId,
+          text: `<b>${BOT_TITLE}</b>\n\nизменить запись\n\nне получилось понять сумму\n\nпришли сумму сообщением ещё раз`
+        });
         return;
       }
       draft.payload.amountMinor = parsed.amountMinor;
     } else if (field === "type") {
       const normalized = text.trim().toLowerCase();
       if (normalized !== "доход" && normalized !== "расход") {
-        await this.sendMessage({ chat_id: user.chatId, text: "не получилось понять тип\n\nпришли тип сообщением ещё раз" });
+        await this.sendMessage({
+          chat_id: user.chatId,
+          text: `<b>${BOT_TITLE}</b>\n\nизменить запись\n\nне получилось понять тип\n\nпришли тип сообщением ещё раз`
+        });
         return;
       }
       draft.payload.type = normalized === "доход" ? "income" : "expense";
@@ -1829,7 +1843,10 @@ export class BotService {
     } else if (field === "date") {
       const parsed = parseEditableDate(text);
       if (!parsed) {
-        await this.sendMessage({ chat_id: user.chatId, text: "не получилось понять дату\n\nпришли дату сообщением ещё раз" });
+        await this.sendMessage({
+          chat_id: user.chatId,
+          text: `<b>${BOT_TITLE}</b>\n\nизменить запись\n\nне получилось понять дату\n\nпришли дату сообщением ещё раз`
+        });
         return;
       }
       draft.payload.entryDate = parsed.entryDate;
@@ -1844,7 +1861,10 @@ export class BotService {
     } else if (field === "time") {
       const parsed = parseEditableTime(text);
       if (!parsed) {
-        await this.sendMessage({ chat_id: user.chatId, text: "не получилось понять время\n\nпришли время сообщением ещё раз" });
+        await this.sendMessage({
+          chat_id: user.chatId,
+          text: `<b>${BOT_TITLE}</b>\n\nизменить запись\n\nне получилось понять время\n\nпришли время сообщением ещё раз`
+        });
         return;
       }
       draft.payload.entryTime = parsed.entryTime;
@@ -1856,7 +1876,10 @@ export class BotService {
     } else if (field === "datetime") {
       const parsed = parseEditableDateTime(text);
       if (!parsed) {
-        await this.sendMessage({ chat_id: user.chatId, text: "не получилось понять дату и время\n\nпришли дату и время сообщением ещё раз" });
+        await this.sendMessage({
+          chat_id: user.chatId,
+          text: `<b>${BOT_TITLE}</b>\n\nизменить запись\n\nне получилось понять дату и время\n\nпришли дату и время сообщением ещё раз`
+        });
         return;
       }
       draft.payload.entryDate = parsed.entryDate;
@@ -2108,7 +2131,7 @@ export class BotService {
         `новые записи\n\n` +
         `из очереди: 1 из ${queueCount}\n\n` +
         `из сообщения удалось понять:\n\n${this.describeQueueParsed(item.parsed, user.currencyLabel)}\n\n` +
-        (item.missing.length ? `не хватает:\n${item.missing.map(formatMissingField).join(", ")}` : "всё готово"),
+        (item.missing.length ? `не хватает:\n${item.missing.map(formatMissingField).join("\n")}` : "всё готово"),
       reply_markup: kb([
         ...(!item.missing.length
           ? [
@@ -3890,6 +3913,7 @@ export class BotService {
       await this.sendMessage({
         chat_id: user.chatId,
         text:
+          `<b>${BOT_TITLE}</b>\n\n` +
           `${notice ? `${notice}\n\n` : ""}` +
           `быстрый доступ\nподкатегорий\n\n` +
           `категория: ${(await this.repo.getCategory(user.id, categoryId))?.name ?? ""}\n` +
@@ -3915,6 +3939,7 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `<b>${BOT_TITLE}</b>\n\n` +
         `${notice ? `${notice}\n\n` : ""}` +
         `быстрый доступ\n${section === "expense" ? "тип: расход" : "тип: доход"}\n\n` +
         `слот: ${slot}${slotItem ? `\nсейчас: ${slotItem.name}` : ""}\n\n` +
@@ -4621,7 +4646,9 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
-        `исправить импорт\n${index + 1} из ${errors.length}\n\n` +
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `исправить импорт\n` +
+        `${index + 1} из ${errors.length}\n\n` +
         `из файла удалось понять:\n${understood}` +
         (!(parsed.type && parsed.amountMinor && parsed.category) ? `\n\nне хватает:\n${parsed.missing.map(formatMissingField).join("\n")}` : `\n\nвсё готово`),
       reply_markup: kb(buttons)
