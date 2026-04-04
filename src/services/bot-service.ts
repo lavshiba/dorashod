@@ -6398,11 +6398,18 @@ function parseEntriesImportCsv(content: string):
 function parseImportedEntry(
   item: Record<string, unknown>
 ): { entry: Record<string, unknown> } | { error: string } {
-  const rawAmount = item.amount_minor ?? item.amount;
-  const inferredType = parseImportedType(item.type ?? item.kind ?? item.direction ?? rawAmount);
-  const amountMinor = parseImportedAmount(rawAmount);
-  const categoryName = String(item.category ?? item.categoryName ?? "").trim();
-  const subcategoryName = String(item.subcategory ?? item.subcategoryName ?? "").trim();
+  const rawAmountMinor = item.amount_minor;
+  const rawAmount = item.amount;
+  const inferredType = parseImportedType(item.type ?? item.kind ?? item.direction ?? rawAmountMinor ?? rawAmount);
+  const amountMinor = rawAmountMinor !== undefined && rawAmountMinor !== null && String(rawAmountMinor).trim() !== ""
+    ? parseImportedMinorAmount(rawAmountMinor)
+    : parseImportedAmount(rawAmount);
+  const categoryParts = splitImportedCategoryPath(
+    String(item.category ?? item.categoryName ?? item.categoryPath ?? "").trim(),
+    String(item.subcategory ?? item.subcategoryName ?? "").trim()
+  );
+  const categoryName = categoryParts.categoryName;
+  const subcategoryName = categoryParts.subcategoryName;
   const description = String(item.description ?? item.comment ?? item.note ?? "").trim();
   const dateSource = item.datetime ?? item.date ?? item.entryDate ?? item.createdAt ?? "";
   const timeSource = item.time ?? item.entryTime ?? item.datetime ?? item.createdAt ?? "";
@@ -6447,19 +6454,28 @@ function parseFixCandidate(rawText: string): {
   missing: string[];
 } {
   const parsed = parseEntryAttempt(rawText);
+  const inferredType = parsed.type ?? inferImportTextType(rawText) ?? undefined;
+  const categoryParts = splitImportedCategoryPath(parsed.category ?? "", parsed.subcategory ?? "");
   const extractedDate = extractDateFromText(rawText);
   const extractedTime = extractTimeFromText(rawText);
+  const missing: string[] = parsed.missing.filter((item) => item !== "type");
+  if (!inferredType) {
+    missing.unshift("type");
+  }
+  if (!categoryParts.categoryName && !missing.includes("category")) {
+    missing.push("category");
+  }
   return {
-    type: parsed.type,
+    type: inferredType,
     amountMinor: parsed.amountMinor,
-    category: parsed.category,
-    subcategory: parsed.subcategory,
+    category: categoryParts.categoryName || undefined,
+    subcategory: categoryParts.subcategoryName || undefined,
     description: parsed.description,
     entryDate: extractedDate,
     entryTime: extractedTime,
     isDateMissing: !extractedDate,
     isTimeAuto: !extractedTime,
-    missing: parsed.missing
+    missing
   };
 }
 
@@ -6550,7 +6566,7 @@ function extractTimeFromText(rawText: string): string | null {
 
 function parseImportedAmount(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) {
-    return Math.round(Math.abs(value) < 100000000 ? Math.abs(value) * 100 : Math.abs(value));
+    return Math.round(Math.abs(value) * 100);
   }
   const raw = String(value ?? "")
     .trim()
@@ -6565,9 +6581,27 @@ function parseImportedAmount(value: unknown): number | null {
   if (!Number.isFinite(numeric)) {
     return null;
   }
-  const usesDecimal = /[.,]\d{1,2}$/.test(normalized);
-  const abs = Math.abs(numeric);
-  return Math.round(abs < 100000000 ? abs * (usesDecimal ? 100 : 1) : abs);
+  return Math.round(Math.abs(numeric) * 100);
+}
+
+function parseImportedMinorAmount(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.round(Math.abs(value));
+  }
+  const raw = String(value ?? "")
+    .trim()
+    .replace(/\(null\)/gi, "")
+    .replace(/\s+/g, "")
+    .replace(/[^0-9,.\-+]/g, "");
+  if (!raw) {
+    return null;
+  }
+  const normalized = normalizeImportNumber(raw);
+  const numeric = Number(normalized);
+  if (!Number.isFinite(numeric)) {
+    return null;
+  }
+  return Math.round(Math.abs(numeric));
 }
 
 function parseImportedDate(value: string): { readable: boolean; value: string | null } {
@@ -6759,8 +6793,8 @@ function normalizeImportHeader(value: string): string {
     operation: "type",
     "transaction type": "type",
     amount: "amount",
-    "amount minor": "amount",
-    amountminor: "amount",
+    "amount minor": "amount_minor",
+    amountminor: "amount_minor",
     сумма: "amount",
     value: "amount",
     money: "amount",
@@ -6778,6 +6812,8 @@ function normalizeImportHeader(value: string): string {
     category: "category",
     категория: "category",
     "category name": "category",
+    "category path": "category",
+    "категория подкатегория": "category",
     subcategory: "subcategory",
     подкатегория: "subcategory",
     "sub category": "subcategory",
@@ -6815,7 +6851,52 @@ function parseImportedType(value: unknown): EntryType | null {
   if (raw.startsWith("-")) {
     return "expense";
   }
+  const numeric = Number(normalizeImportNumber(raw.replace(/\s+/g, "").replace(/[^0-9,.\-+]/g, "")));
+  if (Number.isFinite(numeric)) {
+    return numeric < 0 ? "expense" : "income";
+  }
   return null;
+}
+
+function inferImportTextType(rawText: string): EntryType | null {
+  const firstToken = rawText.trim().split(/\s+/)[0] ?? "";
+  if (!firstToken) {
+    return null;
+  }
+  const parsed = parseImportedType(firstToken);
+  return parsed;
+}
+
+function splitImportedCategoryPath(
+  categoryRaw: string,
+  subcategoryRaw: string
+): { categoryName: string; subcategoryName: string | null } {
+  const categoryName = categoryRaw.trim();
+  const explicitSubcategory = subcategoryRaw.trim();
+  if (!categoryName) {
+    return { categoryName: "", subcategoryName: explicitSubcategory || null };
+  }
+  if (explicitSubcategory) {
+    return { categoryName, subcategoryName: explicitSubcategory };
+  }
+
+  for (const separator of ["→", ">", "|", "/", ";", ",", ":"]) {
+    if (!categoryName.includes(separator)) {
+      continue;
+    }
+    const parts = categoryName
+      .split(separator)
+      .map((item) => item.trim())
+      .filter(Boolean);
+    if (parts.length >= 2) {
+      return {
+        categoryName: parts[0] ?? "",
+        subcategoryName: parts.slice(1).join(" / ") || null
+      };
+    }
+  }
+
+  return { categoryName, subcategoryName: null };
 }
 
 function normalizeImportNumber(raw: string): string {
