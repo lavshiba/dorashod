@@ -76,9 +76,15 @@ export const BUTTONS = {
   searchThis: "искать это",
   toNewEntries: "в новые записи",
   chooseAll: "выбрать все",
-  changeTime: "изменить время"
-  ,
-  withoutSubcategory: "без подкатегории"
+  changeTime: "изменить время",
+  withoutSubcategory: "без подкатегории",
+  allCategories: "все категории",
+  allSubcategories: "все подкатегории",
+  open: "открыть",
+  yesDelete: "да, удалить",
+  leaveWithoutSave: "выйти без сохранения",
+  stay: "остаться",
+  dateTime: "дата и время"
 } as const;
 
 export const ONBOARDING_TEXTS = [

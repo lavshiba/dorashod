@@ -490,7 +490,11 @@ export class BotService {
         await this.repo.saveDraft(user.id, { type: String(params.type) as EntryType }, "amount");
         await this.sendMessage({
           chat_id: user.chatId,
-          text: "Напиши сумму.",
+          text:
+            `<b>${BOT_TITLE}</b>\n\n` +
+            `новая запись\n\n` +
+            `тип: ${String(params.type) === "income" ? "доход" : "расход"}\n\n` +
+            `пришли сумму сообщением`,
           reply_markup: kb([[{ text: BUTTONS.cancel, action: "add:cancel" }, { text: BUTTONS.main, action: "nav:home" }]])
         });
         return;
@@ -520,8 +524,8 @@ export class BotService {
       case "draft:delete":
         await this.sendMessage({
           chat_id: user.chatId,
-          text: "Удалить черновик?",
-          reply_markup: kb([[{ text: BUTTONS.delete, action: "draft:confirm-delete" }, { text: BUTTONS.back, action: "draft:open" }]])
+          text: `<b>${BOT_TITLE}</b>\n\nудалить черновик?\n\nвернуть его потом не получится`,
+          reply_markup: kb([[{ text: BUTTONS.yesDelete, action: "draft:confirm-delete" }], [{ text: BUTTONS.back, action: "draft:open" }, { text: BUTTONS.main, action: "nav:home" }]])
         });
         return;
       case "draft:confirm-delete":
@@ -529,6 +533,9 @@ export class BotService {
         await this.showHome(user);
         return;
       case "queue:open":
+        await this.showQueueIntro(user);
+        return;
+      case "queue:current":
         await this.showQueue(user);
         return;
       case "queue:save-current":
@@ -609,16 +616,13 @@ export class BotService {
         );
         return;
       case "entry:delete":
-        await this.sendMessage({
-          chat_id: user.chatId,
-          text: "Удалить запись?",
-          reply_markup: kb([
-            [
-              { text: BUTTONS.delete, action: "entry:confirm-delete", payload: { id: params.id, page: params.page, source: params.source, query: params.query } },
-              { text: BUTTONS.back, action: "operations:view", payload: { id: params.id, page: params.page, source: params.source, query: params.query } }
-            ]
-          ])
-        });
+        await this.showEntryDeleteConfirm(
+          user,
+          Number(params.id),
+          params.source === "report" ? "report" : params.source === "search" ? "search" : params.source === "category" ? "category" : "operations",
+          Number(params.page ?? "0"),
+          typeof params.query === "string" ? String(params.query) : undefined
+        );
         return;
       case "entry:confirm-delete":
         await this.repo.deleteEntry(user.id, Number(params.id));
@@ -1339,11 +1343,7 @@ export class BotService {
         await this.promptAddSubcategory(user, category.id);
         return;
       }
-      await this.sendMessage({
-        chat_id: user.chatId,
-        text: "Напиши описание.",
-        reply_markup: kb([[{ text: BUTTONS.skip, action: "add:skip-description" }]])
-      });
+      await this.showAddDescriptionStep(user, payload);
       return;
     }
 
@@ -1382,9 +1382,10 @@ export class BotService {
     await this.repo.clearSession(user.id);
     await this.sendMessage({
       chat_id: user.chatId,
-      text: "запись добавлена",
+      text: `<b>${BOT_TITLE}</b>\n\nзапись добавлена`,
       reply_markup: kb([
         [{ text: BUTTONS.income, action: "add:start", payload: { type: "income" } }, { text: BUTTONS.expense, action: "add:start", payload: { type: "expense" } }],
+        [{ text: BUTTONS.operations, action: "operations:list", payload: { page: 0 } }, { text: BUTTONS.report, action: "reports:open" }],
         [{ text: BUTTONS.main, action: "nav:home" }]
       ])
     });
@@ -1405,6 +1406,13 @@ export class BotService {
         return;
       }
       draft.payload.amountMinor = parsed.amountMinor;
+    } else if (field === "type") {
+      const normalized = text.trim().toLowerCase();
+      if (normalized !== "доход" && normalized !== "расход") {
+        await this.sendMessage({ chat_id: user.chatId, text: "Не удалось понять тип. Напиши тип ещё раз." });
+        return;
+      }
+      draft.payload.type = normalized === "доход" ? "income" : "expense";
     } else if (field === "category") {
       draft.payload.categoryName = text.trim();
       draft.payload.subcategoryName = undefined;
@@ -1439,6 +1447,16 @@ export class BotService {
         draft.payload.entryDate = this.userNow(user.timezoneName).date;
         draft.payload.isDateMissing = false;
       }
+    } else if (field === "datetime") {
+      const parsed = parseEditableDateTime(text);
+      if (!parsed) {
+        await this.sendMessage({ chat_id: user.chatId, text: "Не удалось понять дату и время. Напиши дату и время ещё раз." });
+        return;
+      }
+      draft.payload.entryDate = parsed.entryDate;
+      draft.payload.entryTime = parsed.entryTime;
+      draft.payload.isDateMissing = parsed.isDateMissing;
+      draft.payload.isTimeAuto = parsed.isTimeAuto;
     }
 
     await this.repo.saveDraft(user.id, draft.payload, "edit-menu");
@@ -1454,7 +1472,15 @@ export class BotService {
     }
 
     if (draft.step === "amount") {
-      await this.sendMessage({ chat_id: user.chatId, text: "Напиши сумму." });
+      await this.sendMessage({
+        chat_id: user.chatId,
+        text:
+          `<b>${BOT_TITLE}</b>\n\n` +
+          `новая запись\n\n` +
+          `тип: ${draft.payload.type === "income" ? "доход" : "расход"}\n\n` +
+          `пришли сумму сообщением`,
+        reply_markup: kb([[{ text: BUTTONS.cancel, action: "add:cancel" }, { text: BUTTONS.main, action: "nav:home" }]])
+      });
       return;
     }
     if (draft.step === "category") {
@@ -1465,49 +1491,49 @@ export class BotService {
       await this.promptAddSubcategory(user, draft.payload.categoryId);
       return;
     }
-    await this.sendMessage({
-      chat_id: user.chatId,
-      text: "Напиши описание или нажми пропустить.",
-      reply_markup: kb([[{ text: BUTTONS.skip, action: "add:skip-description" }]])
-    });
+    await this.showAddDescriptionStep(user, draft.payload);
   }
 
   private async promptAddCategory(user: UserRecord, type: EntryType): Promise<void> {
+    const draft = await this.repo.getDraft(user.id);
     const items = await this.getAddQuickCategories(user, type);
-    if (items.length === 0) {
-      await this.sendMessage({ chat_id: user.chatId, text: "Напиши категорию." });
-      return;
-    }
-
-    const lines = items.map((item, index) => `${index + 1}. ${item.name}`).join("\n");
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `Напиши категорию.\n\n${lines}`,
+      text:
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `новая запись\n\n` +
+        `${draft ? this.describeDraft(draft.payload, user.currencyLabel) : `тип: ${type === "income" ? "доход" : "расход"}`}\n\n` +
+        `выбери категорию\nили напиши её сообщением`,
       reply_markup: kb([
-        items.map((item, index) => ({ text: String(index + 1), action: "add:pick-category", payload: { id: item.id } })),
+        ...chunkButtons(
+          items.slice(0, 4).map((item) => ({ text: item.name, action: "add:pick-category", payload: { id: item.id } })),
+          2
+        ),
+        [{ text: BUTTONS.allCategories, action: "categories:open" }],
+        [{ text: BUTTONS.addCategory, action: "categories:create", payload: { type } }],
         [{ text: BUTTONS.cancel, action: "add:cancel" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
   }
 
   private async promptAddSubcategory(user: UserRecord, categoryId: number): Promise<void> {
+    const draft = await this.repo.getDraft(user.id);
     const items = await this.getAddQuickSubcategories(user, categoryId);
-    if (items.length === 0) {
-      await this.sendMessage({
-        chat_id: user.chatId,
-        text: "Напиши подкатегорию.",
-        reply_markup: kb([[{ text: BUTTONS.skip, action: "add:skip-subcategory" }]])
-      });
-      return;
-    }
-
-    const lines = items.map((item, index) => `${index + 1}. ${item.name}`).join("\n");
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `Напиши подкатегорию.\n\n${lines}`,
+      text:
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `новая запись\n\n` +
+        `${draft ? this.describeDraft(draft.payload, user.currencyLabel) : ""}\n\n` +
+        `выбери подкатегорию\nили напиши её сообщением`,
       reply_markup: kb([
-        items.map((item, index) => ({ text: String(index + 1), action: "add:pick-subcategory", payload: { id: item.id } })),
-        [{ text: BUTTONS.skip, action: "add:skip-subcategory" }],
+        ...chunkButtons(
+          items.slice(0, 4).map((item) => ({ text: item.name, action: "add:pick-subcategory", payload: { id: item.id } })),
+          2
+        ),
+        [{ text: BUTTONS.allSubcategories, action: "categories:view", payload: { id: categoryId } }],
+        [{ text: BUTTONS.addSubcategory, action: "subcategory:create", payload: { categoryId } }],
+        [{ text: BUTTONS.withoutSubcategory, action: "add:skip-subcategory" }],
         [{ text: BUTTONS.cancel, action: "add:cancel" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
@@ -1583,11 +1609,7 @@ export class BotService {
     draft.payload.subcategoryId = subcategory.id;
     draft.payload.subcategoryName = subcategory.name;
     await this.repo.saveDraft(user.id, draft.payload, "description");
-    await this.sendMessage({
-      chat_id: user.chatId,
-      text: "Напиши описание.",
-      reply_markup: kb([[{ text: BUTTONS.skip, action: "add:skip-description" }]])
-    });
+    await this.showAddDescriptionStep(user, draft.payload);
   }
 
   private async skipAddSubcategory(user: UserRecord): Promise<void> {
@@ -1599,10 +1621,22 @@ export class BotService {
     draft.payload.subcategoryId = undefined;
     draft.payload.subcategoryName = undefined;
     await this.repo.saveDraft(user.id, draft.payload, "description");
+    await this.showAddDescriptionStep(user, draft.payload);
+  }
+
+  private async showAddDescriptionStep(user: UserRecord, payload: DraftPayload): Promise<void> {
     await this.sendMessage({
       chat_id: user.chatId,
-      text: "Напиши описание.",
-      reply_markup: kb([[{ text: BUTTONS.skip, action: "add:skip-description" }]])
+      text:
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `новая запись\n\n` +
+        `${this.describeDraft(payload, user.currencyLabel)}\n\n` +
+        `пришли описание сообщением\nили пропусти этот шаг`,
+      reply_markup: kb([
+        [{ text: BUTTONS.skip, action: "add:skip-description" }],
+        [{ text: BUTTONS.back, action: "draft:continue" }],
+        [{ text: BUTTONS.main, action: "nav:home" }]
+      ])
     });
   }
 
@@ -1615,12 +1649,30 @@ export class BotService {
 
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `черновик\n\n${this.describeDraft(draft.payload, user.currencyLabel)}`,
+      text:
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `черновик\n\n` +
+        `это незавершённая запись,\nкоторую можно продолжить\n\n` +
+        `${this.describeDraft(draft.payload, user.currencyLabel)}`,
       reply_markup: kb([
         [{ text: BUTTONS.continue, action: "draft:continue" }],
         [{ text: BUTTONS.delete, action: "draft:delete" }],
         [{ text: BUTTONS.main, action: "nav:home" }]
       ])
+    });
+  }
+
+  private async showQueueIntro(user: UserRecord): Promise<void> {
+    const queueCount = await this.repo.getQueueCount(user.id);
+    if (queueCount === 0) {
+      await this.showHome(user);
+      return;
+    }
+
+    await this.sendMessage({
+      chat_id: user.chatId,
+      text: `<b>${BOT_TITLE}</b>\n\nновые записи\n\nих можно проверить,\nисправить если нужно\nи сохранить`,
+      reply_markup: kb([[{ text: BUTTONS.open, action: "queue:current" }], [{ text: BUTTONS.main, action: "nav:home" }]])
     });
   }
 
@@ -1630,20 +1682,60 @@ export class BotService {
       await this.showHome(user, notice);
       return;
     }
+    const queueCount = await this.repo.getQueueCount(user.id);
     await this.repo.saveSession(user.id, { mode: "queue", stack: ["home"], context: { queueId: item.id } });
+    const missingLabel = item.missing.length > 0 ? formatMissingField(String(item.missing[0])) : "";
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `<b>${BOT_TITLE}</b>\n\n` +
         `${notice ? `${notice}\n\n` : ""}` +
-        `новые записи\n\nиз записи удалось понять:\n${this.describeQueueParsed(item.parsed, user.currencyLabel)}\n\n` +
-        (item.missing.length ? `не хватает: ${item.missing.map(formatMissingField).join(", ")}.` : "запись готова к сохранению"),
+        `новые записи\n\n` +
+        `из очереди: 1 из ${queueCount}\n\n` +
+        `из сообщения удалось понять:\n\n${this.describeQueueParsed(item.parsed, user.currencyLabel)}\n\n` +
+        (item.missing.length ? `не хватает:\n${item.missing.map(formatMissingField).join(", ")}` : "всё готово"),
       reply_markup: kb([
-        [
-          { text: BUTTONS.save, action: "queue:save-current" },
-          { text: BUTTONS.edit, action: "draft:continue" },
-          { text: BUTTONS.skip, action: "queue:skip-current" },
-          { text: BUTTONS.main, action: "nav:home" }
-        ]
+        ...(!item.missing.length
+          ? [
+              [{ text: BUTTONS.save, action: "queue:save-current" }],
+              [{ text: BUTTONS.edit, action: "draft:continue" }],
+              [{ text: BUTTONS.skip, action: "queue:skip-current" }],
+              [{ text: BUTTONS.main, action: "nav:home" }]
+            ]
+          : [
+              [{ text: missingLabel, action: "draft:continue" }],
+              [{ text: BUTTONS.skip, action: "queue:skip-current" }],
+              [{ text: BUTTONS.main, action: "nav:home" }]
+            ])
+      ])
+    });
+  }
+
+  private async showEntryDeleteConfirm(
+    user: UserRecord,
+    entryId: number,
+    source: "operations" | "search" | "report" | "category",
+    page: number,
+    query?: string
+  ): Promise<void> {
+    const entry = await this.repo.getEntryById(user.id, entryId);
+    if (!entry) {
+      await this.refreshEntryListByOrigin(user, source, page, query);
+      return;
+    }
+
+    await this.sendMessage({
+      chat_id: user.chatId,
+      text:
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `удалить запись?\n\n` +
+        `${formatAmountByType(entry.amountMinor, entry.type, user.currencyLabel)}\n` +
+        `${entry.categoryName}${entry.subcategoryName ? ` → ${entry.subcategoryName}` : ""}\n` +
+        `${entry.isDateMissing ? "дата не указана" : `${entry.entryDate} ${entry.entryTime ?? ""}`.trim()}\n\n` +
+        `вернуть её потом не получится`,
+      reply_markup: kb([
+        [{ text: BUTTONS.yesDelete, action: "entry:confirm-delete", payload: { id: entryId, page, source, query } }],
+        [{ text: BUTTONS.back, action: "operations:view", payload: { id: entryId, page, source, query } }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
   }
@@ -1701,13 +1793,13 @@ export class BotService {
     if (items.length === 0) {
       await this.sendMessage({
         chat_id: user.chatId,
-        text: "пока записей нет\nможно добавить доход или расход с главной",
-        reply_markup: kb([[{ text: BUTTONS.main, action: "nav:home" }]])
+        text: `<b>${BOT_TITLE}</b>\n\nоперации\n\nзаписей пока нет\n\ndобавь первую запись,\nи она появится здесь`,
+        reply_markup: kb([[{ text: BUTTONS.income, action: "add:start", payload: { type: "income" } }, { text: BUTTONS.expense, action: "add:start", payload: { type: "expense" } }], [{ text: BUTTONS.main, action: "nav:home" }]])
       });
       return;
     }
 
-    const lines = items.map((item, index) => `${index + 1}. ${formatEntryLine(item, user.currencyLabel)}`).join("\n");
+    const lines = items.map((item, index) => `${index + 1}. ${formatEntryListBlock(item, user.currencyLabel)}`).join("\n\n");
     const session = await this.repo.getSession(user.id);
     const selectedIds = new Set<number>(Array.isArray(session.context.selectedIds) ? (session.context.selectedIds as number[]) : []);
     await this.repo.saveSession(user.id, {
@@ -1721,12 +1813,13 @@ export class BotService {
       payload: { id: item.id, page, origin: "operations" }
     }));
     const hasSelection = selectedIds.size > 0;
+    const numberRows = chunkButtons(numberButtons, 3);
 
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `операции\n\n${lines}`,
+      text: `<b>${BOT_TITLE}</b>\n\nоперации\n\n${lines}`,
       reply_markup: kb([
-        numberButtons,
+        ...numberRows,
         [
           {
             text: BUTTONS.multipleSelect,
@@ -1791,16 +1884,17 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `<b>${BOT_TITLE}</b>\n\n` +
         `${notice ? `${notice}\n\n` : ""}` +
-        `${formatAmountByType(entry.amountMinor, entry.type, user.currencyLabel)}\n` +
-        `${entry.categoryName}${entry.subcategoryName ? ` / ${entry.subcategoryName}` : ""}\n` +
-        `${entry.description ? `${entry.description}\n` : ""}` +
-        `${entry.isDateMissing ? "дата не указана" : `${entry.entryDate} ${entry.entryTime ?? ""}`.trim()}\n` +
+        `${formatAmountByType(entry.amountMinor, entry.type, user.currencyLabel)}\n\n` +
+        `${entry.categoryName}${entry.subcategoryName ? ` → ${entry.subcategoryName}` : ""}\n\n` +
+        `${entry.description ? `${entry.description}\n\n` : ""}` +
+        `${entry.isDateMissing ? "дата не указана" : `${entry.entryDate} ${entry.entryTime ?? ""}`.trim()}\n\n` +
         `${entry.isTimeAuto ? "время поставлено автоматически" : ""}`,
       reply_markup: kb([
+        ...(entry.isTimeAuto ? [[{ text: BUTTONS.changeTime, action: "entry:change-time", payload: { id: entry.id, page, source, query } }]] : []),
         [{ text: BUTTONS.edit, action: "entry:edit", payload: { id: entry.id, page, source, query } }],
         [{ text: BUTTONS.delete, action: "entry:delete", payload: { id: entry.id, page, source, query } }],
-        ...(entry.isTimeAuto ? [[{ text: BUTTONS.changeTime, action: "entry:change-time", payload: { id: entry.id, page, source, query } }]] : []),
         [
           { text: "◀️", action: prevId ? "entry:move" : "noop", payload: prevId ? { id: prevId, page, source, query } : undefined },
           { text: "▶️", action: nextId ? "entry:move" : "noop", payload: nextId ? { id: nextId, page, source, query } : undefined }
@@ -1881,16 +1975,14 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
-        `изменить\n\n${this.describeDraft(draft.payload, user.currencyLabel)}\n` +
-        `дата: ${draft.payload.isDateMissing ? "дата не указана" : draft.payload.entryDate ?? "дата не указана"}\n` +
-        `время: ${draft.payload.entryTime ?? (draft.payload.isTimeAuto ? "время поставлено автоматически" : "не указано")}`,
+        `<b>${BOT_TITLE}</b>\n\nизменить запись\n\n${this.describeDraft(draft.payload, user.currencyLabel)}\n` +
+        `дата и время: ${this.describeDraftDateTime(draft.payload)}`,
       reply_markup: kb([
-        [{ text: "сумма", action: "edit:field", payload: { field: "amount" } }],
+        [{ text: "сумма", action: "edit:field", payload: { field: "amount" } }, { text: "тип", action: "edit:field", payload: { field: "type" } }],
         [{ text: "категория", action: "edit:field", payload: { field: "category" } }],
         [{ text: "подкатегория", action: "edit:field", payload: { field: "subcategory" } }],
         [{ text: "описание", action: "edit:field", payload: { field: "description" } }],
-        [{ text: "дата", action: "edit:field", payload: { field: "date" } }],
-        [{ text: "время", action: "edit:field", payload: { field: "time" } }],
+        [{ text: BUTTONS.dateTime, action: "edit:field", payload: { field: "datetime" } }],
         [{ text: BUTTONS.save, action: "edit:save" }],
         [{ text: BUTTONS.back, action: "edit:leave", payload: { target: "source" } }, { text: BUTTONS.main, action: "edit:leave", payload: { target: "home" } }]
       ])
@@ -1907,11 +1999,13 @@ export class BotService {
 
     const prompts: Record<string, string> = {
       amount: "Напиши сумму.",
+      type: "Напиши тип.",
       category: "Напиши категорию.",
       subcategory: "Напиши подкатегорию.",
       description: "Напиши описание.",
       date: "Напиши дату.",
-      time: "Напиши время."
+      time: "Напиши время.",
+      datetime: "Напиши дату и время."
     };
 
     await this.sendMessage({
@@ -1964,11 +2058,11 @@ export class BotService {
 
     await this.sendMessage({
       chat_id: user.chatId,
-      text: "Есть несохранённые изменения.\n\nУйти без сохранения?",
+      text: `<b>${BOT_TITLE}</b>\n\nвыйти без сохранения?\n\nизменения в записи пропадут`,
       reply_markup: kb([
-        [{ text: BUTTONS.save, action: "edit:save" }],
-        [{ text: BUTTONS.back, action: "edit:discard", payload: { target } }],
-        [{ text: BUTTONS.cancel, action: "edit:back" }]
+        [{ text: BUTTONS.leaveWithoutSave, action: "edit:discard", payload: { target } }],
+        [{ text: BUTTONS.stay, action: "edit:back" }],
+        [{ text: BUTTONS.main, action: "nav:home" }]
       ])
     });
   }
@@ -4017,8 +4111,8 @@ export class BotService {
 
   private describeDraft(draft: DraftPayload, currencyLabel: string): string {
     const lines = [
-      draft.type ? `тип: ${draft.type === "income" ? "доход" : "расход"}` : undefined,
       draft.amountMinor ? `сумма: ${formatAmountFromMinor(draft.amountMinor, currencyLabel)}` : undefined,
+      draft.type ? `тип: ${draft.type === "income" ? "доход" : "расход"}` : undefined,
       draft.categoryName ? `категория: ${draft.categoryName}` : undefined,
       draft.subcategoryName ? `подкатегория: ${draft.subcategoryName}` : undefined,
       draft.description ? `описание: ${draft.description}` : undefined
@@ -4035,6 +4129,16 @@ export class BotService {
       description: parsed.description ? String(parsed.description) : undefined
     };
     return this.describeDraft(draft, currencyLabel);
+  }
+
+  private describeDraftDateTime(draft: DraftPayload): string {
+    if (draft.isDateMissing || !draft.entryDate) {
+      return "дата не указана";
+    }
+    if (!draft.entryTime || draft.isTimeAuto) {
+      return "сейчас";
+    }
+    return `${draft.entryDate} ${draft.entryTime}`.trim();
   }
 
   private nextAddStep(draft: DraftPayload): string {
@@ -4069,6 +4173,20 @@ function formatEntryLine(item: EntryRecord, currencyLabel: string): string {
   const amount = formatAmountByType(item.amountMinor, item.type, currencyLabel);
   const date = item.isDateMissing ? "дата не указана" : `${item.entryDate} ${item.entryTime ?? ""}`.trim();
   return `${amount} · ${item.categoryName}${item.subcategoryName ? ` · ${item.subcategoryName}` : ""} · ${date}`;
+}
+
+function formatEntryListBlock(item: EntryRecord, currencyLabel: string): string {
+  const amount = formatAmountByType(item.amountMinor, item.type, currencyLabel);
+  const date = item.isDateMissing ? "дата не указана" : `${item.entryDate}, ${item.entryTime ?? ""}`.replace(", ", ", ").trim().replace(/,\s*$/, "");
+  return `${amount} • ${item.categoryName}${item.subcategoryName ? ` → ${item.subcategoryName}` : ""}\n${date}`;
+}
+
+function chunkButtons<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
 }
 
 function formatMissingField(field: string): string {
@@ -4517,6 +4635,51 @@ function parseEditableTime(value: string): { entryTime: string | null; isTimeAut
     return null;
   }
   return { entryTime: parsed, isTimeAuto: false };
+}
+
+function parseEditableDateTime(
+  value: string
+): { entryDate: string | null; entryTime: string | null; isDateMissing: boolean; isTimeAuto: boolean } | null {
+  const raw = value.trim();
+  if (!raw) {
+    return null;
+  }
+
+  if (raw.toLowerCase() === "дата не указана") {
+    return {
+      entryDate: null,
+      entryTime: null,
+      isDateMissing: true,
+      isTimeAuto: true
+    };
+  }
+
+  const timeMatch = raw.match(/(\d{1,2}:\d{2}(?::\d{2})?)\s*$/);
+  if (timeMatch) {
+    const timeParsed = parseEditableTime(timeMatch[1]);
+    const datePart = raw.slice(0, timeMatch.index).trim();
+    const dateParsed = parseEditableDate(datePart);
+    if (!timeParsed || !dateParsed || dateParsed.isDateMissing) {
+      return null;
+    }
+    return {
+      entryDate: dateParsed.entryDate,
+      entryTime: timeParsed.entryTime,
+      isDateMissing: false,
+      isTimeAuto: timeParsed.isTimeAuto
+    };
+  }
+
+  const dateParsed = parseEditableDate(raw);
+  if (!dateParsed) {
+    return null;
+  }
+  return {
+    entryDate: dateParsed.entryDate,
+    entryTime: null,
+    isDateMissing: dateParsed.isDateMissing,
+    isTimeAuto: true
+  };
 }
 
 function makeEntryDedupKey(entry: {
