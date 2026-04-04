@@ -1002,6 +1002,20 @@ export class BotService {
         });
         return;
       case "category:restore":
+        await this.sendMessage({
+          chat_id: user.chatId,
+          text:
+            `<b>${BOT_TITLE}</b>\n\n` +
+            `вернуть категорию?\n\n` +
+            `она снова появится\n` +
+            `в обычном выборе`,
+          reply_markup: kb([
+            [{ text: BUTTONS.yesRestore, action: "category:restore-confirm", payload: params }],
+            [{ text: BUTTONS.back, action: "category:view", payload: { id: params.id, type: params.type, page: params.page, subpage: params.subpage, source: params.source } }, { text: BUTTONS.main, action: "nav:home" }]
+          ])
+        });
+        return;
+      case "category:restore-confirm":
         await this.repo.restoreCategory(user.id, Number(params.id));
         await this.showCategoryCard(
           user,
@@ -1088,6 +1102,20 @@ export class BotService {
         );
         return;
       case "subcategory:restore":
+        await this.sendMessage({
+          chat_id: user.chatId,
+          text:
+            `<b>${BOT_TITLE}</b>\n\n` +
+            `вернуть подкатегорию?\n\n` +
+            `она снова появится\n` +
+            `в обычном выборе`,
+          reply_markup: kb([
+            [{ text: BUTTONS.yesRestore, action: "subcategory:restore-confirm", payload: params }],
+            [{ text: BUTTONS.back, action: "subcategory:view", payload: { id: params.id, categoryId: params.categoryId, type: params.type, page: params.page, subpage: params.subpage, source: params.source } }, { text: BUTTONS.main, action: "nav:home" }]
+          ])
+        });
+        return;
+      case "subcategory:restore-confirm":
         await this.repo.restoreSubcategory(user.id, Number(params.id));
         await this.showSubcategoryCard(
           user,

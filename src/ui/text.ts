@@ -106,6 +106,7 @@ export const BUTTONS = {
   yesRemoveSubcategory: "да, снять"
   ,
   yesHide: "да, скрыть",
+  yesRestore: "да, вернуть",
   thisMonth: "этот месяц",
   thisYear: "этот год"
 } as const;
