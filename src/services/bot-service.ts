@@ -487,7 +487,11 @@ export class BotService {
         await this.repo.saveSession(user.id, {
           mode: "data",
           stack: ["data"],
-          context: { importId, awaitingUploadType: undefined }
+          context: {
+            ...(typeof session.context.screenMessageId === "number" ? { screenMessageId: session.context.screenMessageId } : {}),
+            importId,
+            awaitingUploadType: undefined
+          }
         });
         await this.showFullImportPreview(user, importId);
         return;
@@ -502,7 +506,11 @@ export class BotService {
     await this.repo.saveSession(user.id, {
       mode: "data",
       stack: ["data"],
-      context: { importId, awaitingUploadType: undefined }
+      context: {
+        ...(typeof session.context.screenMessageId === "number" ? { screenMessageId: session.context.screenMessageId } : {}),
+        importId,
+        awaitingUploadType: undefined
+      }
     });
 
       await this.showEntriesImportPreview(user, importId);
@@ -1457,11 +1465,25 @@ export class BotService {
         await this.showDataOtherApps(user);
         return;
       case "data:import-full-open":
-        await this.repo.saveSession(user.id, { mode: "data", stack: ["data"], context: { awaitingUploadType: "full" } });
+        await this.repo.saveSession(user.id, {
+          mode: "data",
+          stack: ["data"],
+          context: {
+            ...(typeof session.context.screenMessageId === "number" ? { screenMessageId: session.context.screenMessageId } : {}),
+            awaitingUploadType: "full"
+          }
+        });
         await this.showFullImportAwaiting(user);
         return;
       case "data:import-entries-open":
-        await this.repo.saveSession(user.id, { mode: "data", stack: ["data"], context: { awaitingUploadType: "entries" } });
+        await this.repo.saveSession(user.id, {
+          mode: "data",
+          stack: ["data"],
+          context: {
+            ...(typeof session.context.screenMessageId === "number" ? { screenMessageId: session.context.screenMessageId } : {}),
+            awaitingUploadType: "entries"
+          }
+        });
         await this.showEntriesImportAwaiting(user, "data:other-apps");
         return;
       case "data:import-full-preview":
@@ -1512,7 +1534,12 @@ export class BotService {
         await this.repo.saveSession(user.id, {
           mode: "import",
           stack: ["data"],
-          context: { importId: Number(params.importId), fixIndex: Number(params.index ?? "0"), awaiting: "fix-line" }
+          context: {
+            ...(typeof session.context.screenMessageId === "number" ? { screenMessageId: session.context.screenMessageId } : {}),
+            importId: Number(params.importId),
+            fixIndex: Number(params.index ?? "0"),
+            awaiting: "fix-line"
+          }
         });
         await this.sendMessage({
           chat_id: user.chatId,
