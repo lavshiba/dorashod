@@ -616,8 +616,17 @@ export class BotService {
       case "add:pick-category":
         await this.pickAddCategory(user, Number(params.id));
         return;
+      case "add:all-categories":
+        await this.promptAddCategory(user, String(params.type) as EntryType, Number(params.page ?? "0"), true);
+        return;
       case "add:pick-subcategory":
         await this.pickAddSubcategory(user, Number(params.id));
+        return;
+      case "add:all-subcategories":
+        await this.promptAddSubcategory(user, Number(params.categoryId), Number(params.page ?? "0"), true);
+        return;
+      case "add:back":
+        await this.goBackInAddFlow(user);
         return;
       case "add:skip-subcategory":
         await this.skipAddSubcategory(user);
@@ -983,6 +992,18 @@ export class BotService {
           reply_markup: kb([[{ text: BUTTONS.back, action: "categories:list", payload: { type: params.type } }, { text: BUTTONS.main, action: "nav:home" }]])
         });
         return;
+      case "categories:create":
+        await this.repo.saveSession(user.id, { mode: "categories", stack: ["add"], context: { awaiting: "new-category", type: params.type, returnTo: "add" } });
+        await this.sendMessage({
+          chat_id: user.chatId,
+          text:
+            `<b>${BOT_TITLE}</b>\n\n` +
+            `новая категория\n` +
+            `тип: ${String(params.type) === "expense" ? "расход" : "доход"}\n\n` +
+            "пришли название категории сообщением",
+          reply_markup: kb([[{ text: BUTTONS.back, action: "draft:continue" }, { text: BUTTONS.main, action: "nav:home" }]])
+        });
+        return;
       case "category:view":
         await this.showCategoryCard(
           user,
@@ -1072,6 +1093,32 @@ export class BotService {
           reply_markup: kb([[{ text: BUTTONS.back, action: "category:view", payload: { id: params.categoryId, type: params.type, page: params.page, subpage: params.subpage, source: params.source } }, { text: BUTTONS.main, action: "nav:home" }]])
         });
         return;
+      case "subcategory:create": {
+        const draft = await this.repo.getDraft(user.id);
+        await this.repo.saveSession(user.id, {
+          mode: "categories",
+          stack: ["add"],
+          context: {
+            awaiting: "new-subcategory",
+            categoryId: Number(params.categoryId),
+            type: draft?.payload.type ?? "expense",
+            page: 0,
+            subpage: 0,
+            source: "add",
+            returnTo: "add"
+          }
+        });
+        await this.sendMessage({
+          chat_id: user.chatId,
+          text:
+            `<b>${BOT_TITLE}</b>\n\n` +
+            "новая подкатегория\n" +
+            `категория: ${await this.describeCategoryName(user.id, Number(params.categoryId))}\n\n` +
+            "пришли название подкатегории сообщением",
+          reply_markup: kb([[{ text: BUTTONS.back, action: "draft:continue" }, { text: BUTTONS.main, action: "nav:home" }]])
+        });
+        return;
+      }
       case "category:hide-confirm":
         await this.repo.hideCategory(user.id, Number(params.id));
         await this.showCategoryList(user, String(params.type) as EntryType, Number(params.page ?? "0"), "категория скрыта");
@@ -1992,9 +2039,18 @@ export class BotService {
     await this.showAddDescriptionStep(user, draft.payload);
   }
 
-  private async promptAddCategory(user: UserRecord, type: EntryType): Promise<void> {
+  private async promptAddCategory(user: UserRecord, type: EntryType, page = 0, showAll = false): Promise<void> {
     const draft = await this.repo.getDraft(user.id);
-    const items = await this.getAddQuickCategories(user, type);
+    const items = showAll
+      ? await this.repo.listCategories(
+          user.id,
+          type,
+          false,
+          page,
+          6,
+          type === "expense" ? user.sortModeExpense : user.sortModeIncome
+        )
+      : await this.getAddQuickCategories(user, type);
     await this.sendMessage({
       chat_id: user.chatId,
       text:
@@ -2004,19 +2060,23 @@ export class BotService {
         `выбери категорию\nили напиши её сообщением`,
       reply_markup: kb([
         ...chunkButtons(
-          items.slice(0, 4).map((item) => ({ text: item.name, action: "add:pick-category", payload: { id: item.id } })),
+          items.map((item) => ({ text: item.name, action: "add:pick-category", payload: { id: item.id } })),
           2
         ),
-        [{ text: BUTTONS.allCategories, action: "categories:open" }],
+        ...(!showAll ? [[{ text: BUTTONS.allCategories, action: "add:all-categories", payload: { type, page: 0 } }]] : []),
+        ...(showAll && (page > 0 || items.length === 6) ? [buildPageRow(page, items.length === 6, "add:all-categories", { type })] : []),
         [{ text: BUTTONS.addCategory, action: "categories:create", payload: { type } }],
         [{ text: BUTTONS.cancel, action: "add:cancel" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
   }
 
-  private async promptAddSubcategory(user: UserRecord, categoryId: number): Promise<void> {
+  private async promptAddSubcategory(user: UserRecord, categoryId: number, page = 0, showAll = false): Promise<void> {
     const draft = await this.repo.getDraft(user.id);
-    const items = await this.getAddQuickSubcategories(user, categoryId);
+    const items = showAll
+      ? (await this.repo.getSubcategories(user.id, categoryId, "usage")).slice(page * 6, page * 6 + 6)
+      : await this.getAddQuickSubcategories(user, categoryId);
+    const totalItems = showAll ? await this.repo.getSubcategories(user.id, categoryId, "usage") : [];
     await this.sendMessage({
       chat_id: user.chatId,
       text:
@@ -2026,10 +2086,11 @@ export class BotService {
         `выбери подкатегорию\nили напиши её сообщением`,
       reply_markup: kb([
         ...chunkButtons(
-          items.slice(0, 4).map((item) => ({ text: item.name, action: "add:pick-subcategory", payload: { id: item.id } })),
+          items.map((item) => ({ text: item.name, action: "add:pick-subcategory", payload: { id: item.id } })),
           2
         ),
-        [{ text: BUTTONS.allSubcategories, action: "categories:view", payload: { id: categoryId } }],
+        ...(!showAll ? [[{ text: BUTTONS.allSubcategories, action: "add:all-subcategories", payload: { categoryId, page: 0 } }]] : []),
+        ...(showAll && (page > 0 || totalItems.length > (page + 1) * 6) ? [buildPageRow(page, totalItems.length > (page + 1) * 6, "add:all-subcategories", { categoryId })] : []),
         [{ text: BUTTONS.addSubcategory, action: "subcategory:create", payload: { categoryId } }],
         [{ text: BUTTONS.withoutSubcategory, action: "add:skip-subcategory" }],
         [{ text: BUTTONS.cancel, action: "add:cancel" }, { text: BUTTONS.main, action: "nav:home" }]
@@ -2095,7 +2156,7 @@ export class BotService {
         `или пропусти этот шаг`,
       reply_markup: kb([
         [{ text: BUTTONS.skip, action: "add:skip-description" }],
-        [{ text: BUTTONS.back, action: "add:pick-category", payload: { id: category.id } }],
+        [{ text: BUTTONS.back, action: "add:back" }],
         [{ text: BUTTONS.main, action: "nav:home" }]
       ])
     });
@@ -2141,10 +2202,40 @@ export class BotService {
         `пришли описание сообщением\nили пропусти этот шаг`,
       reply_markup: kb([
         [{ text: BUTTONS.skip, action: "add:skip-description" }],
-        [{ text: BUTTONS.back, action: "draft:continue" }],
+        [{ text: BUTTONS.back, action: "add:back" }],
         [{ text: BUTTONS.main, action: "nav:home" }]
       ])
     });
+  }
+
+  private async goBackInAddFlow(user: UserRecord): Promise<void> {
+    const draft = await this.repo.getDraft(user.id);
+    if (!draft?.payload.type) {
+      await this.showHome(user);
+      return;
+    }
+
+    if (draft.step === "description") {
+      if (draft.payload.categoryId && user.subcategoriesEnabled) {
+        const count = await this.repo.getSubcategoryCount(user.id, draft.payload.categoryId);
+        if (count > 0) {
+          await this.repo.saveDraft(user.id, draft.payload, "subcategory");
+          await this.promptAddSubcategory(user, draft.payload.categoryId);
+          return;
+        }
+      }
+      await this.repo.saveDraft(user.id, draft.payload, "category");
+      await this.promptAddCategory(user, draft.payload.type);
+      return;
+    }
+
+    if (draft.step === "subcategory" || draft.step === "category") {
+      await this.repo.saveDraft(user.id, draft.payload, "amount");
+      await this.continueDraft(user);
+      return;
+    }
+
+    await this.showHome(user);
   }
 
   private async showDraft(user: UserRecord): Promise<void> {
@@ -3453,6 +3544,7 @@ export class BotService {
   }
 
   private async handleCategoryCreate(user: UserRecord, type: EntryType, text: string): Promise<void> {
+    const session = await this.repo.getSession(user.id);
     const existing = await this.repo.findCategoryByNormalizedName(user.id, type, text);
     if (existing?.hiddenAt) {
       await this.sendMessage({
@@ -3469,11 +3561,30 @@ export class BotService {
       });
       return;
     }
-    await this.repo.ensureCategory(user.id, type, text);
+    const category = await this.repo.ensureCategory(user.id, type, text);
+    if (session.context.returnTo === "add") {
+      const draft = await this.repo.getDraft(user.id);
+      if (draft?.payload.type) {
+        draft.payload.categoryId = category.id;
+        draft.payload.categoryName = category.name;
+        draft.payload.subcategoryId = undefined;
+        draft.payload.subcategoryName = undefined;
+        const subcategoryCount = user.subcategoriesEnabled ? await this.repo.getSubcategoryCount(user.id, category.id) : 0;
+        await this.repo.saveDraft(user.id, draft.payload, subcategoryCount > 0 ? "subcategory" : "description");
+        await this.repo.saveSession(user.id, { mode: "add", stack: ["home"], context: { source: "message" } });
+        if (subcategoryCount > 0) {
+          await this.promptAddSubcategory(user, category.id);
+          return;
+        }
+        await this.showAddDescriptionStep(user, draft.payload);
+        return;
+      }
+    }
     await this.showCategoryList(user, type, 0, "категория создана");
   }
 
   private async handleSubcategoryCreate(user: UserRecord, categoryId: number, type: EntryType, page: number, text: string, subpage = 0, source = "list"): Promise<void> {
+    const session = await this.repo.getSession(user.id);
     const existing = await this.repo.findSubcategoryByNormalizedName(categoryId, text);
     if (existing?.hiddenAt) {
       await this.sendMessage({
@@ -3490,7 +3601,18 @@ export class BotService {
       });
       return;
     }
-    await this.repo.ensureSubcategory(user.id, categoryId, text);
+    const subcategory = await this.repo.ensureSubcategory(user.id, categoryId, text);
+    if (session.context.returnTo === "add") {
+      const draft = await this.repo.getDraft(user.id);
+      if (draft) {
+        draft.payload.subcategoryId = subcategory.id;
+        draft.payload.subcategoryName = subcategory.name;
+        await this.repo.saveDraft(user.id, draft.payload, "description");
+        await this.repo.saveSession(user.id, { mode: "add", stack: ["home"], context: { source: "message" } });
+        await this.showAddDescriptionStep(user, draft.payload);
+        return;
+      }
+    }
     await this.showCategoryCard(user, categoryId, type, page, subpage, source, "подкатегория создана");
   }
 
