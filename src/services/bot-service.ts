@@ -1828,6 +1828,13 @@ export class BotService {
   }
 
   private async showHome(user: UserRecord, notice?: string): Promise<void> {
+    const existingSession = await this.repo.getSession(user.id);
+    await this.repo.saveSession(user.id, {
+      mode: "idle",
+      stack: [],
+      context: typeof existingSession.context.screenMessageId === "number" ? { screenMessageId: existingSession.context.screenMessageId } : {}
+    });
+
     const nowForUser = this.userNow(user.timezoneName);
     const stats = await this.repo.getHomeStats(user.id, nowForUser.date, nowForUser.date.slice(0, 7));
     const queueCount = await this.repo.getQueueCount(user.id);
