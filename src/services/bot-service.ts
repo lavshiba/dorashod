@@ -3529,6 +3529,7 @@ export class BotService {
         slotRows.push([{ text: BUTTONS.done, action: "settings:quick-access", payload: { section } }]);
       }
     }
+    const modeRows = buildQuickAccessModeRows(section, current);
     await this.sendMessage({
       chat_id: user.chatId,
       text:
@@ -3539,14 +3540,7 @@ export class BotService {
           ? `${extraLines}`
           : `\n\nэто категории, которые бот\nпоказывает сверху\nдля быстрого выбора\n\nсейчас:\n${current === "custom" ? BUTTONS.own : current === "disabled" ? BUTTONS.off : BUTTONS.automatically}${extraLines}`),
       reply_markup: kb([
-        ...(section === "subcategories"
-          ? []
-          : current === "custom"
-            ? []
-            : [
-                [{ text: BUTTONS.own, action: "settings:set-quick-access", payload: { section, mode: "custom" } }],
-                [{ text: BUTTONS.off, action: "settings:set-quick-access", payload: { section, mode: "disabled" } }]
-              ]),
+        ...modeRows,
         ...slotRows,
         [{ text: BUTTONS.back, action: "settings:quick-access" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
@@ -3593,7 +3587,13 @@ export class BotService {
       const slotItem = current[slot - 1];
       await this.sendMessage({
         chat_id: user.chatId,
-        text: `${notice ? `${notice}\n\n` : ""}быстрый доступ\n\nслот ${slot}${slotItem ? `: ${slotItem.name}` : ""}\n\n${lines}`,
+        text:
+          `${notice ? `${notice}\n\n` : ""}` +
+          `быстрый доступ\nподкатегорий\n\n` +
+          `категория: ${(await this.repo.getCategory(user.id, categoryId))?.name ?? ""}\n` +
+          `слот: ${slot}${slotItem ? `\nсейчас: ${slotItem.name}` : ""}\n\n` +
+          `${lines}\n\n` +
+          `выбери подкатегорию`,
         reply_markup: kb([
           ...(items.length
             ? [items.map((item, index) => ({ text: String(index + 1), action: "settings:quick-access-slot-pick", payload: { section, slot, id: item.id, page } }))]
@@ -3612,7 +3612,12 @@ export class BotService {
     const slotItem = current[slot - 1];
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `${notice ? `${notice}\n\n` : ""}быстрый доступ\n\nслот ${slot}${slotItem ? `: ${slotItem.name}` : ""}\n\n${lines}`,
+      text:
+        `${notice ? `${notice}\n\n` : ""}` +
+        `быстрый доступ\n${section === "expense" ? "тип: расход" : "тип: доход"}\n\n` +
+        `слот: ${slot}${slotItem ? `\nсейчас: ${slotItem.name}` : ""}\n\n` +
+        `${lines}\n\n` +
+        `выбери категорию`,
       reply_markup: kb([
         ...(items.length
           ? [items.map((item, index) => ({ text: String(index + 1), action: "settings:quick-access-slot-pick", payload: { section, slot, id: item.id, page } }))]
@@ -3794,9 +3799,12 @@ export class BotService {
 
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `подкатегории\n\n${items
-        .map((item, index) => `${index + 1}. ${item.type === "expense" ? BUTTONS.expense : BUTTONS.income} · ${item.name}`)
-        .join("\n")}\n\nвыбери категорию`,
+      text:
+        `быстрый доступ\nподкатегорий\n\n` +
+        `${items
+          .map((item, index) => `${index + 1}. ${item.type === "expense" ? BUTTONS.expense : BUTTONS.income} · ${item.name}`)
+          .join("\n")}\n\n` +
+        `выбери категорию`,
       reply_markup: kb([
         items.map((item, index) => ({
           text: String(index + 1),
@@ -3854,12 +3862,7 @@ export class BotService {
           ? `\n\nздесь ты выбираешь,\nв каком порядке бот показывает\nподкатегории\n\nчто настраиваем?`
           : `\n\nэто порядок категорий\nв полном списке\n\nсейчас:\n${formatSortingMode(current)}`),
       reply_markup: kb([
-        ...(section === "subcategories"
-          ? []
-          : [
-              [{ text: "недавние", action: "settings:set-sorting", payload: { section, mode: "recent" } }],
-              [{ text: "по алфавиту", action: "settings:set-sorting", payload: { section, mode: "alphabet" } }]
-            ]),
+        ...(section === "subcategories" ? [] : buildSortingModeRows(section, current)),
         ...extraRows,
         [{ text: BUTTONS.back, action: "settings:sorting" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
@@ -3916,8 +3919,7 @@ export class BotService {
         `нет своей настройки\n\n` +
         `сейчас:\n${formatSortingMode(user.sortModeSubcategories)}`,
       reply_markup: kb([
-        [{ text: "недавние", action: "settings:set-sorting", payload: { section: "subcategories", mode: "recent" } }],
-        [{ text: "по алфавиту", action: "settings:set-sorting", payload: { section: "subcategories", mode: "alphabet" } }],
+        ...buildSortingModeRows("subcategories", user.sortModeSubcategories),
         [{ text: BUTTONS.back, action: "settings:sorting-section", payload: { section: "subcategories" } }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
@@ -3941,8 +3943,7 @@ export class BotService {
         `внутри этой категории\n\n` +
         `сейчас:\n${formatSortingMode(current)}`,
       reply_markup: kb([
-        [{ text: "недавние", action: "settings:set-sorting-category", payload: { id: categoryId, type, page, mode: "recent" } }],
-        [{ text: "по алфавиту", action: "settings:set-sorting-category", payload: { id: categoryId, type, page, mode: "alphabet" } }],
+        ...buildCategorySortingModeRows(categoryId, type, page, current),
         [{ text: BUTTONS.resetToGeneral, action: "settings:set-sorting-category", payload: { id: categoryId, type, page, mode: "reset" } }],
         [{ text: BUTTONS.back, action: "settings:sorting-subcategories-categories", payload: { type, page } }, { text: BUTTONS.main, action: "nav:home" }]
       ])
@@ -4955,6 +4956,53 @@ function summarizeImportErrorReasons(errors: Array<Record<string, unknown>>): st
     .slice(0, 3)
     .map(([reason, count]) => `${reason} — ${count}`)
     .join("\n");
+}
+
+function buildQuickAccessModeRows(
+  section: string,
+  current: string
+): Array<Array<{ text: string; action: string; payload?: Record<string, string | number | undefined> }>> {
+  const rows: Array<Array<{ text: string; action: string; payload?: Record<string, string | number | undefined> }>> = [];
+  if (current !== "automatically") {
+    rows.push([{ text: BUTTONS.automatically, action: "settings:set-quick-access", payload: { section, mode: "automatically" } }]);
+  }
+  if (current !== "custom") {
+    rows.push([{ text: BUTTONS.own, action: "settings:set-quick-access", payload: { section, mode: "custom" } }]);
+  }
+  if (current !== "disabled") {
+    rows.push([{ text: BUTTONS.off, action: "settings:set-quick-access", payload: { section, mode: "disabled" } }]);
+  }
+  return rows;
+}
+
+function buildSortingModeRows(
+  section: string,
+  current: string
+): Array<Array<{ text: string; action: string; payload?: Record<string, string | number | undefined> }>> {
+  const modes: Array<{ mode: string; label: string }> = [
+    { mode: "usage", label: "по количеству операций" },
+    { mode: "recent", label: "недавние" },
+    { mode: "alphabet", label: "по алфавиту" }
+  ];
+  return modes
+    .filter((item) => item.mode !== current)
+    .map((item) => [{ text: item.label, action: "settings:set-sorting", payload: { section, mode: item.mode } }]);
+}
+
+function buildCategorySortingModeRows(
+  categoryId: number,
+  type: EntryType,
+  page: number,
+  current: string
+): Array<Array<{ text: string; action: string; payload?: Record<string, string | number | undefined> }>> {
+  const modes: Array<{ mode: string; label: string }> = [
+    { mode: "usage", label: "по количеству операций" },
+    { mode: "recent", label: "недавние" },
+    { mode: "alphabet", label: "по алфавиту" }
+  ];
+  return modes
+    .filter((item) => item.mode !== current)
+    .map((item) => [{ text: item.label, action: "settings:set-sorting-category", payload: { id: categoryId, type, page, mode: item.mode } }]);
 }
 
 function formatCurrencySettingLabel(user: UserRecord): string {
