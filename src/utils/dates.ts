@@ -53,3 +53,224 @@ export function parseQuickPeriod(period: "today" | "yesterday" | "week" | "month
     to: end.toISOString().slice(0, 10)
   };
 }
+
+export type ParsedCustomPeriod =
+  | {
+      status: "resolved";
+      from: string | null;
+      to: string | null;
+      label: string;
+    }
+  | {
+      status: "ambiguous";
+      from: string | null;
+      to: string | null;
+      label: string;
+    }
+  | {
+      status: "unparsed";
+    };
+
+export function parseCustomPeriodInput(input: string, todayIso: string): ParsedCustomPeriod {
+  const raw = input.trim().toLowerCase();
+  if (!raw) {
+    return { status: "unparsed" };
+  }
+
+  if (raw === "сегодня") {
+    const range = parseQuickPeriod("today");
+    return { status: "resolved", ...range, label: "сегодня" };
+  }
+  if (raw === "вчера") {
+    const range = parseQuickPeriod("yesterday");
+    return { status: "resolved", ...range, label: "вчера" };
+  }
+  if (raw === "неделя") {
+    const range = parseQuickPeriod("week");
+    return { status: "resolved", ...range, label: "неделя" };
+  }
+  if (raw === "месяц") {
+    const range = parseQuickPeriod("month");
+    return { status: "resolved", ...range, label: "месяц" };
+  }
+  if (raw === "год") {
+    const range = parseQuickPeriod("year");
+    return { status: "resolved", ...range, label: "год" };
+  }
+  if (raw === "всё время") {
+    const range = parseQuickPeriod("all");
+    return { status: "resolved", ...range, label: "всё время" };
+  }
+
+  const relativeMatch = raw.match(/^(?:последние\s+)?(\d+)\s*(дн(?:я|ей)?|недел[яиь]|месяц(?:а|ев)?|год(?:а|ов)?)$/);
+  if (relativeMatch) {
+    const amount = Number(relativeMatch[1]);
+    const unit = relativeMatch[2];
+    const toDate = new Date(`${todayIso}T12:00:00Z`);
+    const fromDate = new Date(toDate);
+    if (unit.startsWith("д")) {
+      fromDate.setUTCDate(fromDate.getUTCDate() - (amount - 1));
+    } else if (unit.startsWith("нед")) {
+      fromDate.setUTCDate(fromDate.getUTCDate() - amount * 7 + 1);
+    } else if (unit.startsWith("м")) {
+      fromDate.setUTCMonth(fromDate.getUTCMonth() - amount);
+      fromDate.setUTCDate(fromDate.getUTCDate() + 1);
+    } else {
+      fromDate.setUTCFullYear(fromDate.getUTCFullYear() - amount);
+      fromDate.setUTCDate(fromDate.getUTCDate() + 1);
+    }
+    return {
+      status: "resolved",
+      from: fromDate.toISOString().slice(0, 10),
+      to: toDate.toISOString().slice(0, 10),
+      label: input.trim()
+    };
+  }
+
+  const yearOnly = raw.match(/^(\d{4})$/);
+  if (yearOnly) {
+    return {
+      status: "resolved",
+      from: `${yearOnly[1]}-01-01`,
+      to: `${yearOnly[1]}-12-31`,
+      label: yearOnly[1]
+    };
+  }
+
+  const isoMonth = raw.match(/^(\d{4})-(\d{2})$/);
+  if (isoMonth) {
+    return monthRange(Number(isoMonth[1]), Number(isoMonth[2]), false, `${isoMonth[1]}-${isoMonth[2]}`);
+  }
+
+  const dottedMonth = raw.match(/^(\d{2})\.(\d{4})$/);
+  if (dottedMonth) {
+    return monthRange(Number(dottedMonth[2]), Number(dottedMonth[1]), true, `${dottedMonth[1]}.${dottedMonth[2]}`);
+  }
+
+  const isoDate = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoDate) {
+    const date = `${isoDate[1]}-${isoDate[2]}-${isoDate[3]}`;
+    return { status: "resolved", from: date, to: date, label: date };
+  }
+
+  const dottedFull = raw.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+  if (dottedFull) {
+    const date = toIsoDate(Number(dottedFull[3]), Number(dottedFull[2]), Number(dottedFull[1]));
+    return date ? { status: "resolved", from: date, to: date, label: normalizeDateLabel(date) } : { status: "unparsed" };
+  }
+
+  const dottedShort = raw.match(/^(\d{1,2})\.(\d{1,2})$/);
+  if (dottedShort) {
+    const currentYear = Number(todayIso.slice(0, 4));
+    const date = toIsoDate(currentYear, Number(dottedShort[2]), Number(dottedShort[1]));
+    return date ? { status: "ambiguous", from: date, to: date, label: normalizeDateLabel(date) } : { status: "unparsed" };
+  }
+
+  const monthName = parseMonthNamePeriod(raw, todayIso);
+  if (monthName) {
+    return monthName;
+  }
+
+  const range = parseRangePeriod(raw, todayIso);
+  if (range) {
+    return range;
+  }
+
+  return { status: "unparsed" };
+}
+
+function parseRangePeriod(raw: string, todayIso: string): ParsedCustomPeriod | null {
+  let parts: string[] | null = null;
+  if (raw.includes(" по ")) {
+    parts = raw.split(/\s+по\s+/);
+  } else if (raw.includes(" — ")) {
+    parts = raw.split(/\s+—\s+/);
+  } else if (raw.includes(" - ")) {
+    parts = raw.split(/\s+-\s+/);
+  }
+  if (!parts || parts.length !== 2) {
+    return null;
+  }
+  const left = parseCustomPeriodInput(parts[0], todayIso);
+  const right = parseCustomPeriodInput(parts[1], todayIso);
+  if (left.status === "unparsed" || right.status === "unparsed" || !left.from || !right.to) {
+    return null;
+  }
+  const status = left.status === "ambiguous" || right.status === "ambiguous" ? "ambiguous" : "resolved";
+  return {
+    status,
+    from: left.from,
+    to: right.to,
+    label: `${left.label} — ${right.label}`
+  };
+}
+
+function parseMonthNamePeriod(raw: string, todayIso: string): ParsedCustomPeriod | null {
+  const monthNames: Record<string, number> = {
+    январь: 1,
+    января: 1,
+    февраль: 2,
+    февраля: 2,
+    март: 3,
+    марта: 3,
+    апрель: 4,
+    апреля: 4,
+    май: 5,
+    мая: 5,
+    июнь: 6,
+    июня: 6,
+    июль: 7,
+    июля: 7,
+    август: 8,
+    августа: 8,
+    сентябрь: 9,
+    сентября: 9,
+    октябрь: 10,
+    октября: 10,
+    ноябрь: 11,
+    ноября: 11,
+    декабрь: 12,
+    декабря: 12
+  };
+
+  const parts = raw.split(/\s+/);
+  if (!parts.length) {
+    return null;
+  }
+  const month = monthNames[parts[0]];
+  if (!month) {
+    return null;
+  }
+  const year = parts[1] ? Number(parts[1]) : Number(todayIso.slice(0, 4));
+  if (!Number.isFinite(year)) {
+    return null;
+  }
+  return monthRange(year, month, parts.length === 1, parts.join(" "));
+}
+
+function monthRange(year: number, month: number, ambiguous: boolean, label: string): ParsedCustomPeriod {
+  const start = toIsoDate(year, month, 1);
+  const endDate = new Date(Date.UTC(year, month, 0));
+  const end = endDate.toISOString().slice(0, 10);
+  if (!start) {
+    return { status: "unparsed" };
+  }
+  return {
+    status: ambiguous ? "ambiguous" : "resolved",
+    from: start,
+    to: end,
+    label
+  };
+}
+
+function toIsoDate(year: number, month: number, day: number): string | null {
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
+    return null;
+  }
+  return date.toISOString().slice(0, 10);
+}
+
+function normalizeDateLabel(value: string): string {
+  return `${value.slice(8, 10)}.${value.slice(5, 7)}.${value.slice(0, 4)}`;
+}

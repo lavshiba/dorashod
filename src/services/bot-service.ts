@@ -4,7 +4,7 @@ import type { TelegramApi } from "@/telegram/api";
 import { BUTTONS, BOT_TITLE, ONBOARDING_TEXTS, onboardingProgress } from "@/ui/text";
 import { kb } from "@/ui/keyboard";
 import { decodeCallback } from "@/utils/callback";
-import { parseQuickPeriod } from "@/utils/dates";
+import { parseCustomPeriodInput, parseQuickPeriod } from "@/utils/dates";
 import { parseEntryAttempt } from "@/utils/entry-parser";
 import { formatAmountFromMinor } from "@/utils/money";
 import { escapeHtml, normalizeName } from "@/utils/normalize";
@@ -149,29 +149,31 @@ export class BotService {
     }
 
     if (session.mode === "reports" && session.context.awaiting === "custom-period") {
-      const normalized = text.trim().toLowerCase();
-      if (normalized === "сегодня") {
-        await this.showReport(user, "today");
+      const parsed = parseCustomPeriodInput(text, new Intl.DateTimeFormat("sv-SE", { timeZone: user.timezoneName }).format(new Date()));
+      if (parsed.status === "resolved") {
+        await this.showReportRange(user, parsed.label, parsed.from, parsed.to, "custom");
         return;
       }
-      if (normalized === "вчера") {
-        await this.showReport(user, "yesterday");
-        return;
-      }
-      if (normalized === "неделя") {
-        await this.showReport(user, "week");
-        return;
-      }
-      if (normalized === "месяц") {
-        await this.showReport(user, "month");
-        return;
-      }
-      if (normalized === "год") {
-        await this.showReport(user, "year");
-        return;
-      }
-      if (normalized === "всё время") {
-        await this.showReport(user, "all");
+      if (parsed.status === "ambiguous") {
+        await this.repo.saveSession(user.id, {
+          ...session,
+          mode: "reports",
+          context: {
+            ...session.context,
+            awaiting: "custom-period-confirm",
+            customPeriodFrom: parsed.from,
+            customPeriodTo: parsed.to,
+            customPeriodLabel: parsed.label
+          }
+        });
+        await this.telegram.sendMessage({
+          chat_id: user.chatId,
+          text: `период понят не до конца\n\nкак бот понял:\n${parsed.label}\n\nподтверди или напиши период ещё раз`,
+          reply_markup: kb([
+            [{ text: BUTTONS.save, action: "reports:custom-confirm" }],
+            [{ text: BUTTONS.back, action: "reports:open" }, { text: BUTTONS.main, action: "nav:home" }]
+          ])
+        });
         return;
       }
       await this.telegram.sendMessage({
@@ -633,6 +635,24 @@ export class BotService {
           text: "Напиши период сообщением.",
           reply_markup: kb([[{ text: BUTTONS.cancel, action: "reports:open" }, { text: BUTTONS.main, action: "nav:home" }]])
         });
+        return;
+      case "reports:custom-confirm":
+        await this.showReportRange(
+          user,
+          String(session.context.customPeriodLabel ?? "свой период"),
+          (session.context.customPeriodFrom as string | null | undefined) ?? null,
+          (session.context.customPeriodTo as string | null | undefined) ?? null,
+          "custom"
+        );
+        return;
+      case "reports:current":
+        await this.showReportRange(
+          user,
+          String(session.context.reportTitle ?? "свой период"),
+          (session.context.reportFrom as string | null | undefined) ?? null,
+          (session.context.reportTo as string | null | undefined) ?? null,
+          String(session.context.reportPeriod ?? "custom")
+        );
         return;
       case "categories:open":
         await this.showCategoryRoot(user);
@@ -1505,12 +1525,16 @@ export class BotService {
   private async showReport(user: UserRecord, period: string): Promise<void> {
     const range = parseQuickPeriod(period as "today" | "yesterday" | "week" | "month" | "year" | "all");
     const title = periodToLabel(period);
+    await this.showReportRange(user, title, range.from, range.to, period);
+  }
+
+  private async showReportRange(user: UserRecord, title: string, from: string | null, to: string | null, periodKey: string): Promise<void> {
     await this.repo.saveSession(user.id, {
       mode: "reports",
       stack: ["home"],
-      context: { reportPeriod: period, reportTitle: title, reportFrom: range.from, reportTo: range.to }
+      context: { reportPeriod: periodKey, reportTitle: title, reportFrom: from, reportTo: to }
     });
-    const summary = await this.repo.getSummaryByDateRange(user.id, range.from, range.to);
+    const summary = await this.repo.getSummaryByDateRange(user.id, from, to);
     await this.telegram.sendMessage({
       chat_id: user.chatId,
       text: `доход\n${formatAmountByType(summary.income, "income", user.currencyLabel)}\n\nрасход\n${formatAmountByType(summary.expense, "expense", user.currencyLabel)}\n\nбаланс\n${formatAmountFromMinor(summary.income - summary.expense, user.currencyLabel)}\n\nзаписей\n${summary.entries}`,
@@ -1562,7 +1586,7 @@ export class BotService {
       text: `${type === "expense" ? "по расходам" : "по доходам"}\n\n${lines}`,
       reply_markup: kb([
         numberButtons,
-        [{ text: BUTTONS.back, action: "reports:quick", payload: { period: String(session.context.reportPeriod ?? "month") } }, { text: BUTTONS.main, action: "nav:home" }]
+        [{ text: BUTTONS.back, action: "reports:current" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
   }
@@ -2522,7 +2546,7 @@ export class BotService {
     if (typeof input.categoryId === "number" && input.type) {
       return "report:category";
     }
-    return "reports:quick";
+    return "reports:current";
   }
 
   private reportEntriesBackPayload(
@@ -2535,7 +2559,7 @@ export class BotService {
     if (typeof input.categoryId === "number" && input.type) {
       return { id: input.categoryId, type: input.type, page: 0 };
     }
-    return { period: String(session.context.reportPeriod ?? "month") };
+    return {};
   }
 
   private describeDraft(draft: DraftPayload, currencyLabel: string): string {
