@@ -3059,7 +3059,7 @@ export class BotService {
           `за этот период записей нет`,
         reply_markup: kb([
           [{ text: BUTTONS.anotherPeriod, action: "reports:open" }],
-          [{ text: BUTTONS.back, action: "reports:open" }, { text: BUTTONS.main, action: "nav:home" }]
+          [{ text: BUTTONS.main, action: "nav:home" }]
         ])
       });
       return;
@@ -3124,6 +3124,7 @@ export class BotService {
       text:
         `<b>${BOT_TITLE}</b>\n\n` +
         `${type === "expense" ? "расходы" : "доходы"} за ${String(session.context.reportTitle ?? "")}\n\n` +
+        `всего: ${formatAmountByType(breakdown.items.reduce((sum, item) => sum + item.amountMinor, 0), type, user.currencyLabel)}\n\n` +
         `${lines}`,
       reply_markup: kb([
         ...chunkButtons(numberButtons, 4),
@@ -3157,8 +3158,8 @@ export class BotService {
     const visibleSubcategories = card.subcategories.slice(subpage * 6, subpage * 6 + 6);
     const subcategoryLines = visibleSubcategories.length
       ? visibleSubcategories
-          .map((item, index) => `${index + 1}. ${item.subcategoryName} · ${formatAmountByType(item.amountMinor, type, user.currencyLabel)} · записей: ${item.entries}`)
-          .join("\n")
+          .map((item, index) => `${index + 1}. ${item.subcategoryName} — ${formatAmountByType(item.amountMinor, type, user.currencyLabel)}\nзаписей: ${item.entries}`)
+          .join("\n\n")
       : "подкатегорий пока нет";
     const subcategoryButtons = visibleSubcategories.length
       ? [
@@ -4755,13 +4756,15 @@ export class BotService {
         : `файл загружен\n\nнашёл:\n${previewEntries.length} записей\n\nиз файла будут взяты:\nсумма, тип, категория,\nподкатегория, описание,\nдата и время\n\nтекущие данные пока не меняются\n\nчто сделать?`;
     const text = `${notice ? `${notice}\n\n` : ""}${topBlock}`;
 
-    const rows: Array<Array<{ text: string; action: string; payload?: Record<string, string | number | undefined> }>> = [
-      [{ text: BUTTONS.merge, action: "data:import-entries-merge", payload: { importId } }],
-      [{ text: BUTTONS.addAll, action: "data:import-entries-add-all", payload: { importId } }]
-    ];
+    const rows: Array<Array<{ text: string; action: string; payload?: Record<string, string | number | undefined> }>> = previewErrors.length > 0
+      ? [[{ text: `${BUTTONS.addNoun} ${previewEntries.length}`, action: "data:import-entries-add-all", payload: { importId } }]]
+      : [
+          [{ text: BUTTONS.merge, action: "data:import-entries-merge", payload: { importId } }],
+          [{ text: BUTTONS.addAll, action: "data:import-entries-add-all", payload: { importId } }]
+        ];
 
     if (previewErrors.length > 0) {
-      rows.push([{ text: `исправить ${previewErrors.length}`, action: "data:import-fix-open", payload: { importId } }]);
+      rows.push([{ text: `${BUTTONS.fix} ${previewErrors.length}`, action: "data:import-fix-open", payload: { importId } }]);
     }
 
     rows.push([{ text: BUTTONS.back, action: "data:other-apps" }, { text: BUTTONS.main, action: "nav:home" }]);
