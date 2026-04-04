@@ -2823,7 +2823,7 @@ export class BotService {
     });
 
     await this.repo.deleteDraft(user.id);
-    await this.repo.saveSession(user.id, { mode: "idle", stack: [], context: {} });
+    await this.clearSessionKeepingScreen(user.id);
     const source = String(session.context.source ?? "operations");
     await this.showEntryCard(
       user,
@@ -2859,7 +2859,7 @@ export class BotService {
     if (dropDraft) {
       await this.repo.deleteDraft(user.id);
     }
-    await this.repo.saveSession(user.id, { mode: "idle", stack: [], context: {} });
+    await this.clearSessionKeepingScreen(user.id);
 
     if (target === "home") {
       await this.showHome(user);
@@ -3090,7 +3090,7 @@ export class BotService {
   }
 
   private async showReportRange(user: UserRecord, title: string, from: string | null, to: string | null, periodKey: string): Promise<void> {
-    await this.repo.saveSession(user.id, {
+    await this.saveSessionKeepingScreen(user.id, {
       mode: "reports",
       stack: ["home"],
       context: { reportPeriod: periodKey, reportTitle: title, reportFrom: from, reportTo: to }
@@ -3715,7 +3715,7 @@ export class BotService {
 
   private async startCategoryRename(user: UserRecord, categoryId: number, type: EntryType, page: number, subpage = 0, source = "list"): Promise<void> {
     const category = await this.repo.getCategory(user.id, categoryId);
-    await this.repo.saveSession(user.id, {
+    await this.saveSessionKeepingScreen(user.id, {
       mode: "categories",
       stack: ["categories"],
       context: { awaiting: "rename-category", categoryId, type, page, subpage, source }
@@ -3734,7 +3734,7 @@ export class BotService {
 
   private async startSubcategoryRename(user: UserRecord, subcategoryId: number, categoryId: number, type: EntryType, page: number, subpage = 0, source = "list"): Promise<void> {
     const subcategory = await this.repo.getSubcategories(user.id, categoryId, "usage").then((items) => items.find((item) => item.id === subcategoryId) ?? null);
-    await this.repo.saveSession(user.id, {
+    await this.saveSessionKeepingScreen(user.id, {
       mode: "categories",
       stack: ["categories"],
       context: { awaiting: "rename-subcategory", subcategoryId, categoryId, type, page, subpage, source }
@@ -5295,7 +5295,7 @@ export class BotService {
             [{ text: BUTTONS.main, action: "nav:home" }]
           ];
 
-    await this.repo.saveSession(user.id, {
+    await this.saveSessionKeepingScreen(user.id, {
       mode: "import",
       stack: ["data"],
       context: { importId, fixIndex: index }
