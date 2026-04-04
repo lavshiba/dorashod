@@ -3964,7 +3964,7 @@ export class BotService {
     });
 
     const selectedIds = new Set<number>(Array.isArray(session.context.selectedIds) ? (session.context.selectedIds as number[]) : []);
-    const lines = data.items.map((item, index) => `${index + 1}. ${formatEntryLine(item, user.currencyLabel)}`).join("\n");
+    const lines = data.items.map((item, index) => `${index + 1}. ${formatEntryListBlock(item, user.currencyLabel)}`).join("\n\n");
     const numberButtons = data.items.map((item, index) => ({
       text: selectedIds.has(item.id) ? `✓${index + 1}` : String(index + 1),
       action: selectMode ? "select:toggle" : "operations:view",
@@ -3980,7 +3980,7 @@ export class BotService {
         `${notice ? `${notice}\n\n` : ""}` +
         `${lines}`,
       reply_markup: kb([
-        numberButtons,
+        ...chunkButtons(numberButtons, 3),
         [
           {
             text: BUTTONS.multipleSelect,
