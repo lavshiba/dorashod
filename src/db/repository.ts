@@ -1134,7 +1134,7 @@ export class Repository {
         `
         SELECT *
         FROM subcategories
-        WHERE user_id = ? AND category_id = ?
+        WHERE user_id = ? AND category_id = ? AND hidden_at IS NULL
         ORDER BY ${orderBy}
       `
       )
