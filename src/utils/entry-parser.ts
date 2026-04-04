@@ -20,6 +20,7 @@ export function parseEntryAttempt(text: string): ParsedEntryAttempt {
   const joined = lines.join(" ").trim();
   const tokens = joined.split(/\s+/).filter(Boolean);
   const first = tokens[0] ?? "";
+  const looksLikeAmountToken = /^[+-]?\d+(?:[.,]\d+)?$/.test(first);
 
   let type: EntryType | undefined;
   if (first.startsWith("-")) {
@@ -29,7 +30,7 @@ export function parseEntryAttempt(text: string): ParsedEntryAttempt {
     type = "income";
   }
 
-  const amountMinor = parseAmountToMinor(first);
+  const amountMinor = looksLikeAmountToken ? parseAmountToMinor(first) : undefined;
   const payloadTokens = amountMinor ? tokens.slice(1) : tokens;
   const category = payloadTokens[0];
   const subcategory = payloadTokens.length > 1 ? payloadTokens[1] : undefined;

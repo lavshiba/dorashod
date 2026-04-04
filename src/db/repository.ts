@@ -586,7 +586,24 @@ export class Repository {
       .bind(userId, `${monthPrefix}%`)
       .first<{ income: number; expense: number }>();
 
-    const lastEntry = await this.getEntryList(userId, 0, 1).then((items) => items[0] ?? null);
+    const lastEntryRow = await this.db
+      .prepare(
+        `
+        SELECT
+          e.*,
+          c.name as category_name,
+          s.name as subcategory_name
+        FROM entries e
+        JOIN categories c ON c.id = e.category_id
+        LEFT JOIN subcategories s ON s.id = e.subcategory_id
+        WHERE e.user_id = ?
+        ORDER BY e.created_at DESC, e.id DESC
+        LIMIT 1
+      `
+      )
+      .bind(userId)
+      .first<Record<string, D1Value>>();
+    const lastEntry = lastEntryRow ? mapEntry(lastEntryRow) : null;
 
     return {
       totalEntries: count?.count ?? 0,

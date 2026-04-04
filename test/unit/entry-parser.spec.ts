@@ -24,4 +24,11 @@ describe("parseEntryAttempt", () => {
     expect(parsed.isBatch).toBe(true);
     expect(parsed.lines).toHaveLength(2);
   });
+
+  it("does not treat placeholder amount as valid amount", () => {
+    const parsed = parseEntryAttempt("-ххх продукты");
+    expect(parsed.type).toBe("expense");
+    expect(parsed.amountMinor).toBeUndefined();
+    expect(parsed.missing).toContain("amount");
+  });
 });

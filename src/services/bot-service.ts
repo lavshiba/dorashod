@@ -1687,6 +1687,14 @@ export class BotService {
         await this.showHome(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId));
         return;
       case "data:export-full": {
+        await this.sendMessage({
+          chat_id: user.chatId,
+          text:
+            `<b>${BOT_TITLE}</b>\n\n` +
+            "готовлю файл\n\n" +
+            "это может занять немного времени",
+          reply_markup: kb([[{ text: BUTTONS.main, action: "nav:home" }]])
+        });
         const snapshot = await this.repo.exportFullUserSnapshot(user.id);
         const messageId = await this.telegram.sendDocument({
           chat_id: user.chatId,
@@ -1713,6 +1721,14 @@ export class BotService {
         return;
       }
       case "data:export-entries": {
+        await this.sendMessage({
+          chat_id: user.chatId,
+          text:
+            `<b>${BOT_TITLE}</b>\n\n` +
+            "готовлю файл\n\n" +
+            "это может занять немного времени",
+          reply_markup: kb([[{ text: BUTTONS.main, action: "nav:home" }]])
+        });
         const snapshot = await this.repo.exportEntriesSnapshot(user.id);
         const messageId = await this.telegram.sendDocument({
           chat_id: user.chatId,
