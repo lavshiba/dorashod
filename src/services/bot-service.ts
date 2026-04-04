@@ -359,6 +359,11 @@ export class BotService {
       await this.telegram.answerCallbackQuery(callbackQuery.id);
     }
 
+    if (session.mode === "edit" && action === "nav:home") {
+      await this.handleEditLeave(user, "home");
+      return;
+    }
+
     switch (action) {
       case "onboarding:show":
         await this.showOnboarding(user, Number(params.step ?? "0"));
@@ -492,7 +497,8 @@ export class BotService {
           user,
           Number(params.id),
           Number(params.page ?? "0"),
-          params.source === "report" ? "report" : params.source === "search" ? "search" : "operations"
+          params.source === "report" ? "report" : params.source === "search" ? "search" : params.source === "category" ? "category" : "operations",
+          typeof params.query === "string" ? String(params.query) : undefined
         );
         return;
       case "entry:delete":
@@ -576,6 +582,12 @@ export class BotService {
         return;
       case "edit:back":
         await this.showEditScreen(user);
+        return;
+      case "edit:leave":
+        await this.handleEditLeave(user, String(params.target ?? "source"));
+        return;
+      case "edit:discard":
+        await this.discardEditChanges(user, String(params.target ?? "source"));
         return;
       case "search:use-text":
         await this.showSearchResults(user, String(session.context.pendingText ?? ""), 0);
@@ -1281,7 +1293,8 @@ export class BotService {
     user: UserRecord,
     entryId: number,
     page: number,
-    source: "operations" | "search" | "report" | "category"
+    source: "operations" | "search" | "report" | "category",
+    query?: string
   ): Promise<void> {
     const entry = await this.repo.getEntryById(user.id, entryId);
     if (!entry) {
@@ -1309,7 +1322,23 @@ export class BotService {
     await this.repo.saveSession(user.id, {
       mode: "edit",
       stack: [source],
-      context: { entryId, page, source }
+      context: {
+        entryId,
+        page,
+        source,
+        query,
+        originalDraft: JSON.stringify({
+          type: entry.type,
+          amountMinor: entry.amountMinor,
+          categoryName: entry.categoryName,
+          subcategoryName: entry.subcategoryName ?? undefined,
+          description: entry.description ?? undefined,
+          entryDate: entry.entryDate,
+          entryTime: entry.entryTime,
+          isTimeAuto: entry.isTimeAuto,
+          isDateMissing: entry.isDateMissing
+        })
+      }
     });
     await this.showEditScreen(user);
   }
@@ -1334,7 +1363,7 @@ export class BotService {
         [{ text: "подкатегория", action: "edit:field", payload: { field: "subcategory" } }],
         [{ text: "описание", action: "edit:field", payload: { field: "description" } }],
         [{ text: BUTTONS.save, action: "edit:save" }],
-        [{ text: BUTTONS.back, action: session.context.source === "search" ? "search:view" : "operations:view", payload: { id: session.context.entryId as number, page: session.context.page as number } }, { text: BUTTONS.main, action: "nav:home" }]
+        [{ text: BUTTONS.back, action: "edit:leave", payload: { target: "source" } }, { text: BUTTONS.main, action: "edit:leave", payload: { target: "home" } }]
       ])
     });
   }
@@ -1389,6 +1418,75 @@ export class BotService {
       String(session.context.source) === "search" ? "search" : "operations",
       Number(session.context.page ?? 0)
     );
+  }
+
+  private async handleEditLeave(user: UserRecord, target: string): Promise<void> {
+    const session = await this.repo.getSession(user.id);
+    const dirty = await this.isEditDirty(user);
+    if (!dirty) {
+      await this.discardEditChanges(user, target, false);
+      return;
+    }
+
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: "Есть несохранённые изменения.\n\nУйти без сохранения?",
+      reply_markup: kb([
+        [{ text: BUTTONS.save, action: "edit:save" }],
+        [{ text: BUTTONS.back, action: "edit:discard", payload: { target } }],
+        [{ text: BUTTONS.cancel, action: "edit:back" }]
+      ])
+    });
+  }
+
+  private async discardEditChanges(user: UserRecord, target: string, dropDraft = true): Promise<void> {
+    const session = await this.repo.getSession(user.id);
+    if (dropDraft) {
+      await this.repo.deleteDraft(user.id);
+    }
+    await this.repo.saveSession(user.id, { mode: "idle", stack: [], context: {} });
+
+    if (target === "home") {
+      await this.showHome(user);
+      return;
+    }
+
+    const source = String(session.context.source ?? "operations");
+    const entryId = Number(session.context.entryId);
+    const page = Number(session.context.page ?? 0);
+    if (source === "search") {
+      await this.showEntryCard(user, entryId, "search", page, String(session.context.query ?? ""));
+      return;
+    }
+    if (source === "report") {
+      await this.showEntryCard(user, entryId, "report", page);
+      return;
+    }
+    if (source === "category") {
+      await this.showEntryCard(user, entryId, "category", page);
+      return;
+    }
+    await this.showEntryCard(user, entryId, "operations", page);
+  }
+
+  private async isEditDirty(user: UserRecord): Promise<boolean> {
+    const session = await this.repo.getSession(user.id);
+    const draft = await this.repo.getDraft(user.id);
+    if (!draft) {
+      return false;
+    }
+    const current = JSON.stringify({
+      type: draft.payload.type,
+      amountMinor: draft.payload.amountMinor,
+      categoryName: draft.payload.categoryName,
+      subcategoryName: draft.payload.subcategoryName,
+      description: draft.payload.description,
+      entryDate: draft.payload.entryDate,
+      entryTime: draft.payload.entryTime,
+      isTimeAuto: draft.payload.isTimeAuto,
+      isDateMissing: draft.payload.isDateMissing
+    });
+    return current !== String(session.context.originalDraft ?? "");
   }
 
   private async showSearchEntry(user: UserRecord): Promise<void> {
