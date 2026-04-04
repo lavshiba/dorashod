@@ -104,6 +104,10 @@ export const BUTTONS = {
   yesClearAll: "да, очистить всё",
   exit: "выйти",
   yesRemoveSubcategory: "да, снять"
+  ,
+  yesHide: "да, скрыть",
+  thisMonth: "этот месяц",
+  thisYear: "этот год"
 } as const;
 
 export const ONBOARDING_TEXTS = [

@@ -714,7 +714,7 @@ export class BotService {
         await this.repo.saveSession(user.id, { mode: "search", stack: ["home"], context: { awaiting: "query" } });
         await this.sendMessage({
           chat_id: user.chatId,
-          text: "Напиши запрос сообщением.",
+          text: "поиск записей\n\nпришли запрос сообщением",
           reply_markup: kb([[{ text: BUTTONS.cancel, action: "search:open" }, { text: BUTTONS.main, action: "nav:home" }]])
         });
         return;
@@ -818,8 +818,23 @@ export class BotService {
         await this.repo.saveSession(user.id, { mode: "reports", stack: ["home"], context: { awaiting: "custom-period" } });
         await this.sendMessage({
           chat_id: user.chatId,
-          text: "Напиши период сообщением.",
-          reply_markup: kb([[{ text: BUTTONS.cancel, action: "reports:open" }, { text: BUTTONS.main, action: "nav:home" }]])
+          text:
+            "свой период\n\n" +
+            "пришли период сообщением\n\n" +
+            "например:\n" +
+            "03.04\n" +
+            "03.04.2024\n" +
+            "апрель 2024\n" +
+            "2024\n" +
+            "03.04–10.04\n" +
+            "03.04.2024–15.04.2024",
+          reply_markup: kb([
+            [{ text: BUTTONS.today, action: "reports:quick", payload: { period: "today" } }],
+            [{ text: BUTTONS.yesterday, action: "reports:quick", payload: { period: "yesterday" } }],
+            [{ text: BUTTONS.thisMonth, action: "reports:quick", payload: { period: "month" } }],
+            [{ text: BUTTONS.thisYear, action: "reports:quick", payload: { period: "year" } }],
+            [{ text: BUTTONS.back, action: "reports:open" }, { text: BUTTONS.main, action: "nav:home" }]
+          ])
         });
         return;
       case "reports:custom-confirm":
@@ -850,8 +865,11 @@ export class BotService {
         await this.repo.saveSession(user.id, { mode: "categories", stack: ["categories"], context: { awaiting: "new-category", type: params.type } });
         await this.sendMessage({
           chat_id: user.chatId,
-          text: "Напиши название категории.",
-          reply_markup: kb([[{ text: BUTTONS.cancel, action: "categories:list", payload: { type: params.type } }, { text: BUTTONS.main, action: "nav:home" }]])
+          text:
+            `новая категория\n` +
+            `тип: ${String(params.type) === "expense" ? "расход" : "доход"}\n\n` +
+            "пришли название категории сообщением",
+          reply_markup: kb([[{ text: BUTTONS.back, action: "categories:list", payload: { type: params.type } }, { text: BUTTONS.main, action: "nav:home" }]])
         });
         return;
       case "category:view":
@@ -876,8 +894,17 @@ export class BotService {
         );
         return;
       case "category:hide":
-        await this.repo.hideCategory(user.id, Number(params.id));
-        await this.showCategoryList(user, String(params.type) as EntryType, Number(params.page ?? "0"), "категория скрыта");
+        await this.sendMessage({
+          chat_id: user.chatId,
+          text:
+            "скрыть категорию?\n\n" +
+            "она исчезнет из обычного выбора,\n" +
+            "но старые записи останутся",
+          reply_markup: kb([
+            [{ text: BUTTONS.yesHide, action: "category:hide-confirm", payload: params }],
+            [{ text: BUTTONS.back, action: "category:view", payload: { id: params.id, type: params.type, page: params.page, subpage: params.subpage, source: params.source } }, { text: BUTTONS.main, action: "nav:home" }]
+          ])
+        });
         return;
       case "category:restore":
         await this.repo.restoreCategory(user.id, Number(params.id));
@@ -911,11 +938,31 @@ export class BotService {
         });
         await this.sendMessage({
           chat_id: user.chatId,
-          text: "Напиши название подкатегории.",
-          reply_markup: kb([[{ text: BUTTONS.cancel, action: "category:view", payload: { id: params.categoryId, type: params.type, page: params.page, subpage: params.subpage, source: params.source } }, { text: BUTTONS.main, action: "nav:home" }]])
+          text:
+            "новая подкатегория\n" +
+            `категория: ${await this.describeCategoryName(user.id, Number(params.categoryId))}\n\n` +
+            "пришли название подкатегории сообщением",
+          reply_markup: kb([[{ text: BUTTONS.back, action: "category:view", payload: { id: params.categoryId, type: params.type, page: params.page, subpage: params.subpage, source: params.source } }, { text: BUTTONS.main, action: "nav:home" }]])
         });
         return;
+      case "category:hide-confirm":
+        await this.repo.hideCategory(user.id, Number(params.id));
+        await this.showCategoryList(user, String(params.type) as EntryType, Number(params.page ?? "0"), "категория скрыта");
+        return;
       case "subcategory:hide":
+        await this.sendMessage({
+          chat_id: user.chatId,
+          text:
+            "скрыть подкатегорию?\n\n" +
+            "она исчезнет из обычного выбора,\n" +
+            "но старые записи останутся",
+          reply_markup: kb([
+            [{ text: BUTTONS.yesHide, action: "subcategory:hide-confirm", payload: params }],
+            [{ text: BUTTONS.back, action: "subcategory:view", payload: { id: params.id, categoryId: params.categoryId, type: params.type, page: params.page, subpage: params.subpage, source: params.source } }, { text: BUTTONS.main, action: "nav:home" }]
+          ])
+        });
+        return;
+      case "subcategory:hide-confirm":
         await this.repo.hideSubcategory(user.id, Number(params.id));
         if (params.source === "hidden") {
           await this.showHiddenSubcategoryList(user, Number(params.categoryId), String(params.type) as EntryType, Number(params.page ?? "0"), Number(params.subpage ?? "0"), "подкатегория скрыта");
@@ -3076,6 +3123,7 @@ export class BotService {
   }
 
   private async startCategoryRename(user: UserRecord, categoryId: number, type: EntryType, page: number, subpage = 0, source = "list"): Promise<void> {
+    const category = await this.repo.getCategory(user.id, categoryId);
     await this.repo.saveSession(user.id, {
       mode: "categories",
       stack: ["categories"],
@@ -3083,12 +3131,17 @@ export class BotService {
     });
     await this.sendMessage({
       chat_id: user.chatId,
-      text: "Напиши новое название категории.",
-      reply_markup: kb([[{ text: BUTTONS.cancel, action: "category:view", payload: { id: categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]])
+      text:
+        "изменить категорию\n\n" +
+        "сейчас:\n" +
+        `${category?.name ?? ""}\n\n` +
+        "пришли новое название сообщением",
+      reply_markup: kb([[{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]])
     });
   }
 
   private async startSubcategoryRename(user: UserRecord, subcategoryId: number, categoryId: number, type: EntryType, page: number, subpage = 0, source = "list"): Promise<void> {
+    const subcategory = await this.repo.getSubcategories(user.id, categoryId, "usage").then((items) => items.find((item) => item.id === subcategoryId) ?? null);
     await this.repo.saveSession(user.id, {
       mode: "categories",
       stack: ["categories"],
@@ -3096,8 +3149,12 @@ export class BotService {
     });
     await this.sendMessage({
       chat_id: user.chatId,
-      text: "Напиши новое название подкатегории.",
-      reply_markup: kb([[{ text: BUTTONS.cancel, action: "subcategory:view", payload: { id: subcategoryId, categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]])
+      text:
+        "изменить подкатегорию\n\n" +
+        "сейчас:\n" +
+        `${subcategory?.name ?? ""}\n\n` +
+        "пришли новое название сообщением",
+      reply_markup: kb([[{ text: BUTTONS.back, action: "subcategory:view", payload: { id: subcategoryId, categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]])
     });
   }
 
@@ -3106,7 +3163,10 @@ export class BotService {
     if (existing?.hiddenAt) {
       await this.sendMessage({
         chat_id: user.chatId,
-        text: "Такая категория уже есть в скрытых.\n\nМожно вернуть её.",
+        text:
+          "такая категория уже есть,\n" +
+          "но сейчас она скрыта\n\n" +
+          "что сделать?",
         reply_markup: kb([
           [{ text: BUTTONS.restore, action: "category:restore", payload: { id: existing.id, type, page: 0 } }],
           [{ text: BUTTONS.back, action: "categories:list", payload: { type, page: 0 } }, { text: BUTTONS.main, action: "nav:home" }]
@@ -3123,7 +3183,10 @@ export class BotService {
     if (existing?.hiddenAt) {
       await this.sendMessage({
         chat_id: user.chatId,
-        text: "Такая подкатегория уже есть в скрытых.\n\nМожно вернуть её.",
+        text:
+          "такая подкатегория уже есть,\n" +
+          "но сейчас она скрыта\n\n" +
+          "что сделать?",
         reply_markup: kb([
           [{ text: BUTTONS.restore, action: "subcategory:restore", payload: { id: existing.id, categoryId, type, page, subpage, source } }],
           [{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]
@@ -3196,6 +3259,11 @@ export class BotService {
       text: "Напиши категорию.\n\nЕсли в новой категории нет нужных подкатегорий, подкатегории у записей очистятся.",
       reply_markup: kb([[{ text: BUTTONS.cancel, action: "category:view", payload: { id: categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]])
     });
+  }
+
+  private async describeCategoryName(userId: number, categoryId: number): Promise<string> {
+    const category = await this.repo.getCategory(userId, categoryId);
+    return category?.name ?? "";
   }
 
   private async handleCategoryTransferAll(user: UserRecord, categoryId: number, type: EntryType, page: number, text: string, subpage = 0, source = "list"): Promise<void> {
