@@ -125,6 +125,34 @@ export class BotService {
         return;
       }
 
+      if (session.mode === "data" && session.context.awaitingUploadType) {
+        const uploadType = String(session.context.awaitingUploadType);
+        if (uploadType === "full") {
+          await this.sendMessage({
+            chat_id: user.chatId,
+            text:
+              `<b>${BOT_TITLE}</b>\n\n` +
+              `загрузить из файла\n\n` +
+              `сейчас нужен именно файл,\n` +
+              `а не текст сообщением\n\n` +
+              `пришли файл ещё раз`,
+            reply_markup: kb([[{ text: BUTTONS.back, action: "data:this-bot" }, { text: BUTTONS.main, action: "nav:home" }]])
+          });
+          return;
+        }
+        await this.sendMessage({
+          chat_id: user.chatId,
+          text:
+            `<b>${BOT_TITLE}</b>\n\n` +
+            `загрузить из файла\n\n` +
+            `сейчас нужен именно файл,\n` +
+            `а не текст сообщением\n\n` +
+            `пришли файл ещё раз`,
+          reply_markup: kb([[{ text: BUTTONS.back, action: "data:other-apps" }, { text: BUTTONS.main, action: "nav:home" }]])
+        });
+        return;
+      }
+
       if (session.mode === "add") {
         await this.handleAddInput(user, session, text);
         return;
@@ -259,6 +287,7 @@ export class BotService {
         return;
       }
       await this.updateUserSetting(user.id, "timezone_name", timezone, "timezone_source", "city");
+      await this.dismissReplyKeyboard(user.chatId);
       await this.showTimeSettings(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), "время изменено");
       return;
       }
@@ -436,6 +465,7 @@ export class BotService {
       if (session.mode === "settings" && session.context.awaiting === "timezone") {
         const timezone = resolveTimezoneFromLocation(location.latitude, location.longitude);
         await this.updateUserSetting(user.id, "timezone_name", timezone, "timezone_source", "location");
+        await this.dismissReplyKeyboard(user.chatId);
         await this.showTimeSettings(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), "время изменено");
         return;
       }
@@ -498,18 +528,18 @@ export class BotService {
 
       const preview = parseEntriesImport(downloaded.content);
       const importId = await this.repo.createImport(user.id, "entries", "preview", {
-      filename: document.file_name ?? downloaded.filePath,
-      entries: preview.entries,
-      errors: preview.errors
-    });
-    await this.saveSessionKeepingScreen(user.id, {
-      mode: "data",
-      stack: ["data"],
-      context: {
-        importId,
-        awaitingUploadType: undefined
-      }
-    });
+        filename: document.file_name ?? downloaded.filePath,
+        entries: preview.entries,
+        errors: preview.errors
+      });
+      await this.saveSessionKeepingScreen(user.id, {
+        mode: "data",
+        stack: ["data"],
+        context: {
+          importId,
+          awaitingUploadType: undefined
+        }
+      });
 
       await this.showEntriesImportPreview(user, importId);
     } finally {
@@ -1499,6 +1529,14 @@ export class BotService {
           await this.showDataThisBot(user);
           return;
         }
+        await this.sendMessage({
+          chat_id: user.chatId,
+          text:
+            `<b>${BOT_TITLE}</b>\n\n` +
+            `загружаю данные\n\n` +
+            `это может занять немного времени`,
+          reply_markup: kb([[{ text: BUTTONS.main, action: "nav:home" }]])
+        });
         await this.repo.replaceUserDataFromSnapshot(user, pendingImport.previewJson);
         await this.repo.deleteImport(user.id, pendingImport.id);
         await this.showHome(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), "файл загружен");
@@ -1517,12 +1555,28 @@ export class BotService {
         await this.showEntriesImportMergeConfirm(user, Number(params.importId));
         return;
       case "data:import-entries-merge-apply":
+        await this.sendMessage({
+          chat_id: user.chatId,
+          text:
+            `<b>${BOT_TITLE}</b>\n\n` +
+            `добавляю записи\n\n` +
+            `это может занять немного времени`,
+          reply_markup: kb([[{ text: BUTTONS.main, action: "nav:home" }]])
+        });
         await this.applyEntriesImport(user, Number(params.importId), true);
         return;
       case "data:import-entries-add-all-confirm":
         await this.showEntriesImportAddAllConfirm(user, Number(params.importId));
         return;
       case "data:import-entries-add-all-apply":
+        await this.sendMessage({
+          chat_id: user.chatId,
+          text:
+            `<b>${BOT_TITLE}</b>\n\n` +
+            `добавляю записи\n\n` +
+            `это может занять немного времени`,
+          reply_markup: kb([[{ text: BUTTONS.main, action: "nav:home" }]])
+        });
         await this.applyEntriesImport(user, Number(params.importId), false);
         return;
       case "data:import-fix-open":
@@ -1819,6 +1873,17 @@ export class BotService {
     });
   }
 
+  private async dismissReplyKeyboard(chatId: string): Promise<void> {
+    const messageId = await this.telegram.sendMessage({
+      chat_id: chatId,
+      text: "\u2060",
+      reply_markup: {
+        remove_keyboard: true
+      }
+    });
+    await this.safeDeleteMessage(chatId, messageId);
+  }
+
   private async resetStartScreen(user: UserRecord, session: UiSession, commandMessageId?: number): Promise<void> {
     const persistedScreenMessageId = typeof session.context.screenMessageId === "number" ? session.context.screenMessageId : undefined;
 
@@ -2007,17 +2072,27 @@ export class BotService {
     const hasDraftProgress = Boolean(payload.amountMinor || payload.categoryName || payload.subcategoryName || payload.description);
 
     if (incomingAttempt.isBatch) {
+      let queued = 0;
+      if (hasDraftProgress) {
+        queued += await this.enqueueCurrentDraftForReview(user, "add-conflict-draft");
+      }
       for (const line of incomingAttempt.lines) {
         const item = parseEntryAttempt(line);
         await this.repo.enqueueIntake(user.id, "add-conflict-batch", line, item, item.missing);
+        queued += 1;
       }
-      await this.showHome(user, `новые записи: ${incomingAttempt.lines.length}`);
+      await this.showHome(user, `новые записи: ${queued}`);
       return;
     }
 
     if (incomingAttempt.missing.length === 0 && incomingAttempt.type && incomingAttempt.amountMinor && incomingAttempt.category) {
+      let queued = 0;
+      if (hasDraftProgress) {
+        queued += await this.enqueueCurrentDraftForReview(user, "add-conflict-draft");
+      }
       await this.repo.enqueueIntake(user.id, "add-conflict", text, incomingAttempt, incomingAttempt.missing);
-      await this.showHome(user, "новые записи: 1");
+      queued += 1;
+      await this.showHome(user, `новые записи: ${queued}`);
       return;
     }
 
@@ -2045,9 +2120,9 @@ export class BotService {
       payload.categoryName = text.trim();
       const category = await this.repo.ensureCategory(user.id, payload.type ?? "expense", payload.categoryName);
       payload.categoryId = category.id;
-      const subcategoryCount = user.subcategoriesEnabled ? await this.repo.getSubcategoryCount(user.id, category.id) : 0;
-      await this.repo.saveDraft(user.id, payload, subcategoryCount > 0 ? "subcategory" : "description");
-      if (subcategoryCount > 0) {
+      const shouldAskSubcategory = user.subcategoriesEnabled;
+      await this.repo.saveDraft(user.id, payload, shouldAskSubcategory ? "subcategory" : "description");
+      if (shouldAskSubcategory) {
         await this.promptAddSubcategory(user, category.id);
         return;
       }
@@ -2212,8 +2287,74 @@ export class BotService {
     await this.showAddDescriptionStep(user, draft.payload);
   }
 
+  private async enqueueCurrentDraftForReview(user: UserRecord, source: string): Promise<number> {
+    const draft = await this.repo.getDraft(user.id);
+    if (!draft) {
+      return 0;
+    }
+
+    const payload = draft.payload;
+    const hasProgress = Boolean(payload.amountMinor || payload.categoryName || payload.subcategoryName || payload.description);
+    if (!hasProgress) {
+      return 0;
+    }
+
+    const missing: Array<"type" | "amount" | "category"> = [];
+    if (!payload.type) {
+      missing.push("type");
+    }
+    if (!payload.amountMinor) {
+      missing.push("amount");
+    }
+    if (!payload.categoryName) {
+      missing.push("category");
+    }
+
+    await this.repo.enqueueIntake(
+      user.id,
+      source,
+      this.buildDraftQueueRawText(payload),
+      {
+        type: payload.type,
+        amountMinor: payload.amountMinor,
+        category: payload.categoryName,
+        subcategory: payload.subcategoryName,
+        description: payload.description,
+        lines: [],
+        missing,
+        isBatch: false
+      },
+      missing
+    );
+    await this.repo.deleteDraft(user.id);
+    return 1;
+  }
+
+  private buildDraftQueueRawText(payload: DraftPayload): string {
+    const parts: string[] = [];
+    if (payload.amountMinor) {
+      const sign = payload.type === "expense" ? "-" : payload.type === "income" ? "+" : "";
+      parts.push(`${sign}${Math.abs(payload.amountMinor) / 100}`);
+    } else if (payload.type === "expense") {
+      parts.push("-");
+    } else if (payload.type === "income") {
+      parts.push("+");
+    }
+    if (payload.categoryName) {
+      parts.push(payload.categoryName);
+    }
+    if (payload.subcategoryName) {
+      parts.push(payload.subcategoryName);
+    }
+    if (payload.description) {
+      parts.push(payload.description);
+    }
+    return parts.join(" ").trim() || "новая запись";
+  }
+
   private async promptAddCategory(user: UserRecord, type: EntryType, page = 0, showAll = false): Promise<void> {
     const draft = await this.repo.getDraft(user.id);
+    const totalItems = showAll ? await this.repo.getCategoryCount(user.id, type, false) : 0;
     const items = showAll
       ? await this.repo.listCategories(
           user.id,
@@ -2237,7 +2378,9 @@ export class BotService {
           2
         ),
         ...(!showAll ? [[{ text: BUTTONS.allCategories, action: "add:all-categories", payload: { type, page: 0 } }]] : []),
-        ...(showAll && (page > 0 || items.length === 6) ? [buildPageRow(page, items.length === 6, "add:all-categories", { type })] : []),
+        ...(showAll && (page > 0 || totalItems > (page + 1) * 6)
+          ? [buildPageRow(page, totalItems > (page + 1) * 6, "add:all-categories", { type }, Math.max(1, Math.ceil(totalItems / 6)))]
+          : []),
         [{ text: BUTTONS.addCategory, action: "categories:create", payload: { type } }],
         [{ text: BUTTONS.cancel, action: "add:cancel" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
@@ -2246,10 +2389,10 @@ export class BotService {
 
   private async promptAddSubcategory(user: UserRecord, categoryId: number, page = 0, showAll = false): Promise<void> {
     const draft = await this.repo.getDraft(user.id);
+    const allSubcategories = await this.repo.getSubcategories(user.id, categoryId, "usage");
     const items = showAll
-      ? (await this.repo.getSubcategories(user.id, categoryId, "usage")).slice(page * 6, page * 6 + 6)
+      ? allSubcategories.slice(page * 6, page * 6 + 6)
       : await this.getAddQuickSubcategories(user, categoryId);
-    const totalItems = showAll ? await this.repo.getSubcategories(user.id, categoryId, "usage") : [];
     await this.sendMessage({
       chat_id: user.chatId,
       text:
@@ -2263,7 +2406,9 @@ export class BotService {
           2
         ),
         ...(!showAll ? [[{ text: BUTTONS.allSubcategories, action: "add:all-subcategories", payload: { categoryId, page: 0 } }]] : []),
-        ...(showAll && (page > 0 || totalItems.length > (page + 1) * 6) ? [buildPageRow(page, totalItems.length > (page + 1) * 6, "add:all-subcategories", { categoryId })] : []),
+        ...(showAll && (page > 0 || allSubcategories.length > (page + 1) * 6)
+          ? [buildPageRow(page, allSubcategories.length > (page + 1) * 6, "add:all-subcategories", { categoryId }, Math.max(1, Math.ceil(allSubcategories.length / 6)))]
+          : []),
         [{ text: BUTTONS.addSubcategory, action: "subcategory:create", payload: { categoryId } }],
         [{ text: BUTTONS.withoutSubcategory, action: "add:skip-subcategory" }],
         [{ text: BUTTONS.cancel, action: "add:cancel" }, { text: BUTTONS.main, action: "nav:home" }]
@@ -2313,9 +2458,9 @@ export class BotService {
     draft.payload.subcategoryId = undefined;
     draft.payload.subcategoryName = undefined;
 
-    const subcategoryCount = user.subcategoriesEnabled ? await this.repo.getSubcategoryCount(user.id, category.id) : 0;
-    await this.repo.saveDraft(user.id, draft.payload, subcategoryCount > 0 ? "subcategory" : "description");
-    if (subcategoryCount > 0) {
+    const shouldAskSubcategory = user.subcategoriesEnabled;
+    await this.repo.saveDraft(user.id, draft.payload, shouldAskSubcategory ? "subcategory" : "description");
+    if (shouldAskSubcategory) {
       await this.promptAddSubcategory(user, category.id);
       return;
     }
@@ -2390,12 +2535,9 @@ export class BotService {
 
     if (draft.step === "description") {
       if (draft.payload.categoryId && user.subcategoriesEnabled) {
-        const count = await this.repo.getSubcategoryCount(user.id, draft.payload.categoryId);
-        if (count > 0) {
-          await this.repo.saveDraft(user.id, draft.payload, "subcategory");
-          await this.promptAddSubcategory(user, draft.payload.categoryId);
-          return;
-        }
+        await this.repo.saveDraft(user.id, draft.payload, "subcategory");
+        await this.promptAddSubcategory(user, draft.payload.categoryId);
+        return;
       }
       await this.repo.saveDraft(user.id, draft.payload, "category");
       await this.promptAddCategory(user, draft.payload.type);
@@ -2588,6 +2730,7 @@ export class BotService {
 
   private async showOperations(user: UserRecord, page: number, selectMode = false, notice?: string): Promise<void> {
     const items = await this.repo.getEntryList(user.id, page);
+    const totalItems = await this.repo.getEntryCount(user.id);
     if (items.length === 0) {
       await this.sendMessage({
         chat_id: user.chatId,
@@ -2629,10 +2772,14 @@ export class BotService {
           ? [
               [{ text: BUTTONS.chooseAll, action: "select:all", payload: { origin: "operations", page } }],
               ...(hasSelection ? [[{ text: `действия: ${selectedIds.size}`, action: "select:actions", payload: { origin: "operations", page } }]] : []),
-              ...(page > 0 || items.length === 6 ? [buildPageRow(page, items.length === 6, selectMode ? "operations:select-mode" : "operations:list")] : [])
+              ...(page > 0 || totalItems > (page + 1) * 6
+                ? [buildPageRow(page, totalItems > (page + 1) * 6, selectMode ? "operations:select-mode" : "operations:list", {}, Math.max(1, Math.ceil(totalItems / 6)))]
+                : [])
             ]
           : []),
-        ...(!selectMode && (page > 0 || items.length === 6) ? [buildPageRow(page, items.length === 6, "operations:list")] : []),
+        ...(!selectMode && (page > 0 || totalItems > (page + 1) * 6)
+          ? [buildPageRow(page, totalItems > (page + 1) * 6, "operations:list", {}, Math.max(1, Math.ceil(totalItems / 6)))]
+          : []),
         [{ text: BUTTONS.search, action: "search:open" }],
         [{ text: BUTTONS.main, action: "nav:home" }]
       ])
@@ -2998,10 +3145,14 @@ export class BotService {
           ? [
               [{ text: BUTTONS.chooseAll, action: "select:all", payload: { origin: "search", page, query } }],
               ...(selectedIds.size > 0 ? [[{ text: `действия: ${selectedIds.size}`, action: "select:actions", payload: { origin: "search", page, query } }]] : []),
-              ...(page > 0 || hasNextPage(data.total, page) ? [buildPageRow(page, hasNextPage(data.total, page), "search:select-mode", { query })] : [])
+              ...(page > 0 || hasNextPage(data.total, page)
+                ? [buildPageRow(page, hasNextPage(data.total, page), "search:select-mode", { query }, Math.max(1, Math.ceil(data.total / 6)))]
+                : [])
             ]
           : []),
-        ...(!selectMode && (page > 0 || hasNextPage(data.total, page)) ? [buildPageRow(page, hasNextPage(data.total, page), "search:results", { query })] : []),
+        ...(!selectMode && (page > 0 || hasNextPage(data.total, page))
+          ? [buildPageRow(page, hasNextPage(data.total, page), "search:results", { query }, Math.max(1, Math.ceil(data.total / 6)))]
+          : []),
         [{ text: BUTTONS.newSearch, action: "search:open" }],
         [{ text: BUTTONS.back, action: "search:open" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
@@ -3069,10 +3220,12 @@ export class BotService {
               [{ text: BUTTONS.multipleSelect, action: "search:select-mode", payload: { query: title, page } }],
               [{ text: BUTTONS.chooseAll, action: "select:all", payload: { origin: "search", page, query: title } }],
               ...(selectedIds.size > 0 ? [[{ text: `действия: ${selectedIds.size}`, action: "select:actions", payload: { origin: "search", page, query: title } }]] : []),
-              ...(page > 0 || hasNextPage(data.total, page) ? [buildPageRow(page, hasNextPage(data.total, page), "search:quick", { period: periodLabel })] : [])
+              ...(page > 0 || hasNextPage(data.total, page)
+                ? [buildPageRow(page, hasNextPage(data.total, page), "search:quick", { period: periodLabel }, Math.max(1, Math.ceil(data.total / 6)))]
+                : [])
             ]
           : page > 0 || hasNextPage(data.total, page)
-            ? [buildPageRow(page, hasNextPage(data.total, page), "search:quick", { period: periodLabel })]
+            ? [buildPageRow(page, hasNextPage(data.total, page), "search:quick", { period: periodLabel }, Math.max(1, Math.ceil(data.total / 6)))]
             : []),
         [{ text: BUTTONS.back, action: "search:open" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
@@ -3188,7 +3341,9 @@ export class BotService {
         `${lines}`,
       reply_markup: kb([
         ...chunkButtons(numberButtons, 4),
-        ...(page > 0 || hasNextPage(breakdown.total, page, 4) ? [buildPageRow(page, hasNextPage(breakdown.total, page, 4), "reports:breakdown", { type })] : []),
+        ...(page > 0 || hasNextPage(breakdown.total, page, 4)
+          ? [buildPageRow(page, hasNextPage(breakdown.total, page, 4), "reports:breakdown", { type }, Math.max(1, Math.ceil(breakdown.total / 4)))]
+          : []),
         [{ text: type === "expense" ? "к доходам" : "к расходам", action: "reports:breakdown", payload: { type: type === "expense" ? "income" : "expense", page: 0 } }],
         [{ text: BUTTONS.allEntries, action: "report:entries", payload: { page: 0, type } }],
         [{ text: BUTTONS.back, action: "reports:current" }, { text: BUTTONS.main, action: "nav:home" }]
@@ -3244,7 +3399,7 @@ export class BotService {
       reply_markup: kb([
         ...subcategoryButtons,
         ...(card.subcategories.length > 6 || subpage > 0
-          ? [buildPageRow(subpage, card.subcategories.length > (subpage + 1) * 6, "report:category", { id: categoryId, type, page, subpage })]
+          ? [buildPageRow(subpage, card.subcategories.length > (subpage + 1) * 6, "report:category", { id: categoryId, type, page, subpage }, Math.max(1, Math.ceil(card.subcategories.length / 6)))]
           : []),
         [{ text: BUTTONS.allEntries, action: "report:entries", payload: { page: 0, type, categoryId } }],
         [{ text: BUTTONS.back, action: "reports:breakdown", payload: { type, page } }, { text: BUTTONS.main, action: "nav:home" }]
@@ -3410,7 +3565,8 @@ export class BotService {
                         ...(input.type ? { type: input.type } : {}),
                         ...(typeof input.categoryId === "number" ? { categoryId: input.categoryId } : {}),
                         ...(typeof input.subcategoryId === "number" ? { subcategoryId: input.subcategoryId } : {})
-                      }
+                      },
+                      Math.max(1, Math.ceil(data.total / 6))
                     )
                   ]
                 : [])
@@ -3422,7 +3578,7 @@ export class BotService {
                 ...(input.type ? { type: input.type } : {}),
                 ...(typeof input.categoryId === "number" ? { categoryId: input.categoryId } : {}),
                 ...(typeof input.subcategoryId === "number" ? { subcategoryId: input.subcategoryId } : {})
-              })
+              }, Math.max(1, Math.ceil(data.total / 6)))
             ]
           : []),
         [{ text: BUTTONS.back, action: this.reportEntriesBackAction(session, input), payload: this.reportEntriesBackPayload(session, input) }, { text: BUTTONS.main, action: "nav:home" }]
@@ -3450,6 +3606,7 @@ export class BotService {
   private async showCategoryList(user: UserRecord, type: EntryType, page: number, notice?: string): Promise<void> {
     const sortMode = type === "expense" ? user.sortModeExpense : user.sortModeIncome;
     const categories = await this.repo.listCategories(user.id, type, false, page, 6, sortMode);
+    const totalCategories = await this.repo.getCategoryCount(user.id, type, false);
     const hiddenCount = await this.repo.getHiddenCategoryCount(user.id, type);
     if (categories.length === 0) {
       await this.sendMessage({
@@ -3485,7 +3642,9 @@ export class BotService {
         ...chunkButtons(numberButtons, 3),
         [{ text: BUTTONS.addCategory, action: "categories:add", payload: { type } }],
         ...(hiddenCount > 0 ? [[{ text: BUTTONS.hidden, action: "categories:hidden", payload: { type, page: 0 } }]] : []),
-        ...(page > 0 || categories.length === 6 ? [buildPageRow(page, categories.length === 6, "categories:list", { type })] : []),
+        ...(page > 0 || totalCategories > (page + 1) * 6
+          ? [buildPageRow(page, totalCategories > (page + 1) * 6, "categories:list", { type }, Math.max(1, Math.ceil(totalCategories / 6)))]
+          : []),
         [{ text: BUTTONS.back, action: "categories:open" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
@@ -3494,6 +3653,7 @@ export class BotService {
   private async showHiddenCategoryList(user: UserRecord, type: EntryType, page: number, notice?: string): Promise<void> {
     const sortMode = type === "expense" ? user.sortModeExpense : user.sortModeIncome;
     const categories = await this.repo.listCategories(user.id, type, true, page, 6, sortMode);
+    const totalCategories = await this.repo.getCategoryCount(user.id, type, true);
     if (categories.length === 0) {
       await this.sendMessage({
         chat_id: user.chatId,
@@ -3526,7 +3686,9 @@ export class BotService {
         `${lines}`,
       reply_markup: kb([
         ...chunkButtons(numberButtons, 3),
-        ...(page > 0 || categories.length === 6 ? [buildPageRow(page, categories.length === 6, "categories:hidden", { type })] : []),
+        ...(page > 0 || totalCategories > (page + 1) * 6
+          ? [buildPageRow(page, totalCategories > (page + 1) * 6, "categories:hidden", { type }, Math.max(1, Math.ceil(totalCategories / 6)))]
+          : []),
         [{ text: BUTTONS.back, action: "categories:list", payload: { type, page: 0 } }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
@@ -3560,7 +3722,9 @@ export class BotService {
         ...(visibleSubcategories.length
           ? [visibleSubcategories.map((item, index) => ({ text: String(index + 1), action: "subcategory:entries", payload: { id: item.id, categoryId: category.id, page: 0, type, source } }))]
           : []),
-        ...(subcategories.length > 6 || subpage > 0 ? [buildPageRow(subpage, subcategories.length > (subpage + 1) * 6, "category:view", { id: category.id, page, subpage, type, source })] : []),
+        ...(subcategories.length > 6 || subpage > 0
+          ? [buildPageRow(subpage, subcategories.length > (subpage + 1) * 6, "category:view", { id: category.id, page, subpage, type, source }, Math.max(1, Math.ceil(subcategories.length / 6)))]
+          : []),
         [{ text: BUTTONS.addSubcategory, action: "subcategory:add", payload: { categoryId: category.id, page, subpage, type, source } }],
         [{ text: BUTTONS.edit, action: "category:edit", payload: { id: category.id, page, subpage, type, source } }],
         [{ text: category.hiddenAt ? BUTTONS.restore : BUTTONS.hide, action: category.hiddenAt ? "category:restore" : "category:hide", payload: { id: category.id, page, subpage, type, source } }],
@@ -3608,7 +3772,9 @@ export class BotService {
         `${lines}`,
       reply_markup: kb([
         ...chunkButtons(numberButtons, 3),
-        ...(page > 0 || allItems.length > (page + 1) * 6 ? [buildPageRow(page, allItems.length > (page + 1) * 6, "subcategories:hidden", { categoryId, type, subpage })] : []),
+        ...(page > 0 || allItems.length > (page + 1) * 6
+          ? [buildPageRow(page, allItems.length > (page + 1) * 6, "subcategories:hidden", { categoryId, type, subpage }, Math.max(1, Math.ceil(allItems.length / 6)))]
+          : []),
         [{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page, subpage, source: "list" } }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
@@ -3791,10 +3957,10 @@ export class BotService {
         draft.payload.categoryName = category.name;
         draft.payload.subcategoryId = undefined;
         draft.payload.subcategoryName = undefined;
-        const subcategoryCount = user.subcategoriesEnabled ? await this.repo.getSubcategoryCount(user.id, category.id) : 0;
-        await this.repo.saveDraft(user.id, draft.payload, subcategoryCount > 0 ? "subcategory" : "description");
+        const shouldAskSubcategory = user.subcategoriesEnabled;
+        await this.repo.saveDraft(user.id, draft.payload, shouldAskSubcategory ? "subcategory" : "description");
         await this.saveSessionKeepingScreen(user.id, { mode: "add", stack: ["home"], context: { source: "message" } });
-        if (subcategoryCount > 0) {
+        if (shouldAskSubcategory) {
           await this.promptAddSubcategory(user, category.id);
           return;
         }
@@ -4192,7 +4358,7 @@ export class BotService {
                       ...(typeof subcategoryId === "number" ? { id: subcategoryId } : {}),
                       type,
                       source
-                    })
+                    }, Math.max(1, Math.ceil(data.total / 6)))
                   ]
                 : [])
             ]
@@ -4204,7 +4370,7 @@ export class BotService {
                 categoryId,
                 type,
                 source
-              })
+              }, Math.max(1, Math.ceil(data.total / 6)))
             ]
           : []),
         [{ text: BUTTONS.back, action: subcategoryId ? "subcategory:view" : "category:view", payload: subcategoryId ? { id: subcategoryId, categoryId, type, page: 0, source } : { id: categoryId, type, page: 0, source } }, { text: BUTTONS.main, action: "nav:home" }]
@@ -5024,6 +5190,7 @@ export class BotService {
     const previewErrors = Array.isArray(pendingImport.previewJson.errors)
       ? (pendingImport.previewJson.errors as Array<Record<string, unknown>>)
       : [];
+    const existingEntryCount = await this.repo.getEntryCount(user.id);
     const reasonLines = summarizeImportErrorReasons(previewErrors);
 
     const topBlock =
@@ -5037,10 +5204,12 @@ export class BotService {
     const rows: Array<Array<{ text: string; action: string; payload?: Record<string, string | number | undefined> }>> = previewErrors.length > 0
       ? []
       : previewEntries.length > 0
-        ? [
-          [{ text: BUTTONS.merge, action: "data:import-entries-merge", payload: { importId } }],
-          [{ text: BUTTONS.addAll, action: "data:import-entries-add-all", payload: { importId } }]
-        ]
+        ? existingEntryCount > 0
+          ? [
+              [{ text: BUTTONS.merge, action: "data:import-entries-merge", payload: { importId } }],
+              [{ text: BUTTONS.addAll, action: "data:import-entries-add-all", payload: { importId } }]
+            ]
+          : [[{ text: BUTTONS.addAll, action: "data:import-entries-add-all", payload: { importId } }]]
         : [];
 
     if (previewErrors.length > 0) {
@@ -6292,7 +6461,8 @@ function buildPageRow(
   page: number,
   hasNext: boolean,
   action: string,
-  payload: Record<string, string | number | undefined> = {}
+  payload: Record<string, string | number | undefined> = {},
+  totalPages?: number
 ): Array<{ text: string; action: string; payload?: Record<string, string | number | undefined> }> {
   const row: Array<{ text: string; action: string; payload?: Record<string, string | number | undefined> }> = [];
   if (page > 0) {
@@ -6303,7 +6473,7 @@ function buildPageRow(
     });
   }
   row.push({
-    text: `${page + 1}`,
+    text: totalPages && totalPages > 0 ? `${page + 1}/${totalPages}` : `${page + 1}`,
     action: "noop"
   });
   if (hasNext) {

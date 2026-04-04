@@ -598,6 +598,22 @@ export class Repository {
     };
   }
 
+  async getEntryCount(userId: number): Promise<number> {
+    const row = await this.db
+      .prepare("SELECT COUNT(*) as count FROM entries WHERE user_id = ?")
+      .bind(userId)
+      .first<{ count: number }>();
+    return Number(row?.count ?? 0);
+  }
+
+  async getCategoryCount(userId: number, type: EntryType, hidden = false): Promise<number> {
+    const row = await this.db
+      .prepare(`SELECT COUNT(*) as count FROM categories WHERE user_id = ? AND type = ? AND ${hidden ? "hidden_at IS NOT NULL" : "hidden_at IS NULL"}`)
+      .bind(userId, type)
+      .first<{ count: number }>();
+    return Number(row?.count ?? 0);
+  }
+
   async getEntryList(userId: number, page: number, limit = 6): Promise<EntryRecord[]> {
     const offset = page * limit;
     const result = await this.db
