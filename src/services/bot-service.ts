@@ -461,15 +461,7 @@ export class BotService {
     try {
       const session = await this.repo.getSession(user.id);
       if (session.mode !== "data" || !session.context.awaitingUploadType) {
-        await this.sendMessage({
-          chat_id: user.chatId,
-          text:
-            `<b>${BOT_TITLE}</b>\n\n` +
-            `данные\n\n` +
-            `выбери, куда хочешь\n` +
-            `сохранить или загрузить данные`,
-          reply_markup: kb([[{ text: BUTTONS.data, action: "data:open" }, { text: BUTTONS.main, action: "nav:home" }]])
-        });
+        await this.showData(user);
         return;
       }
 
@@ -608,17 +600,7 @@ export class BotService {
       case "onboarding:import":
         await this.repo.completeOnboarding(user.id);
         await this.repo.saveSession(user.id, { mode: "data", stack: ["data"], context: { awaitingUploadType: "entries" } });
-        await this.sendMessage({
-          chat_id: user.chatId,
-          text:
-            `<b>${BOT_TITLE}</b>\n\n` +
-            "загрузить из файла\n\n" +
-            "пришли файл с записями,\n" +
-            "и бот покажет,\n" +
-            "что из него можно добавить\n\n" +
-            "текущие данные пока не меняются",
-          reply_markup: kb([[{ text: BUTTONS.back, action: "data:other-apps" }, { text: BUTTONS.main, action: "nav:home" }]])
-        });
+        await this.showEntriesImportAwaiting(user, "data:other-apps");
         return;
       case "onboarding:complete":
       case "nav:home":
@@ -1492,30 +1474,11 @@ export class BotService {
         return;
       case "data:import-full-open":
         await this.repo.saveSession(user.id, { mode: "data", stack: ["data"], context: { awaitingUploadType: "full" } });
-        await this.sendMessage({
-          chat_id: user.chatId,
-          text:
-            `<b>${BOT_TITLE}</b>\n\n` +
-            "загрузить из файла\n\n" +
-            "пришли файл с полной копией,\n" +
-            "и бот покажет, что в нём есть\n\n" +
-            "текущие данные пока не меняются",
-          reply_markup: kb([[{ text: BUTTONS.back, action: "data:this-bot" }, { text: BUTTONS.main, action: "nav:home" }]])
-        });
+        await this.showFullImportAwaiting(user);
         return;
       case "data:import-entries-open":
         await this.repo.saveSession(user.id, { mode: "data", stack: ["data"], context: { awaitingUploadType: "entries" } });
-        await this.sendMessage({
-          chat_id: user.chatId,
-          text:
-            `<b>${BOT_TITLE}</b>\n\n` +
-            "загрузить из файла\n\n" +
-            "пришли файл с записями,\n" +
-            "и бот покажет,\n" +
-            "что из него можно добавить\n\n" +
-            "текущие данные пока не меняются",
-          reply_markup: kb([[{ text: BUTTONS.back, action: "data:other-apps" }, { text: BUTTONS.main, action: "nav:home" }]])
-        });
+        await this.showEntriesImportAwaiting(user, "data:other-apps");
         return;
       case "data:import-full-preview-confirm":
         await this.sendMessage({
@@ -4883,6 +4846,19 @@ export class BotService {
     });
   }
 
+  private async showFullImportAwaiting(user: UserRecord): Promise<void> {
+    await this.sendMessage({
+      chat_id: user.chatId,
+      text:
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `загрузить из файла\n\n` +
+        `пришли файл с полной копией,\n` +
+        `и бот покажет, что в нём есть\n\n` +
+        `текущие данные пока не меняются`,
+      reply_markup: kb([[{ text: BUTTONS.back, action: "data:this-bot" }, { text: BUTTONS.main, action: "nav:home" }]])
+    });
+  }
+
   private async showDataOtherApps(user: UserRecord, notice?: string): Promise<void> {
     await this.sendMessage({
       chat_id: user.chatId,
@@ -4903,6 +4879,20 @@ export class BotService {
         [{ text: BUTTONS.loadFromFile, action: "data:import-entries-open" }],
         [{ text: BUTTONS.back, action: "data:open" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
+    });
+  }
+
+  private async showEntriesImportAwaiting(user: UserRecord, backAction: string): Promise<void> {
+    await this.sendMessage({
+      chat_id: user.chatId,
+      text:
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `загрузить из файла\n\n` +
+        `пришли файл с записями,\n` +
+        `и бот покажет,\n` +
+        `что из него можно добавить\n\n` +
+        `текущие данные пока не меняются`,
+      reply_markup: kb([[{ text: BUTTONS.back, action: backAction }, { text: BUTTONS.main, action: "nav:home" }]])
     });
   }
 
