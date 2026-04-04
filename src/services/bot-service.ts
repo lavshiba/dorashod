@@ -3119,7 +3119,7 @@ export class BotService {
     const numberButtons = categories.map((item, index) => ({
       text: String(index + 1),
       action: "category:view",
-      payload: { id: item.id, page, type, source: "hidden" }
+      payload: { id: item.id, page, type, source: "list" }
     }));
     await this.sendMessage({
       chat_id: user.chatId,
@@ -3145,6 +3145,7 @@ export class BotService {
       await this.sendMessage({
         chat_id: user.chatId,
         text:
+          `<b>${BOT_TITLE}</b>\n\n` +
           `${notice ? `${notice}\n\n` : ""}` +
           `скрытые категории\n${type === "expense" ? "расходы" : "доходы"}\n\n` +
           `пока скрытых категорий нет\n\n` +
@@ -3164,6 +3165,7 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `<b>${BOT_TITLE}</b>\n\n` +
         `${notice ? `${notice}\n\n` : ""}` +
         `скрытые категории\n${type === "expense" ? "расходы" : "доходы"}\n\n` +
         `здесь лежат категории,\n` +
@@ -3225,6 +3227,7 @@ export class BotService {
       await this.sendMessage({
         chat_id: user.chatId,
         text:
+          `<b>${BOT_TITLE}</b>\n\n` +
           `${notice ? `${notice}\n\n` : ""}` +
           `скрытые подкатегории\n${category?.name ?? ""}\n\n` +
           `пока скрытых подкатегорий нет\n\n` +
@@ -3244,6 +3247,7 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `<b>${BOT_TITLE}</b>\n\n` +
         `${notice ? `${notice}\n\n` : ""}` +
         `скрытые подкатегории\n${category?.name ?? ""}\n\n` +
         `здесь лежат подкатегории,\n` +
@@ -4432,7 +4436,7 @@ export class BotService {
 
     await this.sendMessage({
       chat_id: user.chatId,
-      text,
+      text: `<b>${BOT_TITLE}</b>\n\n${text}`,
       reply_markup: kb(rows)
     });
   }
@@ -4450,6 +4454,7 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `<b>${BOT_TITLE}</b>\n\n` +
         "объединить с текущими данными\n\n" +
         `будет добавлено:\n${analysis.addedEntries} записей\n\n` +
         `уже есть:\n${analysis.skippedEntries} записи\n\n` +
@@ -4474,6 +4479,7 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `<b>${BOT_TITLE}</b>\n\n` +
         "добавить новые записи?\n\n" +
         `в бот попадут:\n${analysis.addedEntries} записей\n${analysis.createdCategories} категории\n${analysis.createdSubcategories} подкатегорий`,
       reply_markup: kb([
@@ -4496,6 +4502,7 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `<b>${BOT_TITLE}</b>\n\n` +
         "добавить всё из файла\n\n" +
         `будет добавлено:\n${analysis.addedEntries} записей\n\n` +
         `будет создано:\n${analysis.createdCategories} категории\n${analysis.createdSubcategories} подкатегорий\n\n` +
@@ -4511,6 +4518,7 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `<b>${BOT_TITLE}</b>\n\n` +
         "добавить все записи из файла?\n\n" +
         "в бот попадут все строки,\n" +
         "включая возможные повторы",
@@ -4991,6 +4999,7 @@ export class BotService {
       await this.sendMessage({
         chat_id: user.chatId,
         text:
+          `<b>${BOT_TITLE}</b>\n\n` +
           "перенести записи\n\n" +
           "нельзя перенести вместе\n" +
           "доходы и расходы\n\n" +
@@ -5019,6 +5028,7 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `<b>${BOT_TITLE}</b>\n\n` +
         "перенести записи\n\n" +
         `выбрано: ${selectedIds.length}\n\n` +
         "пришли категорию сообщением",
