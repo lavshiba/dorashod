@@ -37,6 +37,13 @@ export class TelegramApi {
     });
   }
 
+  async deleteMessage(chatId: string, messageId: number): Promise<void> {
+    await this.call("deleteMessage", {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+
   async setWebhook(url: string): Promise<void> {
     await this.call("setWebhook", { url });
   }

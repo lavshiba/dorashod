@@ -43,6 +43,8 @@ export class BotService {
 
   private readonly lastBotMessageByChat = new Map<string, number>();
 
+  private currentUserId: number | null = null;
+
   constructor(
     private readonly repo: Repository,
     private readonly telegram: TelegramApi
@@ -55,7 +57,7 @@ export class BotService {
     }
 
     if (update.message?.text) {
-      await this.handleMessage(update.message.from?.id, update.message.chat.id, update.message.text);
+      await this.handleMessage(update.message.from?.id, update.message.chat.id, update.message.text, update.message.message_id);
       return;
     }
 
@@ -73,35 +75,38 @@ export class BotService {
     await this.repo.createCronRun(controllerName, "ok", "cron completed");
   }
 
-  private async handleMessage(fromId: number | undefined, chatId: number, text: string): Promise<void> {
+  private async handleMessage(fromId: number | undefined, chatId: number, text: string, messageId?: number): Promise<void> {
     if (!fromId) {
       return;
     }
 
     const user = await this.repo.getOrCreateUser(String(fromId), String(chatId));
-    const session = await this.repo.getSession(user.id);
+    this.currentUserId = user.id;
+    try {
+      const session = await this.repo.getSession(user.id);
 
-    if (text === "/start") {
-      await this.showStart(user);
-      return;
-    }
+      if (text === "/start") {
+        await this.resetStartScreen(user, session, messageId);
+        await this.showStart(user);
+        return;
+      }
 
-    if (!user.onboardingCompletedAt && (user.onboardingStep < 7 || user.onboardingStep === 0)) {
-      await this.showOnboarding(user, Math.min(user.onboardingStep, 6));
-      return;
-    }
+      if (!user.onboardingCompletedAt && (user.onboardingStep < 7 || user.onboardingStep === 0)) {
+        await this.showOnboarding(user, Math.min(user.onboardingStep, 6));
+        return;
+      }
 
-    if (session.mode === "add") {
-      await this.handleAddInput(user, session, text);
-      return;
-    }
+      if (session.mode === "add") {
+        await this.handleAddInput(user, session, text);
+        return;
+      }
 
-    if (session.mode === "edit") {
-      await this.handleEditInput(user, session, text);
-      return;
-    }
+      if (session.mode === "edit") {
+        await this.handleEditInput(user, session, text);
+        return;
+      }
 
-    if (session.mode === "operations" && session.context.awaiting === "bulk-transfer-category") {
+      if (session.mode === "operations" && session.context.awaiting === "bulk-transfer-category") {
       const type = String(session.context.bulkTransferType ?? "") as EntryType;
       if ((type !== "income" && type !== "expense") || !text.trim()) {
         await this.showBulkActions(user, String(session.context.bulkOrigin ?? "operations"), Number(session.context.bulkPage ?? 0));
@@ -137,9 +142,9 @@ export class BotService {
       });
       await this.applyBulkTransfer(user);
       return;
-    }
+      }
 
-    if (session.mode === "search" && session.context.awaiting === "query") {
+      if (session.mode === "search" && session.context.awaiting === "query") {
       await this.repo.saveSession(user.id, { ...session, context: { ...session.context, query: text, awaiting: undefined } });
       await this.showSearchResults(user, text, 0);
       return;
@@ -201,15 +206,15 @@ export class BotService {
         String(session.context.source ?? "list")
       );
       return;
-    }
+      }
 
-    if (session.mode === "settings" && session.context.awaiting === "currency") {
+      if (session.mode === "settings" && session.context.awaiting === "currency") {
       await this.updateUserSetting(user.id, "currency_label", text.trim(), "currency_code", "CUSTOM");
       await this.showCurrencySettings(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), "значение сохранено");
       return;
-    }
+      }
 
-    if (session.mode === "settings" && session.context.awaiting === "timezone") {
+      if (session.mode === "settings" && session.context.awaiting === "timezone") {
       const timezone = resolveTimezoneFromCity(text);
       if (!timezone) {
         await this.sendMessage({
@@ -222,14 +227,14 @@ export class BotService {
       await this.updateUserSetting(user.id, "timezone_name", timezone, "timezone_source", "city");
       await this.showTimeSettings(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), "значение сохранено");
       return;
-    }
+      }
 
-    if (session.mode === "import" && session.context.awaiting === "fix-line") {
+      if (session.mode === "import" && session.context.awaiting === "fix-line") {
       await this.handleImportFixInput(user, session, text);
       return;
-    }
+      }
 
-    if (session.mode === "reports" && (session.context.awaiting === "custom-period" || session.context.awaiting === "custom-period-confirm")) {
+      if (session.mode === "reports" && (session.context.awaiting === "custom-period" || session.context.awaiting === "custom-period-confirm")) {
       const parsed = parseCustomPeriodInput(text, this.userNow(user.timezoneName).date);
       if (parsed.status === "resolved") {
         await this.showReportRange(user, parsed.label, parsed.from, parsed.to, "custom");
@@ -263,19 +268,19 @@ export class BotService {
         reply_markup: kb([[{ text: BUTTONS.back, action: "reports:open" }, { text: BUTTONS.main, action: "nav:home" }]])
       });
       return;
-    }
+      }
 
-    const parsed = parseEntryAttempt(text);
-    if (parsed.isBatch) {
+      const parsed = parseEntryAttempt(text);
+      if (parsed.isBatch) {
       for (const line of parsed.lines) {
         const item = parseEntryAttempt(line);
         await this.repo.enqueueIntake(user.id, "message-batch", line, item, item.missing);
       }
       await this.showHome(user, "Новые записи добавлены в очередь.");
       return;
-    }
+      }
 
-    if (session.mode === "search") {
+      if (session.mode === "search") {
       await this.sendMessage({
         chat_id: user.chatId,
         text: "Пришло сообщение, похожее на новую запись.\n\n[искать это] или [в новые записи]?",
@@ -283,9 +288,9 @@ export class BotService {
       });
       await this.repo.saveSession(user.id, { ...session, context: { ...session.context, pendingText: text } });
       return;
-    }
+      }
 
-    if (parsed.missing.length === 0 && parsed.type && parsed.amountMinor && parsed.category) {
+      if (parsed.missing.length === 0 && parsed.type && parsed.amountMinor && parsed.category) {
       await this.repo.createEntry({
         user,
         type: parsed.type,
@@ -297,9 +302,9 @@ export class BotService {
       });
       await this.showHome(user, "запись добавлена");
       return;
-    }
+      }
 
-    if (parsed.type || parsed.amountMinor || parsed.category) {
+      if (parsed.type || parsed.amountMinor || parsed.category) {
       await this.repo.saveDraft(
         user.id,
         {
@@ -329,9 +334,12 @@ export class BotService {
       });
       await this.continueDraft(user);
       return;
-    }
+      }
 
-    await this.showHome(user);
+      await this.showHome(user);
+    } finally {
+      this.currentUserId = null;
+    }
   }
 
   private async handleLocation(
@@ -343,14 +351,19 @@ export class BotService {
       return;
     }
     const user = await this.repo.getOrCreateUser(String(fromId), String(chatId));
-    const session = await this.repo.getSession(user.id);
-    if (session.mode === "settings" && session.context.awaiting === "timezone") {
-      const timezone = resolveTimezoneFromLocation(location.latitude, location.longitude);
-      await this.updateUserSetting(user.id, "timezone_name", timezone, "timezone_source", "location");
-      await this.showTimeSettings(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), "значение сохранено");
-      return;
+    this.currentUserId = user.id;
+    try {
+      const session = await this.repo.getSession(user.id);
+      if (session.mode === "settings" && session.context.awaiting === "timezone") {
+        const timezone = resolveTimezoneFromLocation(location.latitude, location.longitude);
+        await this.updateUserSetting(user.id, "timezone_name", timezone, "timezone_source", "location");
+        await this.showTimeSettings(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), "значение сохранено");
+        return;
+      }
+      await this.showHome(user);
+    } finally {
+      this.currentUserId = null;
     }
-    await this.showHome(user);
   }
 
   private async handleDocument(
@@ -363,20 +376,22 @@ export class BotService {
     }
 
     const user = await this.repo.getOrCreateUser(String(fromId), String(chatId));
-    const session = await this.repo.getSession(user.id);
-    if (session.mode !== "data" || !session.context.awaitingUploadType) {
-      await this.sendMessage({
-        chat_id: user.chatId,
-        text: "Сначала открой раздел данные и выбери, куда загрузить файл.",
-        reply_markup: kb([[{ text: BUTTONS.data, action: "data:open" }, { text: BUTTONS.main, action: "nav:home" }]])
-      });
-      return;
-    }
+    this.currentUserId = user.id;
+    try {
+      const session = await this.repo.getSession(user.id);
+      if (session.mode !== "data" || !session.context.awaitingUploadType) {
+        await this.sendMessage({
+          chat_id: user.chatId,
+          text: "Сначала открой раздел данные и выбери, куда загрузить файл.",
+          reply_markup: kb([[{ text: BUTTONS.data, action: "data:open" }, { text: BUTTONS.main, action: "nav:home" }]])
+        });
+        return;
+      }
 
-    const downloaded = await this.telegram.downloadTextFile(document.file_id);
-    const uploadType = String(session.context.awaitingUploadType);
+      const downloaded = await this.telegram.downloadTextFile(document.file_id);
+      const uploadType = String(session.context.awaitingUploadType);
 
-    if (uploadType === "full") {
+      if (uploadType === "full") {
       const snapshot = parseFullSnapshot(downloaded.content);
       if (!snapshot) {
         await this.sendMessage({
@@ -407,11 +422,11 @@ export class BotService {
           [{ text: BUTTONS.back, action: "data:this-bot" }, { text: BUTTONS.main, action: "nav:home" }]
         ])
       });
-      return;
-    }
+        return;
+      }
 
-    const preview = parseEntriesImport(downloaded.content);
-    const importId = await this.repo.createImport(user.id, "entries", "preview", {
+      const preview = parseEntriesImport(downloaded.content);
+      const importId = await this.repo.createImport(user.id, "entries", "preview", {
       filename: document.file_name ?? downloaded.filePath,
       entries: preview.entries,
       errors: preview.errors
@@ -422,7 +437,10 @@ export class BotService {
       context: { importId, awaitingUploadType: undefined }
     });
 
-    await this.showEntriesImportPreview(user, importId);
+      await this.showEntriesImportPreview(user, importId);
+    } finally {
+      this.currentUserId = null;
+    }
   }
 
   private async handleCallback(callbackQuery: TelegramUpdate["callback_query"]): Promise<void> {
@@ -1201,6 +1219,15 @@ export class BotService {
     options?: { forceNew?: boolean; formatText?: boolean }
   ): Promise<void> {
     const text = options?.formatText === false ? payload.text : formatTelegramScreenText(payload.text);
+    let persistedMessageId: number | undefined;
+    if (this.currentUserId !== null) {
+      const persistedSession = await this.repo.getSession(this.currentUserId);
+      const candidate = persistedSession.context.screenMessageId;
+      if (typeof candidate === "number") {
+        persistedMessageId = candidate;
+      }
+    }
+
     if (!options?.forceNew && this.callbackContext && !this.didEditCurrentCallback && this.callbackContext.chatId === String(payload.chat_id)) {
       try {
         await this.telegram.editMessageText({
@@ -1211,11 +1238,13 @@ export class BotService {
         });
         this.didEditCurrentCallback = true;
         this.lastBotMessageByChat.set(String(payload.chat_id), this.callbackContext.messageId);
+        await this.persistScreenMessageId(this.callbackContext.messageId);
         return;
       } catch (error) {
         if (isTelegramMessageNotModified(error)) {
           this.didEditCurrentCallback = true;
           this.lastBotMessageByChat.set(String(payload.chat_id), this.callbackContext.messageId);
+          await this.persistScreenMessageId(this.callbackContext.messageId);
           return;
         }
 
@@ -1223,7 +1252,7 @@ export class BotService {
       }
     }
 
-    const knownMessageId = this.lastBotMessageByChat.get(String(payload.chat_id));
+    const knownMessageId = this.lastBotMessageByChat.get(String(payload.chat_id)) ?? persistedMessageId;
     if (!options?.forceNew && knownMessageId) {
       try {
         await this.telegram.editMessageText({
@@ -1232,9 +1261,13 @@ export class BotService {
           text,
           reply_markup: payload.reply_markup
         });
+        this.lastBotMessageByChat.set(String(payload.chat_id), knownMessageId);
+        await this.persistScreenMessageId(knownMessageId);
         return;
       } catch (error) {
         if (isTelegramMessageNotModified(error)) {
+          this.lastBotMessageByChat.set(String(payload.chat_id), knownMessageId);
+          await this.persistScreenMessageId(knownMessageId);
           return;
         }
       }
@@ -1245,6 +1278,49 @@ export class BotService {
       text
     });
     this.lastBotMessageByChat.set(String(payload.chat_id), messageId);
+    await this.persistScreenMessageId(messageId);
+  }
+
+  private async persistScreenMessageId(messageId: number): Promise<void> {
+    if (this.currentUserId === null) {
+      return;
+    }
+
+    const session = await this.repo.getSession(this.currentUserId);
+    await this.repo.saveSession(this.currentUserId, {
+      ...session,
+      context: {
+        ...session.context,
+        screenMessageId: messageId
+      }
+    });
+  }
+
+  private async resetStartScreen(user: UserRecord, session: UiSession, commandMessageId?: number): Promise<void> {
+    const persistedScreenMessageId = typeof session.context.screenMessageId === "number" ? session.context.screenMessageId : undefined;
+
+    if (typeof commandMessageId === "number") {
+      try {
+        await this.telegram.deleteMessage(user.chatId, commandMessageId);
+      } catch {
+        // Telegram can refuse deletion in some client/server cases; keep start flow working anyway.
+      }
+    }
+
+    if (typeof persistedScreenMessageId === "number") {
+      try {
+        await this.telegram.deleteMessage(user.chatId, persistedScreenMessageId);
+      } catch {
+        // Old screen may already be gone; ignore and recreate a fresh one below.
+      }
+    }
+
+    this.lastBotMessageByChat.delete(user.chatId);
+    await this.repo.saveSession(user.id, {
+      mode: "idle",
+      stack: [],
+      context: {}
+    });
   }
 
   private async showStart(user: UserRecord): Promise<void> {

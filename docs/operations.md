@@ -39,6 +39,12 @@ curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
 - Telegram bot username: `@dorashodbot`
 - Webhook установлен на production URL
 
+Поведение `/start`:
+
+- Worker старается удалить сообщение с самой командой `/start`
+- затем старается удалить прошлый экран бота
+- после этого создаёт один новый стартовый экран, чтобы не плодить несколько главных подряд
+
 ## Миграции
 
 - Все миграции лежат в `migrations/`.
