@@ -2280,7 +2280,7 @@ export class BotService {
     if (items.length === 0) {
       await this.sendMessage({
         chat_id: user.chatId,
-        text: `<b>${BOT_TITLE}</b>\n\nоперации\n\nзаписей пока нет\n\ndобавь первую запись,\nи она появится здесь`,
+        text: `<b>${BOT_TITLE}</b>\n\nоперации\n\nзаписей пока нет\n\nдобавь первую запись,\nи она появится здесь`,
         reply_markup: kb([[{ text: BUTTONS.income, action: "add:start", payload: { type: "income" } }, { text: BUTTONS.expense, action: "add:start", payload: { type: "expense" } }], [{ text: BUTTONS.main, action: "nav:home" }]])
       });
       return;
@@ -3438,6 +3438,7 @@ export class BotService {
       await this.sendMessage({
         chat_id: user.chatId,
         text:
+          `<b>${BOT_TITLE}</b>\n\n` +
           "такая категория уже есть,\n" +
           "но сейчас она скрыта\n\n" +
           "что сделать?",
@@ -3458,6 +3459,7 @@ export class BotService {
       await this.sendMessage({
         chat_id: user.chatId,
         text:
+          `<b>${BOT_TITLE}</b>\n\n` +
           "такая подкатегория уже есть,\n" +
           "но сейчас она скрыта\n\n" +
           "что сделать?",
@@ -3479,6 +3481,7 @@ export class BotService {
         await this.sendMessage({
           chat_id: user.chatId,
           text:
+            `<b>${BOT_TITLE}</b>\n\n` +
             "такая категория уже есть,\n" +
             "но сейчас она скрыта\n\n" +
             "что сделать?",
@@ -3492,6 +3495,7 @@ export class BotService {
       await this.sendMessage({
         chat_id: user.chatId,
         text:
+          `<b>${BOT_TITLE}</b>\n\n` +
           "изменить категорию\n\n" +
           "такая категория уже есть\n\n" +
           "пришли другое название сообщением",
@@ -3510,6 +3514,7 @@ export class BotService {
         await this.sendMessage({
           chat_id: user.chatId,
           text:
+            `<b>${BOT_TITLE}</b>\n\n` +
             "такая подкатегория уже есть,\n" +
             "но сейчас она скрыта\n\n" +
             "что сделать?",
@@ -3523,6 +3528,7 @@ export class BotService {
       await this.sendMessage({
         chat_id: user.chatId,
         text:
+          `<b>${BOT_TITLE}</b>\n\n` +
           "изменить подкатегорию\n\n" +
           "такая подкатегория уже есть\n\n" +
           "пришли другое название сообщением",
@@ -3735,6 +3741,7 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `<b>${BOT_TITLE}</b>\n\n` +
         `${notice ? `${notice}\n\n` : ""}` +
         `настройки\n\n` +
         `здесь можно настроить,\n` +
@@ -3779,6 +3786,7 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `<b>${BOT_TITLE}</b>\n\n` +
         `${notice ? `${notice}\n\n` : ""}` +
         `время\n\n` +
         `пришли свой город\n` +
@@ -3798,6 +3806,7 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `<b>${BOT_TITLE}</b>\n\n` +
         "не получилось определить время\n\n" +
         "пришли другой город\n" +
         "или отправь геопозицию",
@@ -3812,6 +3821,7 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `<b>${BOT_TITLE}</b>\n\n` +
         "другая валюта\n\n" +
         "пришли знак или короткое название\n" +
         "сообщением\n\n" +
@@ -3827,6 +3837,7 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `<b>${BOT_TITLE}</b>\n\n` +
         `${notice ? `${notice}\n\n` : ""}` +
         `подкатегории\n\n` +
         `они помогают делить записи\n` +
@@ -3846,6 +3857,7 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `<b>${BOT_TITLE}</b>\n\n` +
         `${notice ? `${notice}\n\n` : ""}` +
         `быстрый доступ\n\n` +
         `здесь можно настроить,\n` +
@@ -3915,6 +3927,7 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `<b>${BOT_TITLE}</b>\n\n` +
         `${notice ? `${notice}\n\n` : ""}` +
         `быстрый доступ\n` +
         `${title}` +
@@ -4020,6 +4033,7 @@ export class BotService {
       await this.sendMessage({
         chat_id: user.chatId,
         text:
+          `<b>${BOT_TITLE}</b>\n\n` +
           "быстрый доступ подкатегорий\n\n" +
           "подкатегорий пока нет\n\n" +
           "можешь добавить первую,\n" +
@@ -4089,6 +4103,7 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `<b>${BOT_TITLE}</b>\n\n` +
         "сбросить быстрый доступ?\n\n" +
         "все выбранные категории будут убраны",
       reply_markup: kb([
@@ -4168,6 +4183,7 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `<b>${BOT_TITLE}</b>\n\n` +
         `${notice ? `${notice}\n\n` : ""}` +
         `быстрый доступ\nподкатегорий\n\n` +
         `категория: ${category.name}` +
@@ -4214,6 +4230,7 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `<b>${BOT_TITLE}</b>\n\n` +
         `${notice ? `${notice}\n\n` : ""}` +
         `сортировка\n\n` +
         `здесь можно выбрать,\n` +
@@ -4246,6 +4263,7 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `<b>${BOT_TITLE}</b>\n\n` +
         `${notice ? `${notice}\n\n` : ""}` +
         `сортировка\n` +
         `${title}` +
@@ -4312,6 +4330,7 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `<b>${BOT_TITLE}</b>\n\n` +
         `${notice ? `${notice}\n\n` : ""}` +
         `сортировка подкатегорий\n` +
         `во всех категориях\n\n` +
@@ -4336,6 +4355,7 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `<b>${BOT_TITLE}</b>\n\n` +
         `${notice ? `${notice}\n\n` : ""}` +
         `сортировка подкатегорий\n` +
         `категория: ${category.name}\n\n` +
@@ -4364,6 +4384,7 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `<b>${BOT_TITLE}</b>\n\n` +
         `${notice ? `${notice}\n\n` : ""}` +
         `данные\n\n` +
         `выбери, куда хочешь\n` +
@@ -4382,6 +4403,7 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `<b>${BOT_TITLE}</b>\n\n` +
         `${notice ? `${notice}\n\n` : ""}` +
         `для этого бота\n\n` +
         `здесь можно сохранить файл\n` +
