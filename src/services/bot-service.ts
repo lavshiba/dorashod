@@ -1521,6 +1521,9 @@ export class BotService {
       case "data:import-fix-open":
         await this.showImportFixItem(user, Number(params.importId), 0);
         return;
+      case "data:import-fix-item":
+        await this.showImportFixItem(user, Number(params.importId), Number(params.index ?? "0"));
+        return;
       case "data:import-fix-edit":
         await this.repo.saveSession(user.id, {
           mode: "import",
@@ -1533,7 +1536,7 @@ export class BotService {
             `<b>${BOT_TITLE}</b>\n\n` +
             `исправить импорт\n\n` +
             `пришли строку сообщением ещё раз`,
-          reply_markup: kb([[{ text: BUTTONS.cancel, action: "data:import-fix-open", payload: { importId: params.importId } }, { text: BUTTONS.main, action: "nav:home" }]])
+          reply_markup: kb([[{ text: BUTTONS.cancel, action: "data:import-fix-item", payload: { importId: params.importId, index: params.index } }, { text: BUTTONS.main, action: "nav:home" }]])
         });
         return;
       case "data:import-fix-save":
