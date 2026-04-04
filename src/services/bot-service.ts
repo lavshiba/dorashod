@@ -3529,8 +3529,8 @@ export class BotService {
         ...(subcategories.length > 6 || subpage > 0 ? [buildPageRow(subpage, subcategories.length > (subpage + 1) * 6, "category:view", { id: category.id, page, subpage, type, source })] : []),
         [{ text: BUTTONS.addSubcategory, action: "subcategory:add", payload: { categoryId: category.id, page, subpage, type, source } }],
         ...(hiddenSubcategoryCount > 0 ? [[{ text: BUTTONS.hidden, action: "subcategories:hidden", payload: { categoryId: category.id, page, subpage, type } }]] : []),
-        [{ text: BUTTONS.edit, action: "category:edit", payload: { id: category.id, page, subpage, type, source } }],
         [{ text: category.hiddenAt ? BUTTONS.restore : BUTTONS.hide, action: category.hiddenAt ? "category:restore" : "category:hide", payload: { id: category.id, page, subpage, type, source } }],
+        [{ text: BUTTONS.edit, action: "category:edit", payload: { id: category.id, page, subpage, type, source } }],
         [{ text: BUTTONS.delete, action: "category:delete", payload: { id: category.id, page, subpage, type, source } }],
         ...(usageCount > 0 ? [[{ text: BUTTONS.transferAllEntries, action: "category:transfer-all", payload: { id: category.id, page, subpage, type, source } }]] : []),
         [{ text: BUTTONS.allEntries, action: "category:entries", payload: { categoryId: category.id, type, page: 0, source } }],
@@ -3597,8 +3597,8 @@ export class BotService {
         `${subcategory.hiddenAt ? `\n\nэта подкатегория сейчас скрыта` : ""}` +
         `${notice ? `\n\n${notice}` : ""}`,
       reply_markup: kb([
-        [{ text: BUTTONS.edit, action: "subcategory:edit", payload: { id: subcategory.id, categoryId, page, subpage, type, source } }],
         [{ text: subcategory.hiddenAt ? BUTTONS.restore : BUTTONS.hide, action: subcategory.hiddenAt ? "subcategory:restore" : "subcategory:hide", payload: { id: subcategory.id, categoryId, page, subpage, type, source } }],
+        [{ text: BUTTONS.edit, action: "subcategory:edit", payload: { id: subcategory.id, categoryId, page, subpage, type, source } }],
         [{ text: BUTTONS.delete, action: "subcategory:delete", payload: { id: subcategory.id, categoryId, page, subpage, type, source } }],
         ...(usageCount > 0 ? [[{ text: BUTTONS.transferAllEntries, action: "subcategory:transfer-all", payload: { id: subcategory.id, categoryId, page, subpage, type, source } }]] : []),
         [{ text: BUTTONS.allEntries, action: "subcategory:entries", payload: { id: subcategory.id, categoryId, type, page: 0, source } }],
