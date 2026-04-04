@@ -3283,17 +3283,23 @@ export class BotService {
       if (existing.hiddenAt) {
         await this.sendMessage({
           chat_id: user.chatId,
-        text: "Такая категория уже есть в скрытых.\n\nМожно вернуть её.",
-        reply_markup: kb([
-          [{ text: BUTTONS.restore, action: "category:restore", payload: { id: existing.id, type, page: 0 } }],
-          [{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]
-        ])
-      });
-      return;
+          text:
+            "такая категория уже есть,\n" +
+            "но сейчас она скрыта\n\n" +
+            "что сделать?",
+          reply_markup: kb([
+            [{ text: BUTTONS.restore, action: "category:restore", payload: { id: existing.id, type, page: 0 } }],
+            [{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]
+          ])
+        });
+        return;
       }
       await this.sendMessage({
         chat_id: user.chatId,
-        text: "Такая категория уже есть.",
+        text:
+          "изменить категорию\n\n" +
+          "такая категория уже есть\n\n" +
+          "пришли другое название сообщением",
         reply_markup: kb([[{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]])
       });
       return;
@@ -3308,17 +3314,23 @@ export class BotService {
       if (existing.hiddenAt) {
         await this.sendMessage({
           chat_id: user.chatId,
-        text: "Такая подкатегория уже есть в скрытых.\n\nМожно вернуть её.",
-        reply_markup: kb([
-          [{ text: BUTTONS.restore, action: "subcategory:restore", payload: { id: existing.id, categoryId, type, page, subpage, source } }],
-          [{ text: BUTTONS.back, action: "subcategory:view", payload: { id: subcategoryId, categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]
-        ])
-      });
-      return;
+          text:
+            "такая подкатегория уже есть,\n" +
+            "но сейчас она скрыта\n\n" +
+            "что сделать?",
+          reply_markup: kb([
+            [{ text: BUTTONS.restore, action: "subcategory:restore", payload: { id: existing.id, categoryId, type, page, subpage, source } }],
+            [{ text: BUTTONS.back, action: "subcategory:view", payload: { id: subcategoryId, categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]
+          ])
+        });
+        return;
       }
       await this.sendMessage({
         chat_id: user.chatId,
-        text: "Такая подкатегория уже есть.",
+        text:
+          "изменить подкатегорию\n\n" +
+          "такая подкатегория уже есть\n\n" +
+          "пришли другое название сообщением",
         reply_markup: kb([[{ text: BUTTONS.back, action: "subcategory:view", payload: { id: subcategoryId, categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]])
       });
       return;
@@ -3335,8 +3347,12 @@ export class BotService {
     });
     await this.sendMessage({
       chat_id: user.chatId,
-      text: "Напиши категорию.\n\nЕсли в новой категории нет нужных подкатегорий, подкатегории у записей очистятся.",
-      reply_markup: kb([[{ text: BUTTONS.cancel, action: "category:view", payload: { id: categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]])
+      text:
+        "перенести все записи\n\n" +
+        "пришли категорию сообщением\n\n" +
+        "если в новой категории нет нужных подкатегорий,\n" +
+        "подкатегории у записей очистятся",
+      reply_markup: kb([[{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]])
     });
   }
 
@@ -3351,7 +3367,9 @@ export class BotService {
       await this.repo.clearSession(user.id);
       await this.sendMessage({
         chat_id: user.chatId,
-        text: "Это уже эта категория.",
+        text:
+          "перенести все записи\n\n" +
+          "это уже эта категория",
         reply_markup: kb([[{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]])
       });
       return;
@@ -4675,7 +4693,10 @@ export class BotService {
 
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `действия: ${selectedIds.length}`,
+      text:
+        "действия с записями\n\n" +
+        `выбрано: ${selectedIds.length}\n\n` +
+        "что хочешь сделать?",
       reply_markup: kb([
         [{ text: BUTTONS.transfer, action: "bulk:transfer", payload: { origin, page } }],
         [{ text: BUTTONS.delete, action: "bulk:delete", payload: { origin, page } }],
@@ -4754,7 +4775,12 @@ export class BotService {
     if (typeSet.size > 1) {
       await this.sendMessage({
         chat_id: user.chatId,
-        text: "Нельзя перенести вместе доходы и расходы.\n\nСними лишний выбор и попробуй ещё раз.",
+        text:
+          "перенести записи\n\n" +
+          "нельзя перенести вместе\n" +
+          "доходы и расходы\n\n" +
+          "сними лишний выбор\n" +
+          "и попробуй ещё раз",
         reply_markup: kb([
           [{ text: BUTTONS.back, action: "select:actions", payload: { origin, page } }],
           [{ text: BUTTONS.main, action: "nav:home" }]
@@ -4777,7 +4803,10 @@ export class BotService {
 
     await this.sendMessage({
       chat_id: user.chatId,
-      text: "Напиши категорию.",
+      text:
+        "перенести записи\n\n" +
+        `выбрано: ${selectedIds.length}\n\n` +
+        "пришли категорию сообщением",
       reply_markup: kb([[{ text: BUTTONS.cancel, action: "select:actions", payload: { origin, page } }, { text: BUTTONS.main, action: "nav:home" }]])
     });
   }
