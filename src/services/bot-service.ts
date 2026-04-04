@@ -389,7 +389,7 @@ export class BotService {
           categoryName: parsed.category
         })
       );
-      await this.repo.saveSession(user.id, { mode: "add", stack: ["home"], context: { source: "message" } });
+      await this.saveSessionKeepingScreen(user.id, { mode: "add", stack: ["home"], context: { source: "message" } });
       await this.sendMessage({
         chat_id: user.chatId,
         text:
@@ -591,7 +591,7 @@ export class BotService {
         return;
       case "onboarding:import":
         await this.repo.completeOnboarding(user.id);
-        await this.repo.saveSession(user.id, { mode: "data", stack: ["data"], context: { awaitingUploadType: "entries" } });
+        await this.saveSessionKeepingScreen(user.id, { mode: "data", stack: ["data"], context: { awaitingUploadType: "entries" } });
         await this.showEntriesImportAwaiting(user, "data:other-apps");
         return;
       case "onboarding:complete":
@@ -601,7 +601,7 @@ export class BotService {
         await this.showHome(user);
         return;
       case "add:start":
-        await this.repo.saveSession(user.id, { mode: "add", stack: ["home"], context: { type: params.type } });
+        await this.saveSessionKeepingScreen(user.id, { mode: "add", stack: ["home"], context: { type: params.type } });
         await this.repo.saveDraft(user.id, { type: String(params.type) as EntryType }, "amount");
         await this.sendMessage({
           chat_id: user.chatId,
@@ -642,7 +642,7 @@ export class BotService {
         await this.showDraft(user);
         return;
       case "draft:continue":
-        await this.repo.saveSession(user.id, { mode: "add", stack: ["home"], context: { source: "draft" } });
+        await this.saveSessionKeepingScreen(user.id, { mode: "add", stack: ["home"], context: { source: "draft" } });
         await this.continueDraft(user);
         return;
       case "draft:delete":
@@ -854,7 +854,7 @@ export class BotService {
         await this.showSearchEntry(user);
         return;
       case "search:prompt":
-        await this.repo.saveSession(user.id, { mode: "search", stack: ["home"], context: { awaiting: "query" } });
+        await this.saveSessionKeepingScreen(user.id, { mode: "search", stack: ["home"], context: { awaiting: "query" } });
         await this.sendMessage({
           chat_id: user.chatId,
           text:
@@ -967,7 +967,7 @@ export class BotService {
         );
         return;
       case "reports:custom":
-        await this.repo.saveSession(user.id, { mode: "reports", stack: ["home"], context: { awaiting: "custom-period" } });
+        await this.saveSessionKeepingScreen(user.id, { mode: "reports", stack: ["home"], context: { awaiting: "custom-period" } });
         await this.sendMessage({
           chat_id: user.chatId,
           text:
@@ -1015,7 +1015,7 @@ export class BotService {
         await this.showCategoryList(user, String(params.type) as EntryType, Number(params.page ?? "0"));
         return;
       case "categories:add":
-        await this.repo.saveSession(user.id, { mode: "categories", stack: ["categories"], context: { awaiting: "new-category", type: params.type } });
+        await this.saveSessionKeepingScreen(user.id, { mode: "categories", stack: ["categories"], context: { awaiting: "new-category", type: params.type } });
         await this.sendMessage({
           chat_id: user.chatId,
           text:
@@ -1027,7 +1027,7 @@ export class BotService {
         });
         return;
       case "categories:create":
-        await this.repo.saveSession(user.id, { mode: "categories", stack: ["add"], context: { awaiting: "new-category", type: params.type, returnTo: "add" } });
+        await this.saveSessionKeepingScreen(user.id, { mode: "categories", stack: ["add"], context: { awaiting: "new-category", type: params.type, returnTo: "add" } });
         await this.sendMessage({
           chat_id: user.chatId,
           text:
@@ -1112,7 +1112,7 @@ export class BotService {
         );
         return;
       case "subcategory:add":
-        await this.repo.saveSession(user.id, {
+        await this.saveSessionKeepingScreen(user.id, {
           mode: "categories",
           stack: ["categories"],
           context: { awaiting: "new-subcategory", categoryId: Number(params.categoryId), type: params.type, page: Number(params.page ?? "0"), subpage: Number(params.subpage ?? "0"), source: String(params.source ?? "list") }
@@ -1129,7 +1129,7 @@ export class BotService {
         return;
       case "subcategory:create": {
         const draft = await this.repo.getDraft(user.id);
-        await this.repo.saveSession(user.id, {
+        await this.saveSessionKeepingScreen(user.id, {
           mode: "categories",
           stack: ["add"],
           context: {
@@ -1372,11 +1372,11 @@ export class BotService {
         await this.showCurrencySettings(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), "валюта изменена");
         return;
       case "settings:currency-custom":
-        await this.repo.saveSession(user.id, { mode: "settings", stack: ["settings"], context: { awaiting: "currency" } });
+        await this.saveSessionKeepingScreen(user.id, { mode: "settings", stack: ["settings"], context: { awaiting: "currency" } });
         await this.showCustomCurrencySettings(user);
         return;
       case "settings:time":
-        await this.repo.saveSession(user.id, { mode: "settings", stack: ["settings"], context: { awaiting: "timezone" } });
+        await this.saveSessionKeepingScreen(user.id, { mode: "settings", stack: ["settings"], context: { awaiting: "timezone" } });
         await this.showTimeSettings(user);
         return;
       case "settings:subcategories":
@@ -1821,6 +1821,19 @@ export class BotService {
     });
   }
 
+  private async saveSessionKeepingScreen(userId: number, session: UiSession): Promise<void> {
+    const existingSession = await this.repo.getSession(userId);
+    await this.repo.saveSession(userId, {
+      ...session,
+      context: {
+        ...(typeof existingSession.context.screenMessageId === "number" && typeof session.context.screenMessageId !== "number"
+          ? { screenMessageId: existingSession.context.screenMessageId }
+          : {}),
+        ...session.context
+      }
+    });
+  }
+
   private async acquireUserUpdateLock(userId: number, updateKind: "callback" | "message", lockToken: string): Promise<boolean> {
     const attempts = updateKind === "callback" ? 40 : 80;
     const delayMs = 150;
@@ -1868,7 +1881,7 @@ export class BotService {
 
   private async showOnboarding(user: UserRecord, step: number): Promise<void> {
     await this.repo.setOnboardingStep(user.id, step);
-    await this.repo.saveSession(user.id, { mode: "onboarding", stack: [], context: { step } });
+    await this.saveSessionKeepingScreen(user.id, { mode: "onboarding", stack: [], context: { step } });
 
     const rows =
       step === 0
@@ -2427,7 +2440,7 @@ export class BotService {
       return;
     }
     const queueCount = await this.repo.getQueueCount(user.id);
-    await this.repo.saveSession(user.id, { mode: "queue", stack: ["home"], context: { queueId: item.id } });
+    await this.saveSessionKeepingScreen(user.id, { mode: "queue", stack: ["home"], context: { queueId: item.id } });
     const missingLabel = item.missing.length > 0 ? formatMissingField(String(item.missing[0])) : "";
     await this.sendMessage({
       chat_id: user.chatId,
@@ -2504,7 +2517,7 @@ export class BotService {
         },
         "category"
       );
-      await this.repo.saveSession(user.id, { mode: "add", stack: ["queue"], context: { source: "queue", queueId: item.id } });
+      await this.saveSessionKeepingScreen(user.id, { mode: "add", stack: ["queue"], context: { source: "queue", queueId: item.id } });
       await this.continueDraft(user);
       return;
     }
@@ -2545,7 +2558,7 @@ export class BotService {
         categoryName: parsed.category ? String(parsed.category) : undefined
       })
     );
-    await this.repo.saveSession(user.id, { mode: "add", stack: ["queue"], context: { source: "queue", queueId: item.id } });
+    await this.saveSessionKeepingScreen(user.id, { mode: "add", stack: ["queue"], context: { source: "queue", queueId: item.id } });
     await this.continueDraft(user);
   }
 
@@ -2706,7 +2719,7 @@ export class BotService {
       },
       "edit-menu"
     );
-    await this.repo.saveSession(user.id, {
+    await this.saveSessionKeepingScreen(user.id, {
       mode: "edit",
       stack: [source],
       context: {
@@ -2892,7 +2905,7 @@ export class BotService {
   }
 
   private async showSearchEntry(user: UserRecord): Promise<void> {
-    await this.repo.saveSession(user.id, { mode: "search", stack: ["home"], context: {} });
+    await this.saveSessionKeepingScreen(user.id, { mode: "search", stack: ["home"], context: {} });
     await this.sendMessage({
       chat_id: user.chatId,
       text:
@@ -3766,7 +3779,7 @@ export class BotService {
         draft.payload.subcategoryName = undefined;
         const subcategoryCount = user.subcategoriesEnabled ? await this.repo.getSubcategoryCount(user.id, category.id) : 0;
         await this.repo.saveDraft(user.id, draft.payload, subcategoryCount > 0 ? "subcategory" : "description");
-        await this.repo.saveSession(user.id, { mode: "add", stack: ["home"], context: { source: "message" } });
+        await this.saveSessionKeepingScreen(user.id, { mode: "add", stack: ["home"], context: { source: "message" } });
         if (subcategoryCount > 0) {
           await this.promptAddSubcategory(user, category.id);
           return;
@@ -3803,7 +3816,7 @@ export class BotService {
         draft.payload.subcategoryId = subcategory.id;
         draft.payload.subcategoryName = subcategory.name;
         await this.repo.saveDraft(user.id, draft.payload, "description");
-        await this.repo.saveSession(user.id, { mode: "add", stack: ["home"], context: { source: "message" } });
+        await this.saveSessionKeepingScreen(user.id, { mode: "add", stack: ["home"], context: { source: "message" } });
         await this.showAddDescriptionStep(user, draft.payload);
         return;
       }
