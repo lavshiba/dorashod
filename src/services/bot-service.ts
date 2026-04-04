@@ -564,6 +564,16 @@ export class BotService {
           typeof params.query === "string" ? String(params.query) : undefined
         );
         return;
+      case "entry:change-time":
+        await this.startEditEntry(
+          user,
+          Number(params.id),
+          Number(params.page ?? "0"),
+          params.source === "report" ? "report" : params.source === "search" ? "search" : params.source === "category" ? "category" : "operations",
+          typeof params.query === "string" ? String(params.query) : undefined,
+          "time"
+        );
+        return;
       case "entry:delete":
         await this.telegram.sendMessage({
           chat_id: user.chatId,
@@ -599,6 +609,16 @@ export class BotService {
             return;
           }
           await this.showSearchResults(user, String(params.query ?? session.context.query ?? ""), Number(params.page ?? "0"));
+          return;
+        }
+        if (params.source === "category") {
+          await this.showCategoryEntries(
+            user,
+            Number(session.context.categoryEntriesCategoryId),
+            typeof session.context.categoryEntriesSubcategoryId === "number" ? (session.context.categoryEntriesSubcategoryId as number) : undefined,
+            String(session.context.categoryEntriesType) as EntryType,
+            Number(params.page ?? "0")
+          );
           return;
         }
         await this.showOperations(user, Number(params.page ?? "0"));
@@ -1187,6 +1207,33 @@ export class BotService {
       draft.payload.subcategoryName = text.trim();
     } else if (field === "description") {
       draft.payload.description = text.trim();
+    } else if (field === "date") {
+      const parsed = parseEditableDate(text);
+      if (!parsed) {
+        await this.telegram.sendMessage({ chat_id: user.chatId, text: "Не удалось понять дату. Напиши дату ещё раз." });
+        return;
+      }
+      draft.payload.entryDate = parsed.entryDate;
+      draft.payload.isDateMissing = parsed.isDateMissing;
+      if (parsed.isDateMissing) {
+        draft.payload.entryTime = null;
+        draft.payload.isTimeAuto = true;
+      } else if (!draft.payload.entryTime) {
+        draft.payload.entryTime = this.userNow(user.timezoneName).time.slice(0, 5);
+        draft.payload.isTimeAuto = true;
+      }
+    } else if (field === "time") {
+      const parsed = parseEditableTime(text);
+      if (!parsed) {
+        await this.telegram.sendMessage({ chat_id: user.chatId, text: "Не удалось понять время. Напиши время ещё раз." });
+        return;
+      }
+      draft.payload.entryTime = parsed.entryTime;
+      draft.payload.isTimeAuto = parsed.isTimeAuto;
+      if (!draft.payload.entryDate || draft.payload.isDateMissing) {
+        draft.payload.entryDate = this.userNow(user.timezoneName).date;
+        draft.payload.isDateMissing = false;
+      }
     }
 
     await this.repo.saveDraft(user.id, draft.payload, "edit-menu");
@@ -1537,6 +1584,7 @@ export class BotService {
       reply_markup: kb([
         [{ text: BUTTONS.edit, action: "entry:edit", payload: { id: entry.id, page, source, query } }],
         [{ text: BUTTONS.delete, action: "entry:delete", payload: { id: entry.id, page, source, query } }],
+        ...(entry.isTimeAuto ? [[{ text: BUTTONS.changeTime, action: "entry:change-time", payload: { id: entry.id, page, source, query } }]] : []),
         [
           { text: "◀️", action: prevId ? "entry:move" : "noop", payload: prevId ? { id: prevId, page, source, query } : undefined },
           { text: "▶️", action: nextId ? "entry:move" : "noop", payload: nextId ? { id: nextId, page, source, query } : undefined }
@@ -1551,7 +1599,8 @@ export class BotService {
     entryId: number,
     page: number,
     source: "operations" | "search" | "report" | "category",
-    query?: string
+    query?: string,
+    initialField?: string
   ): Promise<void> {
     const entry = await this.repo.getEntryById(user.id, entryId);
     if (!entry) {
@@ -1584,6 +1633,7 @@ export class BotService {
         page,
         source,
         query,
+        awaitingField: initialField,
         originalDraft: JSON.stringify({
           type: entry.type,
           amountMinor: entry.amountMinor,
@@ -1597,6 +1647,10 @@ export class BotService {
         })
       }
     });
+    if (initialField) {
+      await this.promptEditField(user, initialField);
+      return;
+    }
     await this.showEditScreen(user);
   }
 
@@ -1612,13 +1666,15 @@ export class BotService {
       chat_id: user.chatId,
       text:
         `изменить\n\n${this.describeDraft(draft.payload, user.currencyLabel)}\n` +
-        `${draft.payload.entryDate ? `дата: ${draft.payload.entryDate}\n` : ""}` +
-        `${draft.payload.entryTime ? `время: ${draft.payload.entryTime}\n` : ""}`,
+        `дата: ${draft.payload.isDateMissing ? "дата не указана" : draft.payload.entryDate ?? "дата не указана"}\n` +
+        `время: ${draft.payload.entryTime ?? (draft.payload.isTimeAuto ? "время поставлено автоматически" : "не указано")}`,
       reply_markup: kb([
         [{ text: "сумма", action: "edit:field", payload: { field: "amount" } }],
         [{ text: "категория", action: "edit:field", payload: { field: "category" } }],
         [{ text: "подкатегория", action: "edit:field", payload: { field: "subcategory" } }],
         [{ text: "описание", action: "edit:field", payload: { field: "description" } }],
+        [{ text: "дата", action: "edit:field", payload: { field: "date" } }],
+        [{ text: "время", action: "edit:field", payload: { field: "time" } }],
         [{ text: BUTTONS.save, action: "edit:save" }],
         [{ text: BUTTONS.back, action: "edit:leave", payload: { target: "source" } }, { text: BUTTONS.main, action: "edit:leave", payload: { target: "home" } }]
       ])
@@ -1637,7 +1693,9 @@ export class BotService {
       amount: "Напиши сумму.",
       category: "Напиши категорию.",
       subcategory: "Напиши подкатегорию.",
-      description: "Напиши описание."
+      description: "Напиши описание.",
+      date: "Напиши дату.",
+      time: "Напиши время."
     };
 
     await this.telegram.sendMessage({
@@ -1669,11 +1727,13 @@ export class BotService {
 
     await this.repo.deleteDraft(user.id);
     await this.repo.saveSession(user.id, { mode: "idle", stack: [], context: {} });
+    const source = String(session.context.source ?? "operations");
     await this.showEntryCard(
       user,
       Number(session.context.entryId),
-      String(session.context.source) === "search" ? "search" : "operations",
-      Number(session.context.page ?? 0)
+      source === "search" ? "search" : source === "report" ? "report" : source === "category" ? "category" : "operations",
+      Number(session.context.page ?? 0),
+      typeof session.context.query === "string" ? String(session.context.query) : undefined
     );
   }
 
@@ -3835,6 +3895,36 @@ function parseImportedTime(value: string): string | null {
     return null;
   }
   return `${match[1].padStart(2, "0")}:${match[2]}`;
+}
+
+function parseEditableDate(value: string): { entryDate: string | null; isDateMissing: boolean } | null {
+  const raw = value.trim().toLowerCase();
+  if (!raw) {
+    return null;
+  }
+  if (raw === "дата не указана") {
+    return { entryDate: null, isDateMissing: true };
+  }
+  const parsed = parseImportedDate(value);
+  if (!parsed.readable) {
+    return null;
+  }
+  return { entryDate: parsed.value, isDateMissing: false };
+}
+
+function parseEditableTime(value: string): { entryTime: string | null; isTimeAuto: boolean } | null {
+  const raw = value.trim().toLowerCase();
+  if (!raw) {
+    return null;
+  }
+  if (raw === "авто") {
+    return { entryTime: null, isTimeAuto: true };
+  }
+  const parsed = parseImportedTime(value);
+  if (!parsed) {
+    return null;
+  }
+  return { entryTime: parsed, isTimeAuto: false };
 }
 
 function makeEntryDedupKey(entry: {
