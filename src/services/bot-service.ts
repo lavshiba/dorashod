@@ -4459,10 +4459,10 @@ export class BotService {
         chat_id: user.chatId,
         text:
           `<b>${BOT_TITLE}</b>\n\n` +
-          "быстрый доступ подкатегорий\n\n" +
-          "подкатегорий пока нет\n\n" +
-          "можешь добавить первую,\n" +
-          "а потом выбрать быстрые",
+          "быстрый доступ\n" +
+          "подкатегорий\n\n" +
+          "категорий пока нет\n\n" +
+          "можно вернуться назад",
         reply_markup: kb([[{ text: BUTTONS.back, action: "settings:quick-access-section", payload: { section: "subcategories" } }, { text: BUTTONS.main, action: "nav:home" }]])
       });
       return;
