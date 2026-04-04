@@ -2,6 +2,12 @@
 
 Production-ready Telegram-бот для учёта доходов и расходов прямо в Telegram. Проект рассчитан на автономную работу 24/7 без включённого компьютера владельца: весь runtime живёт в Cloudflare Workers, данные хранятся в Cloudflare D1, входящие обновления Telegram принимаются через webhook, а периодические проверки и напоминания запускаются через Cloudflare Cron Triggers.
 
+Тексты интерфейса сейчас дополнительно заморожены внешним пакетом:
+
+- `/home/abihsgelo/.var/app/org.telegram.desktop/data/TelegramDesktop/tdata/temp_data/codex_ui_texts_package/frozen_ui_texts_for_codex.txt`
+
+Если тексты в коде или документации расходятся с этим файлом, приоритет у него.
+
 ## Текущий статус
 
 Сейчас в проекте уже есть:

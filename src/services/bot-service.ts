@@ -467,9 +467,10 @@ export class BotService {
         await this.repo.completeOnboarding(user.id);
         await this.sendMessage({
           chat_id: user.chatId,
-          text: "Можно добавить доход или расход сейчас, или перейти на главную.",
+          text: `<b>${BOT_TITLE}</b>\n\nможно начать с первой записи\nили сначала просто осмотреться`,
           reply_markup: kb([
-            [{ text: BUTTONS.income, action: "add:start", payload: { type: "income" } }, { text: BUTTONS.expense, action: "add:start", payload: { type: "expense" } }],
+            [{ text: BUTTONS.income, action: "add:start", payload: { type: "income" } }],
+            [{ text: BUTTONS.expense, action: "add:start", payload: { type: "expense" } }],
             [{ text: BUTTONS.toMain, action: "nav:home" }]
           ])
         });
@@ -1234,7 +1235,7 @@ export class BotService {
 
     const rows =
       step === 0
-        ? [[{ text: BUTTONS.start, action: "onboarding:start" }, { text: BUTTONS.skip, action: "onboarding:skip" }]]
+        ? [[{ text: BUTTONS.start, action: "onboarding:start" }], [{ text: BUTTONS.skip, action: "onboarding:skip" }]]
         : step === 6
           ? [
               [{ text: BUTTONS.back, action: "onboarding:back", payload: { step } }, { text: BUTTONS.moveData, action: "onboarding:import" }],
@@ -1277,7 +1278,13 @@ export class BotService {
       rows.push([{ text: BUTTONS.howToUse, callback_data: "a=onboarding%3Ashow&step=0" }]);
       await this.sendMessage({
         chat_id: user.chatId,
-        text: `${notice ? `${notice}\n\n` : ""}пока записей нет\nможно добавить доход или расход кнопками\nили просто написать запись сообщением\n-450 продукты пятёрочка хлеб`,
+        text:
+          `<b>${BOT_TITLE}</b>\n\n` +
+          `${notice ? `${notice}\n\n` : ""}` +
+          `пока записей нет\n\n` +
+          `можно добавить доход или расход\nкнопками ниже\n\n` +
+          `или просто написать запись сообщением\n\n` +
+          `например:\n-450 продукты пятёрочка хлеб`,
         reply_markup: { inline_keyboard: rows }
       });
       return;
@@ -1297,10 +1304,11 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `<b>${BOT_TITLE}</b>\n\n` +
         `${notice ? `${notice}\n\n` : ""}` +
         `сегодня\nдоход: ${formatAmountByType(stats.todayIncome, "income", user.currencyLabel)}\nрасход: ${formatAmountByType(stats.todayExpense, "expense", user.currencyLabel)}\n\n` +
         `месяц\nдоход: ${formatAmountByType(stats.monthIncome, "income", user.currencyLabel)}\nрасход: ${formatAmountByType(stats.monthExpense, "expense", user.currencyLabel)}\nбаланс: ${formatAmountFromMinor(stats.monthIncome - stats.monthExpense, user.currencyLabel)}\n\n` +
-        `последняя запись\n${lastEntry}`,
+        `последняя запись:\n${lastEntry}`,
       reply_markup: { inline_keyboard: rows }
     });
   }
