@@ -2627,7 +2627,7 @@ export class BotService {
         `${formatAmountByType(entry.amountMinor, entry.type, user.currencyLabel)}\n\n` +
         `${entry.categoryName}${entry.subcategoryName ? ` → ${entry.subcategoryName}` : ""}\n\n` +
         `${entry.description ? `${entry.description}\n\n` : ""}` +
-        `${entry.isDateMissing ? "дата не указана" : `${entry.entryDate} ${entry.entryTime ?? ""}`.trim()}\n\n` +
+        `${formatEntryReadableDate(entry.entryDate, entry.entryTime, entry.isDateMissing)}\n\n` +
         `${entry.isTimeAuto ? "время поставлено автоматически" : ""}`,
       reply_markup: kb([
         ...(entry.isTimeAuto ? [[{ text: BUTTONS.changeTime, action: "entry:change-time", payload: { id: entry.id, page, source, query } }]] : []),
@@ -2866,9 +2866,11 @@ export class BotService {
         `<b>${BOT_TITLE}</b>\n\n` +
         `поиск записей\n\n` +
         `здесь можно искать\n` +
-        `по сумме, дате, периоду,\n` +
-        `типу, категории,\n` +
-        `подкатегории и описанию`,
+        `по сумме, дате, типу,\n` +
+        `категории, подкатегории\n` +
+        `и описанию\n\n` +
+        `чтобы ввести запрос,\n` +
+        `нажми кнопку ниже`,
       reply_markup: kb([
         [{ text: BUTTONS.enterQuery, action: "search:prompt" }],
         [{ text: BUTTONS.today, action: "search:quick", payload: { period: "today" } }, { text: BUTTONS.yesterday, action: "search:quick", payload: { period: "yesterday" } }],
@@ -2973,8 +2975,7 @@ export class BotService {
         chat_id: user.chatId,
         text:
           `<b>${BOT_TITLE}</b>\n\n` +
-          `поиск записей\n\n` +
-          `запрос:\n${title}\n\n` +
+          `записи за ${title}\n\n` +
           `ничего не найдено`,
         reply_markup: kb([
           [{ text: BUTTONS.newSearch, action: "search:open" }],
@@ -2997,10 +2998,8 @@ export class BotService {
       chat_id: user.chatId,
       text:
         `<b>${BOT_TITLE}</b>\n\n` +
-        `поиск записей\n\n` +
+        `записи за ${title}\n\n` +
         `${notice ? `${notice}\n\n` : ""}` +
-        `запрос:\n${title}\n\n` +
-        `найдено: ${data.total}\n\n` +
         `${lines}`,
       reply_markup: kb([
         ...chunkButtons(numberButtons, 3),
