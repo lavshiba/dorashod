@@ -124,6 +124,12 @@ export interface TelegramMessagePayload {
   text: string;
   reply_markup?: {
     inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
+  } | {
+    keyboard: Array<Array<{ text: string; request_location?: boolean }>>;
+    resize_keyboard?: boolean;
+    one_time_keyboard?: boolean;
+  } | {
+    remove_keyboard: boolean;
   };
 }
 

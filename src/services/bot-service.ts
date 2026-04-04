@@ -633,6 +633,11 @@ export class BotService {
         await this.finalizeDraft(user, undefined);
         return;
       case "add:cancel":
+        if (String((await this.repo.getSession(user.id)).context.source ?? "") === "draft") {
+          await this.clearSessionKeepingScreen(user.id);
+          await this.showDraft(user);
+          return;
+        }
         await this.clearSessionKeepingScreen(user.id);
         await this.showHome(user);
         return;
@@ -647,7 +652,7 @@ export class BotService {
         await this.sendMessage({
           chat_id: user.chatId,
           text: `<b>${BOT_TITLE}</b>\n\nудалить черновик?\n\nвернуть его потом не получится`,
-          reply_markup: kb([[{ text: BUTTONS.yesDelete, action: "draft:confirm-delete" }], [{ text: BUTTONS.back, action: "draft:open" }, { text: BUTTONS.main, action: "nav:home" }]])
+          reply_markup: kb([[{ text: BUTTONS.yesDelete, action: "draft:confirm-delete" }], [{ text: BUTTONS.cancel, action: "draft:open" }, { text: BUTTONS.main, action: "nav:home" }]])
         });
         return;
       case "draft:confirm-delete":
@@ -1629,11 +1634,16 @@ export class BotService {
         return;
       case "data:export-full": {
         const snapshot = await this.repo.exportFullUserSnapshot(user.id);
-        await this.telegram.sendDocument({
+        const messageId = await this.telegram.sendDocument({
           chat_id: user.chatId,
           filename: "finance-bot-backup.json",
           content: JSON.stringify(snapshot, null, 2),
           caption: "полная копия для этого бота"
+        });
+        await this.saveSessionKeepingScreen(user.id, {
+          mode: "data",
+          stack: ["data"],
+          context: { exportedDocumentMessageId: messageId }
         });
         await this.sendMessage({
           chat_id: user.chatId,
@@ -1650,11 +1660,16 @@ export class BotService {
       }
       case "data:export-entries": {
         const snapshot = await this.repo.exportEntriesSnapshot(user.id);
-        await this.telegram.sendDocument({
+        const messageId = await this.telegram.sendDocument({
           chat_id: user.chatId,
           filename: "finance-bot-entries.json",
           content: JSON.stringify(snapshot, null, 2),
           caption: "записи для других приложений"
+        });
+        await this.saveSessionKeepingScreen(user.id, {
+          mode: "data",
+          stack: ["data"],
+          context: { exportedDocumentMessageId: messageId }
         });
         await this.sendMessage({
           chat_id: user.chatId,
@@ -1681,13 +1696,24 @@ export class BotService {
     payload: {
       chat_id: string;
       text: string;
-      reply_markup?: {
-        inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
-      };
+      reply_markup?:
+        | {
+            inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
+          }
+        | {
+            keyboard: Array<Array<{ text: string; request_location?: boolean }>>;
+            resize_keyboard?: boolean;
+            one_time_keyboard?: boolean;
+          }
+        | {
+            remove_keyboard: boolean;
+          };
     },
     options?: { forceNew?: boolean; formatText?: boolean }
   ): Promise<void> {
     const text = options?.formatText === false ? payload.text : formatTelegramScreenText(payload.text);
+    const usesInlineKeyboard = Boolean(payload.reply_markup && "inline_keyboard" in payload.reply_markup);
+    const inlineReplyMarkup = usesInlineKeyboard ? payload.reply_markup as { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> } : undefined;
     let persistedMessageId: number | undefined;
     const staleMessageIds = new Set<number>();
     if (this.currentUserId !== null) {
@@ -1698,13 +1724,13 @@ export class BotService {
       }
     }
 
-    if (!options?.forceNew && this.callbackContext && !this.didEditCurrentCallback && this.callbackContext.chatId === String(payload.chat_id)) {
+    if (!options?.forceNew && usesInlineKeyboard && this.callbackContext && !this.didEditCurrentCallback && this.callbackContext.chatId === String(payload.chat_id)) {
       try {
         await this.telegram.editMessageText({
           chat_id: this.callbackContext.chatId,
           message_id: this.callbackContext.messageId,
           text,
-          reply_markup: payload.reply_markup
+          reply_markup: inlineReplyMarkup
         });
         this.didEditCurrentCallback = true;
         this.lastBotMessageByChat.set(String(payload.chat_id), this.callbackContext.messageId);
@@ -1723,13 +1749,13 @@ export class BotService {
     }
 
     const knownMessageId = this.lastBotMessageByChat.get(String(payload.chat_id)) ?? persistedMessageId;
-    if (!options?.forceNew && knownMessageId) {
+    if (!options?.forceNew && usesInlineKeyboard && knownMessageId) {
       try {
         await this.telegram.editMessageText({
           chat_id: String(payload.chat_id),
           message_id: knownMessageId,
           text,
-          reply_markup: payload.reply_markup
+          reply_markup: inlineReplyMarkup
         });
         this.lastBotMessageByChat.set(String(payload.chat_id), knownMessageId);
         await this.persistScreenMessageId(knownMessageId);
@@ -1777,6 +1803,19 @@ export class BotService {
         ...session.context,
         screenMessageId: messageId
       }
+    });
+  }
+
+  private async cleanupExportedDocument(userId: number, chatId: string): Promise<void> {
+    const session = await this.repo.getSession(userId);
+    const exportedDocumentMessageId = Number(session.context.exportedDocumentMessageId ?? 0);
+    if (!exportedDocumentMessageId) {
+      return;
+    }
+    await this.safeDeleteMessage(chatId, exportedDocumentMessageId);
+    await this.saveSessionKeepingScreen(userId, {
+      ...session,
+      context: Object.fromEntries(Object.entries(session.context).filter(([key]) => key !== "exportedDocumentMessageId"))
     });
   }
 
@@ -1899,6 +1938,7 @@ export class BotService {
   }
 
   private async showHome(user: UserRecord, notice?: string): Promise<void> {
+    await this.cleanupExportedDocument(user.id, user.chatId);
     await this.clearSessionKeepingScreen(user.id);
 
     const nowForUser = this.userNow(user.timezoneName);
@@ -1976,22 +2016,6 @@ export class BotService {
     }
 
     if (incomingAttempt.missing.length === 0 && incomingAttempt.type && incomingAttempt.amountMinor && incomingAttempt.category) {
-      if (draft.step === "amount" && !hasDraftProgress) {
-        await this.repo.createEntry({
-          user,
-          type: incomingAttempt.type,
-          amountMinor: incomingAttempt.amountMinor,
-          categoryName: incomingAttempt.category,
-          subcategoryName: incomingAttempt.subcategory,
-          description: incomingAttempt.description,
-          source: "message"
-        });
-        await this.repo.deleteDraft(user.id);
-        await this.clearSessionKeepingScreen(user.id);
-        await this.showHome(user, "запись добавлена");
-        return;
-      }
-
       await this.repo.enqueueIntake(user.id, "add-conflict", text, incomingAttempt, incomingAttempt.missing);
       await this.showHome(user, "новые записи: 1");
       return;
@@ -3534,7 +3558,7 @@ export class BotService {
         `${visibleSubcategories.length ? `подкатегории:\n\n${visibleSubcategories.map((item, index) => `${index + 1}. ${item.name}\nзаписей: ${item.usageCountCache}`).join("\n\n")}` : "подкатегорий пока нет"}`,
       reply_markup: kb([
         ...(visibleSubcategories.length
-          ? [visibleSubcategories.map((item, index) => ({ text: String(index + 1), action: "subcategory:view", payload: { id: item.id, categoryId: category.id, page, subpage, type, source } }))]
+          ? [visibleSubcategories.map((item, index) => ({ text: String(index + 1), action: "subcategory:entries", payload: { id: item.id, categoryId: category.id, page: 0, type, source } }))]
           : []),
         ...(subcategories.length > 6 || subpage > 0 ? [buildPageRow(subpage, subcategories.length > (subpage + 1) * 6, "category:view", { id: category.id, page, subpage, type, source })] : []),
         [{ text: BUTTONS.addSubcategory, action: "subcategory:add", payload: { categoryId: category.id, page, subpage, type, source } }],
@@ -4246,11 +4270,14 @@ export class BotService {
         `санкт-петербург\n` +
         `москва\n` +
         `хельсинки`,
-      reply_markup: kb([
-        [{ text: BUTTONS.sendLocation, action: "noop" }],
-        [{ text: BUTTONS.back, action: "settings:open" }, { text: BUTTONS.main, action: "nav:home" }]
-      ])
-    });
+      reply_markup: notice
+        ? kb([[{ text: BUTTONS.back, action: "settings:open" }, { text: BUTTONS.main, action: "nav:home" }]])
+        : {
+            keyboard: [[{ text: BUTTONS.sendLocation, request_location: true }]],
+            resize_keyboard: true,
+            one_time_keyboard: true
+          }
+    }, { forceNew: !notice });
   }
 
   private async showTimeUnknown(user: UserRecord): Promise<void> {
@@ -4261,11 +4288,12 @@ export class BotService {
         "не получилось определить время\n\n" +
         "пришли другой город\n" +
         "или отправь геопозицию",
-      reply_markup: kb([
-        [{ text: BUTTONS.sendLocation, action: "noop" }],
-        [{ text: BUTTONS.back, action: "settings:time" }, { text: BUTTONS.main, action: "nav:home" }]
-      ])
-    });
+      reply_markup: {
+        keyboard: [[{ text: BUTTONS.sendLocation, request_location: true }]],
+        resize_keyboard: true,
+        one_time_keyboard: true
+      }
+    }, { forceNew: true });
   }
 
   private async showCustomCurrencySettings(user: UserRecord): Promise<void> {
@@ -4856,6 +4884,7 @@ export class BotService {
   }
 
   private async showDataThisBot(user: UserRecord, notice?: string): Promise<void> {
+    await this.cleanupExportedDocument(user.id, user.chatId);
     await this.sendMessage({
       chat_id: user.chatId,
       text:
@@ -4897,13 +4926,7 @@ export class BotService {
       return;
     }
 
-    const snapshot = pendingImport.previewJson as {
-      entries?: number;
-      expenseCategories?: number;
-      incomeCategories?: number;
-      hasDraft?: boolean;
-      queue?: number;
-    };
+    const snapshot = summarizeFullSnapshot(pendingImport.previewJson);
 
     await this.saveSessionKeepingScreen(user.id, {
       mode: "data",
@@ -4951,6 +4974,7 @@ export class BotService {
   }
 
   private async showDataOtherApps(user: UserRecord, notice?: string): Promise<void> {
+    await this.cleanupExportedDocument(user.id, user.chatId);
     await this.sendMessage({
       chat_id: user.chatId,
       text:
@@ -6270,18 +6294,46 @@ function buildPageRow(
   action: string,
   payload: Record<string, string | number | undefined> = {}
 ): Array<{ text: string; action: string; payload?: Record<string, string | number | undefined> }> {
-  return [
-    {
+  const row: Array<{ text: string; action: string; payload?: Record<string, string | number | undefined> }> = [];
+  if (page > 0) {
+    row.push({
       text: "◀️",
-      action: page > 0 ? action : "noop",
-      payload: page > 0 ? { ...payload, page: page - 1 } : undefined
-    },
-    {
+      action,
+      payload: { ...payload, page: page - 1 }
+    });
+  }
+  row.push({
+    text: `${page + 1}`,
+    action: "noop"
+  });
+  if (hasNext) {
+    row.push({
       text: "▶️",
-      action: hasNext ? action : "noop",
-      payload: hasNext ? { ...payload, page: page + 1 } : undefined
-    }
-  ];
+      action,
+      payload: { ...payload, page: page + 1 }
+    });
+  }
+  return row;
+}
+
+function summarizeFullSnapshot(raw: Record<string, unknown>): {
+  entries: number;
+  expenseCategories: number;
+  incomeCategories: number;
+  hasDraft: boolean;
+  queue: number;
+} {
+  return {
+    entries: Array.isArray(raw.entries) ? raw.entries.length : 0,
+    expenseCategories: Array.isArray(raw.categories)
+      ? raw.categories.filter((item) => typeof item === "object" && item && (item as { type?: unknown }).type === "expense").length
+      : 0,
+    incomeCategories: Array.isArray(raw.categories)
+      ? raw.categories.filter((item) => typeof item === "object" && item && (item as { type?: unknown }).type === "income").length
+      : 0,
+    hasDraft: Boolean(raw.draft),
+    queue: Array.isArray(raw.intake_queue) ? raw.intake_queue.length : 0
+  };
 }
 
 function parseFullSnapshot(content: string):
@@ -6301,19 +6353,16 @@ function parseFullSnapshot(content: string):
     if (!raw || typeof raw !== "object") {
       return null;
     }
+    const summary = summarizeFullSnapshot(raw);
     return {
       raw,
       categories: Array.isArray(raw.categories) ? raw.categories.length : 0,
-      expenseCategories: Array.isArray(raw.categories)
-        ? raw.categories.filter((item) => typeof item === "object" && item && (item as { type?: unknown }).type === "expense").length
-        : 0,
-      incomeCategories: Array.isArray(raw.categories)
-        ? raw.categories.filter((item) => typeof item === "object" && item && (item as { type?: unknown }).type === "income").length
-        : 0,
+      expenseCategories: summary.expenseCategories,
+      incomeCategories: summary.incomeCategories,
       subcategories: Array.isArray(raw.subcategories) ? raw.subcategories.length : 0,
-      entries: Array.isArray(raw.entries) ? raw.entries.length : 0,
-      hasDraft: Boolean(raw.draft),
-      queue: Array.isArray(raw.intake_queue) ? raw.intake_queue.length : 0
+      entries: summary.entries,
+      hasDraft: summary.hasDraft,
+      queue: summary.queue
     };
   } catch {
     return null;

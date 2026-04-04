@@ -52,7 +52,7 @@ export class TelegramApi {
     return this.call("getWebhookInfo", {});
   }
 
-  async sendDocument(payload: TelegramDocumentPayload): Promise<void> {
+  async sendDocument(payload: TelegramDocumentPayload): Promise<number> {
     const formData = new FormData();
     formData.set("chat_id", payload.chat_id);
     formData.set("caption", payload.caption ?? "");
@@ -76,6 +76,7 @@ export class TelegramApi {
     if (!body.ok) {
       throw new Error("Telegram API sendDocument returned ok=false");
     }
+    return Number((body.result as { message_id?: number }).message_id ?? 0);
   }
 
   async downloadTextFile(fileId: string): Promise<{ filePath: string; content: string }> {
