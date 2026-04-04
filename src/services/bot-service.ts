@@ -2608,7 +2608,7 @@ export class BotService {
 
   private async handleCategoryTransferAll(user: UserRecord, categoryId: number, type: EntryType, page: number, text: string, subpage = 0): Promise<void> {
     const result = await this.repo.transferAllCategoryEntries(user, categoryId, type, text);
-    if (result === "same") {
+    if (result.status === "same") {
       await this.repo.clearSession(user.id);
       await this.telegram.sendMessage({
         chat_id: user.chatId,
@@ -2621,7 +2621,9 @@ export class BotService {
     await this.showCategoryCard(user, categoryId, type, page, subpage);
     await this.telegram.sendMessage({
       chat_id: user.chatId,
-      text: "записи перенесены"
+      text:
+        `записи перенесены: ${result.movedCount}` +
+        (result.clearedSubcategoryCount > 0 ? `\nбез подкатегории: ${result.clearedSubcategoryCount}` : "")
     });
   }
 
@@ -2652,11 +2654,12 @@ export class BotService {
     subpage: number,
     targetSubcategoryId: number | null
   ): Promise<void> {
+    const movedCount = await this.repo.getSubcategoryUsageCount(subcategoryId);
     await this.repo.transferAllSubcategoryEntries(user.id, subcategoryId, targetSubcategoryId);
     await this.showSubcategoryCard(user, subcategoryId, categoryId, type, page, subpage);
     await this.telegram.sendMessage({
       chat_id: user.chatId,
-      text: "записи перенесены"
+      text: `записи перенесены: ${movedCount}`
     });
   }
 

@@ -15,6 +15,17 @@ import { normalizeName } from "@/utils/normalize";
 
 type D1Value = string | number | null;
 
+type CategoryTransferRow = {
+  id: number;
+  subcategoryNormalizedName: string | null;
+};
+
+export type CategoryTransferPlan = {
+  updates: Array<{ entryId: number; targetSubcategoryId: number | null }>;
+  movedCount: number;
+  clearedSubcategoryCount: number;
+};
+
 function json<T>(value: T): string {
   return JSON.stringify(value);
 }
@@ -619,10 +630,15 @@ export class Repository {
       .run();
   }
 
-  async transferAllCategoryEntries(user: UserRecord, sourceCategoryId: number, type: EntryType, targetCategoryName: string): Promise<"ok" | "same"> {
+  async transferAllCategoryEntries(
+    user: UserRecord,
+    sourceCategoryId: number,
+    type: EntryType,
+    targetCategoryName: string
+  ): Promise<{ status: "ok"; movedCount: number; clearedSubcategoryCount: number } | { status: "same" }> {
     const targetCategory = await this.ensureCategory(user.id, type, targetCategoryName);
     if (targetCategory.id === sourceCategoryId) {
-      return "same";
+      return { status: "same" };
     }
 
     const [entryRows, targetSubcategoryRows] = await Promise.all([
@@ -638,7 +654,7 @@ export class Repository {
         .bind(user.id, sourceCategoryId)
         .all<Record<string, D1Value>>(),
       this.db
-        .prepare("SELECT id, normalized_name FROM subcategories WHERE user_id = ? AND category_id = ?")
+        .prepare("SELECT id, normalized_name FROM subcategories WHERE user_id = ? AND category_id = ? AND hidden_at IS NULL")
         .bind(user.id, targetCategory.id)
         .all<Record<string, D1Value>>()
     ]);
@@ -648,7 +664,15 @@ export class Repository {
       targetMap.set(String(row.normalized_name), Number(row.id));
     }
 
-    const statements = (entryRows.results ?? []).map((row) =>
+    const plan = buildCategoryTransferPlan(
+      (entryRows.results ?? []).map((row) => ({
+        id: Number(row.id),
+        subcategoryNormalizedName: row.subcategory_normalized_name ? String(row.subcategory_normalized_name) : null
+      })),
+      targetMap
+    );
+
+    const statements = plan.updates.map((row) =>
       this.db
         .prepare(
           `
@@ -657,19 +681,18 @@ export class Repository {
           WHERE user_id = ? AND id = ?
         `
         )
-        .bind(
-          targetCategory.id,
-          row.subcategory_normalized_name ? (targetMap.get(String(row.subcategory_normalized_name)) ?? null) : null,
-          user.id,
-          Number(row.id)
-        )
+        .bind(targetCategory.id, row.targetSubcategoryId, user.id, row.entryId)
     );
 
     if (statements.length > 0) {
       await this.db.batch(statements);
     }
 
-    return "ok";
+    return {
+      status: "ok",
+      movedCount: plan.movedCount,
+      clearedSubcategoryCount: plan.clearedSubcategoryCount
+    };
   }
 
   async transferAllSubcategoryEntries(userId: number, sourceSubcategoryId: number, targetSubcategoryId: number | null): Promise<void> {
@@ -1639,6 +1662,25 @@ export class Repository {
       ].join("|")
     );
   }
+}
+
+export function buildCategoryTransferPlan(
+  entryRows: CategoryTransferRow[],
+  targetMap: Map<string, number>
+): CategoryTransferPlan {
+  const updates = entryRows.map((row) => {
+    const targetSubcategoryId = row.subcategoryNormalizedName ? (targetMap.get(row.subcategoryNormalizedName) ?? null) : null;
+    return {
+      entryId: row.id,
+      targetSubcategoryId
+    };
+  });
+
+  return {
+    updates,
+    movedCount: updates.length,
+    clearedSubcategoryCount: entryRows.filter((row) => row.subcategoryNormalizedName && !targetMap.has(row.subcategoryNormalizedName)).length
+  };
 }
 
 function mapUser(row: Record<string, D1Value>): UserRecord {
