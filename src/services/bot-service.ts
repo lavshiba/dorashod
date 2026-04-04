@@ -605,7 +605,7 @@ export class BotService {
       case "onboarding:complete":
       case "nav:home":
         await this.repo.completeOnboarding(user.id);
-        await this.repo.clearSession(user.id);
+        await this.clearSessionKeepingScreen(user.id);
         await this.showHome(user);
         return;
       case "add:start":
@@ -643,7 +643,7 @@ export class BotService {
         await this.finalizeDraft(user, undefined);
         return;
       case "add:cancel":
-        await this.repo.clearSession(user.id);
+        await this.clearSessionKeepingScreen(user.id);
         await this.showHome(user);
         return;
       case "draft:open":
@@ -1683,7 +1683,7 @@ export class BotService {
   ): Promise<void> {
     const text = options?.formatText === false ? payload.text : formatTelegramScreenText(payload.text);
     let persistedMessageId: number | undefined;
-    let staleMessageId: number | undefined;
+    const staleMessageIds = new Set<number>();
     if (this.currentUserId !== null) {
       const persistedSession = await this.repo.getSession(this.currentUserId);
       const candidate = persistedSession.context.screenMessageId;
@@ -1712,7 +1712,7 @@ export class BotService {
           return;
         }
 
-        staleMessageId = this.callbackContext.messageId;
+        staleMessageIds.add(this.callbackContext.messageId);
       }
     }
 
@@ -1735,12 +1735,14 @@ export class BotService {
           return;
         }
 
-        staleMessageId = knownMessageId;
+        staleMessageIds.add(knownMessageId);
       }
     }
 
-    if (staleMessageId) {
-      await this.safeDeleteMessage(String(payload.chat_id), staleMessageId);
+    if (staleMessageIds.size > 0) {
+      for (const staleMessageId of staleMessageIds) {
+        await this.safeDeleteMessage(String(payload.chat_id), staleMessageId);
+      }
       this.lastBotMessageByChat.delete(String(payload.chat_id));
     }
 
@@ -1748,8 +1750,13 @@ export class BotService {
       ...payload,
       text
     });
+    const previousKnownMessageId = knownMessageId;
     this.lastBotMessageByChat.set(String(payload.chat_id), messageId);
     await this.persistScreenMessageId(messageId);
+
+    if (typeof previousKnownMessageId === "number" && previousKnownMessageId !== messageId) {
+      await this.safeDeleteMessage(String(payload.chat_id), previousKnownMessageId);
+    }
   }
 
   private async persistScreenMessageId(messageId: number): Promise<void> {
@@ -1792,6 +1799,15 @@ export class BotService {
     }
 
     await this.safeDeleteMessage(chatId, messageId);
+  }
+
+  private async clearSessionKeepingScreen(userId: number): Promise<void> {
+    const existingSession = await this.repo.getSession(userId);
+    await this.repo.saveSession(userId, {
+      mode: "idle",
+      stack: [],
+      context: typeof existingSession.context.screenMessageId === "number" ? { screenMessageId: existingSession.context.screenMessageId } : {}
+    });
   }
 
   private async acquireUserUpdateLock(userId: number, updateKind: "callback" | "message", lockToken: string): Promise<boolean> {
@@ -1957,7 +1973,7 @@ export class BotService {
           source: "message"
         });
         await this.repo.deleteDraft(user.id);
-        await this.repo.clearSession(user.id);
+        await this.clearSessionKeepingScreen(user.id);
         await this.showHome(user, "запись добавлена");
         return;
       }
@@ -2036,7 +2052,7 @@ export class BotService {
       return;
     }
 
-    await this.repo.clearSession(user.id);
+    await this.clearSessionKeepingScreen(user.id);
     await this.showHome(user, "запись добавлена");
   }
 
@@ -3895,7 +3911,7 @@ export class BotService {
   private async handleCategoryTransferAll(user: UserRecord, categoryId: number, type: EntryType, page: number, text: string, subpage = 0, source = "list"): Promise<void> {
     const result = await this.repo.transferAllCategoryEntries(user, categoryId, type, text);
     if (result.status === "same") {
-      await this.repo.clearSession(user.id);
+      await this.clearSessionKeepingScreen(user.id);
       await this.sendMessage({
         chat_id: user.chatId,
         text:
@@ -3906,7 +3922,7 @@ export class BotService {
       });
       return;
     }
-    await this.repo.clearSession(user.id);
+    await this.clearSessionKeepingScreen(user.id);
     await this.showCategoryCard(
       user,
       categoryId,
