@@ -4279,11 +4279,11 @@ export class BotService {
       chat_id: user.chatId,
       text:
         `<b>${BOT_TITLE}</b>\n\n` +
-        `${notice ? `${notice}\n\n` : ""}` +
         `быстрый доступ\n\n` +
         `здесь можно настроить,\n` +
         `что бот показывает сверху\n` +
-        `для быстрого выбора`,
+        `для быстрого выбора` +
+        `${notice ? `\n\n${notice}` : ""}`,
       reply_markup: kb([
         [{ text: BUTTONS.expenseCategories, action: "settings:quick-access-section", payload: { section: "expense" } }],
         [{ text: BUTTONS.incomeCategories, action: "settings:quick-access-section", payload: { section: "income" } }],
@@ -4337,11 +4337,13 @@ export class BotService {
         ? `\n\nэто 4 категории,\nкоторые бот показывает сверху\n\nсейчас:\n${slotLabels.join("\n")}`
         : "\n\nпока ничего не выбрано\n\nможешь выбрать до 4 категорий";
       slotRows.push(
-        Array.from({ length: 4 }, (_, index) => ({
-          text: slotLabels[index],
-          action: "settings:quick-access-slot",
-          payload: { section, slot: index + 1 }
-        }))
+        ...Array.from({ length: 4 }, (_, index) => [
+          {
+            text: slotLabels[index],
+            action: "settings:quick-access-slot",
+            payload: { section, slot: index + 1 }
+          }
+        ])
       );
       if (slots.length > 0) {
         slotRows.push([{ text: BUTTONS.resetAll, action: "settings:quick-access-reset", payload: { section } }]);
@@ -4401,7 +4403,7 @@ export class BotService {
       const current = await this.repo.listQuickAccessSubcategories(user.id, categoryId);
       const allItems = await this.repo.getSubcategories(user.id, categoryId, user.sortModeSubcategories);
       const items = allItems.slice(page * 6, page * 6 + 6);
-      const lines = items.length ? items.map((item, index) => `${index + 1}. ${item.name}`).join("\n") : "пока подкатегорий нет";
+      const lines = items.length ? items.map((item, index) => `${index + 1}. ${item.name}`).join("\n") : "подкатегорий пока нет";
       const slotItem = current[slot - 1];
       await this.sendMessage({
         chat_id: user.chatId,
@@ -4457,8 +4459,7 @@ export class BotService {
         chat_id: user.chatId,
         text:
           `<b>${BOT_TITLE}</b>\n\n` +
-          "быстрый доступ\n" +
-          "подкатегорий\n\n" +
+          "быстрый доступ\nподкатегорий\n\n" +
           "категорий пока нет\n\n" +
           "можно вернуться назад",
         reply_markup: kb([[{ text: BUTTONS.back, action: "settings:quick-access-section", payload: { section: "subcategories" } }, { text: BUTTONS.main, action: "nav:home" }]])
@@ -4595,7 +4596,9 @@ export class BotService {
     const rows: Array<Array<{ text: string; action: string; payload?: Record<string, string | number | undefined> }>> = current === "custom"
       ? [
           ...slotLabels.map((label, index) => [{ text: label, action: "settings:quick-access-slot", payload: { section: `subcategory:${categoryId}`, slot: index + 1 } }]),
-          ...(slots.length > 0 ? [[{ text: BUTTONS.resetAll, action: "settings:quick-access-reset", payload: { section: `subcategory:${categoryId}` } }], [{ text: BUTTONS.done, action: "settings:quick-access-section", payload: { section: "subcategories" } }]] : [])
+          ...(slots.length > 0
+            ? [[{ text: BUTTONS.resetAll, action: "settings:quick-access-reset", payload: { section: `subcategory:${categoryId}` } }], [{ text: BUTTONS.done, action: "settings:quick-access-section", payload: { section: "subcategories" } }]]
+            : [[{ text: BUTTONS.addSubcategory, action: "subcategory:add", payload: { categoryId, type: category.type, page: 0, subpage: 0, source: "list" } }]])
         ]
       : [
           [{ text: BUTTONS.own, action: "settings:set-quick-access", payload: { section: `subcategory:${categoryId}`, mode: "custom" } }],
@@ -4654,11 +4657,11 @@ export class BotService {
       chat_id: user.chatId,
       text:
         `<b>${BOT_TITLE}</b>\n\n` +
-        `${notice ? `${notice}\n\n` : ""}` +
         `сортировка\n\n` +
         `здесь можно выбрать,\n` +
         `в каком порядке бот показывает\n` +
-        `категории и подкатегории`,
+        `категории и подкатегории` +
+        `${notice ? `\n\n${notice}` : ""}`,
       reply_markup: kb([
         [{ text: BUTTONS.expenseCategories, action: "settings:sorting-section", payload: { section: "expense" } }],
         [{ text: BUTTONS.incomeCategories, action: "settings:sorting-section", payload: { section: "income" } }],
@@ -4788,7 +4791,7 @@ export class BotService {
         `сейчас:\n${formatSortingMode(current)}`,
       reply_markup: kb([
         ...buildCategorySortingModeRows(categoryId, type, page, current),
-        [{ text: BUTTONS.resetToGeneral, action: "settings:set-sorting-category", payload: { id: categoryId, type, page, mode: "reset" } }],
+        ...(category.sortModeOverride ? [[{ text: BUTTONS.resetToGeneral, action: "settings:set-sorting-category", payload: { id: categoryId, type, page, mode: "reset" } }]] : []),
         [{ text: BUTTONS.back, action: "settings:sorting-subcategories-categories", payload: { type, page } }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
