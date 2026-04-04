@@ -1,9 +1,14 @@
+import { isUtcOffsetZone } from "@/utils/timezone";
+
 export function nowIso(): string {
   return new Date().toISOString();
 }
 
 export function splitNowForUser(timezone: string): { date: string; time: string; sort: string } {
   const date = new Date();
+  if (isUtcOffsetZone(timezone)) {
+    return splitNowForOffset(timezone, date);
+  }
   const parts = new Intl.DateTimeFormat("sv-SE", {
     timeZone: timezone,
     year: "numeric",
@@ -25,14 +30,13 @@ export function splitNowForUser(timezone: string): { date: string; time: string;
   };
 }
 
-export function parseQuickPeriod(period: "today" | "yesterday" | "week" | "month" | "year" | "all"): {
+export function parseQuickPeriod(period: "today" | "yesterday" | "week" | "month" | "year" | "all", baseDate = new Date()): {
   from: string | null;
   to: string | null;
 } {
-  const now = new Date();
-  const end = new Date(now);
+  const end = new Date(baseDate);
   end.setHours(23, 59, 59, 999);
-  const start = new Date(now);
+  const start = new Date(baseDate);
   start.setHours(0, 0, 0, 0);
 
   if (period === "yesterday") {
@@ -78,23 +82,23 @@ export function parseCustomPeriodInput(input: string, todayIso: string): ParsedC
   }
 
   if (raw === "сегодня") {
-    const range = parseQuickPeriod("today");
+    const range = parseQuickPeriod("today", new Date(`${todayIso}T12:00:00Z`));
     return { status: "resolved", ...range, label: "сегодня" };
   }
   if (raw === "вчера") {
-    const range = parseQuickPeriod("yesterday");
+    const range = parseQuickPeriod("yesterday", new Date(`${todayIso}T12:00:00Z`));
     return { status: "resolved", ...range, label: "вчера" };
   }
   if (raw === "неделя") {
-    const range = parseQuickPeriod("week");
+    const range = parseQuickPeriod("week", new Date(`${todayIso}T12:00:00Z`));
     return { status: "resolved", ...range, label: "неделя" };
   }
   if (raw === "месяц") {
-    const range = parseQuickPeriod("month");
+    const range = parseQuickPeriod("month", new Date(`${todayIso}T12:00:00Z`));
     return { status: "resolved", ...range, label: "месяц" };
   }
   if (raw === "год") {
-    const range = parseQuickPeriod("year");
+    const range = parseQuickPeriod("year", new Date(`${todayIso}T12:00:00Z`));
     return { status: "resolved", ...range, label: "год" };
   }
   if (raw === "всё время") {
@@ -177,6 +181,17 @@ export function parseCustomPeriodInput(input: string, todayIso: string): ParsedC
   }
 
   return { status: "unparsed" };
+}
+
+function splitNowForOffset(offset: string, current: Date): { date: string; time: string; sort: string } {
+  const sign = offset.startsWith("-") ? -1 : 1;
+  const hours = Number(offset.slice(1, 3));
+  const minutes = Number(offset.slice(4, 6));
+  const shifted = new Date(current.getTime() + sign * (hours * 60 + minutes) * 60 * 1000);
+  const iso = shifted.toISOString();
+  const date = iso.slice(0, 10);
+  const time = iso.slice(11, 19);
+  return { date, time, sort: `${date}T${time}` };
 }
 
 function parseRangePeriod(raw: string, todayIso: string): ParsedCustomPeriod | null {

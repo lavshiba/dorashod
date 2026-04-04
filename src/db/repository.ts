@@ -365,7 +365,7 @@ export class Repository {
     }
   }
 
-  async getHomeStats(userId: number): Promise<{
+  async getHomeStats(userId: number, today: string, monthPrefix: string): Promise<{
     totalEntries: number;
     todayIncome: number;
     todayExpense: number;
@@ -378,8 +378,6 @@ export class Repository {
       .bind(userId)
       .first<{ count: number }>();
 
-    const today = new Date().toISOString().slice(0, 10);
-    const month = today.slice(0, 7);
     const todayStats = await this.db
       .prepare(
         `
@@ -403,7 +401,7 @@ export class Repository {
         WHERE user_id = ? AND entry_date LIKE ?
       `
       )
-      .bind(userId, `${month}%`)
+      .bind(userId, `${monthPrefix}%`)
       .first<{ income: number; expense: number }>();
 
     const lastEntry = await this.getEntryList(userId, 0, 1).then((items) => items[0] ?? null);
@@ -618,6 +616,72 @@ export class Repository {
       `
       )
       .bind(category.id, subcategoryId, input.user.id, ...input.entryIds)
+      .run();
+  }
+
+  async transferAllCategoryEntries(user: UserRecord, sourceCategoryId: number, type: EntryType, targetCategoryName: string): Promise<"ok" | "same"> {
+    const targetCategory = await this.ensureCategory(user.id, type, targetCategoryName);
+    if (targetCategory.id === sourceCategoryId) {
+      return "same";
+    }
+
+    const [entryRows, targetSubcategoryRows] = await Promise.all([
+      this.db
+        .prepare(
+          `
+          SELECT e.id, s.normalized_name as subcategory_normalized_name
+          FROM entries e
+          LEFT JOIN subcategories s ON s.id = e.subcategory_id
+          WHERE e.user_id = ? AND e.category_id = ?
+        `
+        )
+        .bind(user.id, sourceCategoryId)
+        .all<Record<string, D1Value>>(),
+      this.db
+        .prepare("SELECT id, normalized_name FROM subcategories WHERE user_id = ? AND category_id = ?")
+        .bind(user.id, targetCategory.id)
+        .all<Record<string, D1Value>>()
+    ]);
+
+    const targetMap = new Map<string, number>();
+    for (const row of targetSubcategoryRows.results ?? []) {
+      targetMap.set(String(row.normalized_name), Number(row.id));
+    }
+
+    const statements = (entryRows.results ?? []).map((row) =>
+      this.db
+        .prepare(
+          `
+          UPDATE entries
+          SET category_id = ?, subcategory_id = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE user_id = ? AND id = ?
+        `
+        )
+        .bind(
+          targetCategory.id,
+          row.subcategory_normalized_name ? (targetMap.get(String(row.subcategory_normalized_name)) ?? null) : null,
+          user.id,
+          Number(row.id)
+        )
+    );
+
+    if (statements.length > 0) {
+      await this.db.batch(statements);
+    }
+
+    return "ok";
+  }
+
+  async transferAllSubcategoryEntries(userId: number, sourceSubcategoryId: number, targetSubcategoryId: number | null): Promise<void> {
+    await this.db
+      .prepare(
+        `
+        UPDATE entries
+        SET subcategory_id = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = ? AND subcategory_id = ?
+      `
+      )
+      .bind(targetSubcategoryId, userId, sourceSubcategoryId)
       .run();
   }
 
@@ -995,14 +1059,20 @@ export class Repository {
     };
   }
 
-  async listCategories(userId: number, type: EntryType, hidden = false, page = 0, limit = 6): Promise<CategoryRecord[]> {
+  async listCategories(userId: number, type: EntryType, hidden = false, page = 0, limit = 6, sortMode = "usage"): Promise<CategoryRecord[]> {
+    const orderBy =
+      sortMode === "recent"
+        ? "updated_at DESC, id DESC"
+        : sortMode === "alphabet"
+          ? "name COLLATE NOCASE ASC, id DESC"
+          : "usage_count_cache DESC, updated_at DESC, id DESC";
     const result = await this.db
       .prepare(
         `
         SELECT *
         FROM categories
         WHERE user_id = ? AND type = ? AND ${hidden ? "hidden_at IS NOT NULL" : "hidden_at IS NULL"}
-        ORDER BY usage_count_cache DESC, updated_at DESC, id DESC
+        ORDER BY ${orderBy}
         LIMIT ? OFFSET ?
       `
       )
@@ -1052,14 +1122,20 @@ export class Repository {
     return row ? mapCategory(row) : null;
   }
 
-  async getSubcategories(userId: number, categoryId: number): Promise<SubcategoryRecord[]> {
+  async getSubcategories(userId: number, categoryId: number, sortMode = "usage"): Promise<SubcategoryRecord[]> {
+    const orderBy =
+      sortMode === "recent"
+        ? "updated_at DESC, id DESC"
+        : sortMode === "alphabet"
+          ? "name COLLATE NOCASE ASC, id DESC"
+          : "usage_count_cache DESC, updated_at DESC, id DESC";
     const rows = await this.db
       .prepare(
         `
         SELECT *
         FROM subcategories
         WHERE user_id = ? AND category_id = ?
-        ORDER BY usage_count_cache DESC, updated_at DESC, id DESC
+        ORDER BY ${orderBy}
       `
       )
       .bind(userId, categoryId)
@@ -1101,14 +1177,20 @@ export class Repository {
     return row?.count ?? 0;
   }
 
-  async listHiddenSubcategories(userId: number, categoryId: number): Promise<SubcategoryRecord[]> {
+  async listHiddenSubcategories(userId: number, categoryId: number, sortMode = "usage"): Promise<SubcategoryRecord[]> {
+    const orderBy =
+      sortMode === "recent"
+        ? "updated_at DESC, id DESC"
+        : sortMode === "alphabet"
+          ? "name COLLATE NOCASE ASC, id DESC"
+          : "usage_count_cache DESC, updated_at DESC, id DESC";
     const rows = await this.db
       .prepare(
         `
         SELECT *
         FROM subcategories
         WHERE user_id = ? AND category_id = ? AND hidden_at IS NOT NULL
-        ORDER BY usage_count_cache DESC, updated_at DESC, id DESC
+        ORDER BY ${orderBy}
       `
       )
       .bind(userId, categoryId)

@@ -30,11 +30,13 @@
 - chat_id
 - onboarding_step
 - onboarding_completed_at
-- timezone_name
-- timezone_source
+- timezone_name: IANA timezone для города или фиксированный offset для геопозиции
+- timezone_source: default / city / location
 - currency_code
 - currency_label
 - subcategories_enabled
+- quick_access_mode_expense / quick_access_mode_income / quick_access_mode_subcategories
+- sort_mode_expense / sort_mode_income / sort_mode_subcategories
 - created_at
 - updated_at
 

@@ -4,10 +4,11 @@ import type { TelegramApi } from "@/telegram/api";
 import { BUTTONS, BOT_TITLE, ONBOARDING_TEXTS, onboardingProgress } from "@/ui/text";
 import { kb } from "@/ui/keyboard";
 import { decodeCallback } from "@/utils/callback";
-import { parseCustomPeriodInput, parseQuickPeriod } from "@/utils/dates";
+import { parseCustomPeriodInput, parseQuickPeriod, splitNowForUser } from "@/utils/dates";
 import { parseEntryAttempt } from "@/utils/entry-parser";
 import { formatAmountFromMinor } from "@/utils/money";
 import { escapeHtml, normalizeName } from "@/utils/normalize";
+import { resolveTimezoneFromCity, resolveTimezoneFromLocation } from "@/utils/timezone";
 
 interface TelegramUpdate {
   update_id: number;
@@ -47,6 +48,11 @@ export class BotService {
 
     if (update.message?.text) {
       await this.handleMessage(update.message.from?.id, update.message.chat.id, update.message.text);
+      return;
+    }
+
+    if (update.message?.location) {
+      await this.handleLocation(update.message.from?.id, update.message.chat.id, update.message.location);
       return;
     }
 
@@ -146,6 +152,11 @@ export class BotService {
       return;
     }
 
+    if (session.mode === "categories" && session.context.awaiting === "transfer-category-name") {
+      await this.handleCategoryTransferAll(user, Number(session.context.categoryId), String(session.context.type) as EntryType, Number(session.context.page ?? "0"), text);
+      return;
+    }
+
     if (session.mode === "settings" && session.context.awaiting === "currency") {
       await this.updateUserSetting(user.id, "currency_label", text.trim(), "currency_code", "CUSTOM");
       await this.showSettings(user);
@@ -153,8 +164,17 @@ export class BotService {
     }
 
     if (session.mode === "settings" && session.context.awaiting === "timezone") {
-      await this.updateUserSetting(user.id, "timezone_name", text.trim(), "timezone_source", "city");
-      await this.showTimeSettings(user);
+      const timezone = resolveTimezoneFromCity(text);
+      if (!timezone) {
+        await this.telegram.sendMessage({
+          chat_id: user.chatId,
+          text: "Не удалось определить город.\n\nПришли другой город или отправь геопозицию.",
+          reply_markup: kb([[{ text: BUTTONS.back, action: "settings:time" }, { text: BUTTONS.main, action: "nav:home" }]])
+        });
+        return;
+      }
+      await this.updateUserSetting(user.id, "timezone_name", timezone, "timezone_source", "city");
+      await this.showTimeSettings(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId));
       return;
     }
 
@@ -164,7 +184,7 @@ export class BotService {
     }
 
     if (session.mode === "reports" && session.context.awaiting === "custom-period") {
-      const parsed = parseCustomPeriodInput(text, new Intl.DateTimeFormat("sv-SE", { timeZone: user.timezoneName }).format(new Date()));
+      const parsed = parseCustomPeriodInput(text, this.userNow(user.timezoneName).date);
       if (parsed.status === "resolved") {
         await this.showReportRange(user, parsed.label, parsed.from, parsed.to, "custom");
         return;
@@ -265,6 +285,25 @@ export class BotService {
       return;
     }
 
+    await this.showHome(user);
+  }
+
+  private async handleLocation(
+    fromId: number | undefined,
+    chatId: number,
+    location: { latitude: number; longitude: number }
+  ): Promise<void> {
+    if (!fromId) {
+      return;
+    }
+    const user = await this.repo.getOrCreateUser(String(fromId), String(chatId));
+    const session = await this.repo.getSession(user.id);
+    if (session.mode === "settings" && session.context.awaiting === "timezone") {
+      const timezone = resolveTimezoneFromLocation(location.latitude, location.longitude);
+      await this.updateUserSetting(user.id, "timezone_name", timezone, "timezone_source", "location");
+      await this.showTimeSettings(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId));
+      return;
+    }
     await this.showHome(user);
   }
 
@@ -747,6 +786,22 @@ export class BotService {
       case "subcategory:delete":
         await this.handleSubcategoryDelete(user, Number(params.id), Number(params.categoryId), String(params.type) as EntryType, Number(params.page ?? "0"));
         return;
+      case "category:transfer-all":
+        await this.startCategoryTransferAll(user, Number(params.id), String(params.type) as EntryType, Number(params.page ?? "0"));
+        return;
+      case "subcategory:transfer-all":
+        await this.startSubcategoryTransferAll(user, Number(params.id), Number(params.categoryId), String(params.type) as EntryType, Number(params.page ?? "0"));
+        return;
+      case "subcategory:transfer-to":
+        await this.applySubcategoryTransferAll(
+          user,
+          Number(params.id),
+          Number(params.categoryId),
+          String(params.type) as EntryType,
+          Number(params.page ?? "0"),
+          params.target ? Number(params.target) : null
+        );
+        return;
       case "category:entries":
         await this.showCategoryEntries(user, Number(params.categoryId), undefined, String(params.type) as EntryType, Number(params.page ?? "0"));
         return;
@@ -963,7 +1018,8 @@ export class BotService {
   }
 
   private async showHome(user: UserRecord, notice?: string): Promise<void> {
-    const stats = await this.repo.getHomeStats(user.id);
+    const nowForUser = this.userNow(user.timezoneName);
+    const stats = await this.repo.getHomeStats(user.id, nowForUser.date, nowForUser.date.slice(0, 7));
     const queueCount = await this.repo.getQueueCount(user.id);
     const draft = await this.repo.getDraft(user.id);
 
@@ -1553,7 +1609,8 @@ export class BotService {
   }
 
   private async showQuickSearch(user: UserRecord, period: string): Promise<void> {
-    const range = parseQuickPeriod(period as "today" | "yesterday" | "week" | "month" | "year" | "all");
+    const baseDate = new Date(`${this.userNow(user.timezoneName).date}T12:00:00Z`);
+    const range = parseQuickPeriod(period as "today" | "yesterday" | "week" | "month" | "year" | "all", baseDate);
     await this.showSearchPeriodResults(user, period, 0, range.from, range.to);
   }
 
@@ -1679,7 +1736,8 @@ export class BotService {
   }
 
   private async showReport(user: UserRecord, period: string): Promise<void> {
-    const range = parseQuickPeriod(period as "today" | "yesterday" | "week" | "month" | "year" | "all");
+    const baseDate = new Date(`${this.userNow(user.timezoneName).date}T12:00:00Z`);
+    const range = parseQuickPeriod(period as "today" | "yesterday" | "week" | "month" | "year" | "all", baseDate);
     const title = periodToLabel(period);
     await this.showReportRange(user, title, range.from, range.to, period);
   }
@@ -1936,7 +1994,8 @@ export class BotService {
   }
 
   private async showCategoryList(user: UserRecord, type: EntryType, page: number): Promise<void> {
-    const categories = await this.repo.listCategories(user.id, type, false, page);
+    const sortMode = type === "expense" ? user.sortModeExpense : user.sortModeIncome;
+    const categories = await this.repo.listCategories(user.id, type, false, page, 6, sortMode);
     const hiddenCount = await this.repo.getHiddenCategoryCount(user.id, type);
     if (categories.length === 0) {
       await this.telegram.sendMessage({
@@ -1970,7 +2029,8 @@ export class BotService {
   }
 
   private async showHiddenCategoryList(user: UserRecord, type: EntryType, page: number): Promise<void> {
-    const categories = await this.repo.listCategories(user.id, type, true, page);
+    const sortMode = type === "expense" ? user.sortModeExpense : user.sortModeIncome;
+    const categories = await this.repo.listCategories(user.id, type, true, page, 6, sortMode);
     if (categories.length === 0) {
       await this.telegram.sendMessage({
         chat_id: user.chatId,
@@ -2003,7 +2063,7 @@ export class BotService {
       await this.showCategoryList(user, type, page);
       return;
     }
-    const subcategories = await this.repo.getSubcategories(user.id, category.id);
+    const subcategories = await this.repo.getSubcategories(user.id, category.id, user.sortModeSubcategories);
     const usageCount = await this.repo.getCategoryUsageCount(category.id);
     const hiddenSubcategoryCount = await this.repo.getHiddenSubcategoryCount(user.id, category.id);
     await this.telegram.sendMessage({
@@ -2021,6 +2081,7 @@ export class BotService {
         [{ text: BUTTONS.edit, action: "category:edit", payload: { id: category.id, page, type } }],
         [{ text: category.hiddenAt ? BUTTONS.restore : BUTTONS.hide, action: category.hiddenAt ? "category:restore" : "category:hide", payload: { id: category.id, page, type } }],
         [{ text: BUTTONS.delete, action: "category:delete", payload: { id: category.id, page, type } }],
+        ...(usageCount > 0 ? [[{ text: BUTTONS.transferAllEntries, action: "category:transfer-all", payload: { id: category.id, page, type } }]] : []),
         [{ text: BUTTONS.allEntries, action: "category:entries", payload: { categoryId: category.id, type, page: 0 } }],
         [{ text: BUTTONS.back, action: "categories:list", payload: { type, page } }, { text: BUTTONS.main, action: "nav:home" }]
       ])
@@ -2028,7 +2089,7 @@ export class BotService {
   }
 
   private async showHiddenSubcategoryList(user: UserRecord, categoryId: number, type: EntryType, page: number): Promise<void> {
-    const items = await this.repo.listHiddenSubcategories(user.id, categoryId);
+    const items = await this.repo.listHiddenSubcategories(user.id, categoryId, user.sortModeSubcategories);
     if (items.length === 0) {
       await this.telegram.sendMessage({
         chat_id: user.chatId,
@@ -2068,6 +2129,7 @@ export class BotService {
         [{ text: BUTTONS.edit, action: "subcategory:edit", payload: { id: subcategory.id, categoryId, page, type } }],
         [{ text: subcategory.hiddenAt ? BUTTONS.restore : BUTTONS.hide, action: subcategory.hiddenAt ? "subcategory:restore" : "subcategory:hide", payload: { id: subcategory.id, categoryId, page, type } }],
         [{ text: BUTTONS.delete, action: "subcategory:delete", payload: { id: subcategory.id, categoryId, page, type } }],
+        ...(usageCount > 0 ? [[{ text: BUTTONS.transferAllEntries, action: "subcategory:transfer-all", payload: { id: subcategory.id, categoryId, page, type } }]] : []),
         [{ text: BUTTONS.allEntries, action: "subcategory:entries", payload: { id: subcategory.id, categoryId, type, page: 0 } }],
         [{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page } }, { text: BUTTONS.main, action: "nav:home" }]
       ])
@@ -2082,6 +2144,7 @@ export class BotService {
         text: "Удалить категорию нельзя, пока в ней есть записи.\n\nМожно скрыть её или потом перенести все записи.",
         reply_markup: kb([
           [{ text: BUTTONS.hide, action: "category:hide", payload: { id: categoryId, page, type } }],
+          [{ text: BUTTONS.transferAllEntries, action: "category:transfer-all", payload: { id: categoryId, page, type } }],
           [{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, page, type } }, { text: BUTTONS.main, action: "nav:home" }]
         ])
       });
@@ -2099,6 +2162,7 @@ export class BotService {
         text: "Удалить подкатегорию нельзя, пока в ней есть записи.\n\nМожно скрыть её или потом перенести все записи.",
         reply_markup: kb([
           [{ text: BUTTONS.hide, action: "subcategory:hide", payload: { id: subcategoryId, categoryId, page, type } }],
+          [{ text: BUTTONS.transferAllEntries, action: "subcategory:transfer-all", payload: { id: subcategoryId, categoryId, page, type } }],
           [{ text: BUTTONS.back, action: "subcategory:view", payload: { id: subcategoryId, categoryId, page, type } }, { text: BUTTONS.main, action: "nav:home" }]
         ])
       });
@@ -2216,6 +2280,70 @@ export class BotService {
     }
     await this.repo.renameSubcategory(user.id, subcategoryId, text);
     await this.showSubcategoryCard(user, subcategoryId, categoryId, type, page);
+  }
+
+  private async startCategoryTransferAll(user: UserRecord, categoryId: number, type: EntryType, page: number): Promise<void> {
+    await this.repo.saveSession(user.id, {
+      mode: "categories",
+      stack: ["categories"],
+      context: { awaiting: "transfer-category-name", categoryId, type, page }
+    });
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: "Напиши категорию.\n\nЕсли в новой категории нет нужных подкатегорий, подкатегории у записей очистятся.",
+      reply_markup: kb([[{ text: BUTTONS.cancel, action: "category:view", payload: { id: categoryId, type, page } }, { text: BUTTONS.main, action: "nav:home" }]])
+    });
+  }
+
+  private async handleCategoryTransferAll(user: UserRecord, categoryId: number, type: EntryType, page: number, text: string): Promise<void> {
+    const result = await this.repo.transferAllCategoryEntries(user, categoryId, type, text);
+    if (result === "same") {
+      await this.repo.clearSession(user.id);
+      await this.telegram.sendMessage({
+        chat_id: user.chatId,
+        text: "Это уже эта категория.",
+        reply_markup: kb([[{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page } }, { text: BUTTONS.main, action: "nav:home" }]])
+      });
+      return;
+    }
+    await this.repo.clearSession(user.id);
+    await this.showCategoryCard(user, categoryId, type, page);
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: "записи перенесены"
+    });
+  }
+
+  private async startSubcategoryTransferAll(user: UserRecord, subcategoryId: number, categoryId: number, type: EntryType, page: number): Promise<void> {
+    const subcategories = (await this.repo.getSubcategories(user.id, categoryId, user.sortModeSubcategories)).filter((item) => item.id !== subcategoryId && !item.hiddenAt);
+    const lines = subcategories.length ? subcategories.slice(0, 6).map((item, index) => `${index + 1}. ${item.name}`).join("\n") : "";
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: `перенести все записи\n\n${subcategories.length ? `${lines}\n\nвыбери подкатегорию` : "можно снять подкатегорию у всех записей"}`,
+      reply_markup: kb([
+        ...(subcategories.length
+          ? [subcategories.slice(0, 6).map((item, index) => ({ text: `${index + 1}`, action: "subcategory:transfer-to", payload: { id: subcategoryId, target: item.id, categoryId, type, page } }))]
+          : []),
+        [{ text: BUTTONS.withoutSubcategory, action: "subcategory:transfer-to", payload: { id: subcategoryId, categoryId, type, page } }],
+        [{ text: BUTTONS.back, action: "subcategory:view", payload: { id: subcategoryId, categoryId, type, page } }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async applySubcategoryTransferAll(
+    user: UserRecord,
+    subcategoryId: number,
+    categoryId: number,
+    type: EntryType,
+    page: number,
+    targetSubcategoryId: number | null
+  ): Promise<void> {
+    await this.repo.transferAllSubcategoryEntries(user.id, subcategoryId, targetSubcategoryId);
+    await this.showSubcategoryCard(user, subcategoryId, categoryId, type, page);
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: "записи перенесены"
+    });
   }
 
   private async showCategoryEntries(
@@ -2431,6 +2559,10 @@ export class BotService {
           : "sort_mode_subcategories";
     await this.updateUserSetting(user.id, field, mode);
     await this.showSortingSection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), section);
+  }
+
+  private userNow(timezone: string): { date: string; time: string; sort: string } {
+    return splitNowForUser(timezone);
   }
 
   private async showData(user: UserRecord): Promise<void> {

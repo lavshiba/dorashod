@@ -32,6 +32,7 @@ export const BUTTONS = {
   newSearch: "новый поиск",
   toResults: "к результатам",
   transfer: "перенести",
+  transferAllEntries: "перенести все записи",
   removeSubcategory: "снять подкатегорию",
   cancel: "отмена",
   expenseBreakdown: "по расходам",
@@ -76,6 +77,8 @@ export const BUTTONS = {
   toNewEntries: "в новые записи",
   chooseAll: "выбрать все",
   changeTime: "изменить время"
+  ,
+  withoutSubcategory: "без подкатегории"
 } as const;
 
 export const ONBOARDING_TEXTS = [
