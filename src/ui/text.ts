@@ -85,6 +85,25 @@ export const BUTTONS = {
   leaveWithoutSave: "выйти без сохранения",
   stay: "остаться",
   dateTime: "дата и время"
+  ,
+  show: "показать",
+  sendLocation: "отправить геопозицию",
+  reset: "сбросить",
+  yesReset: "да, сбросить",
+  yesDisable: "да, выключить",
+  chooseCategory: "выбрать категорию",
+  allCategoriesScope: "во всех категориях",
+  oneCategoryScope: "в одной категории",
+  resetAll: "сбросить всё",
+  yesResetAll: "да, сбросить",
+  uploadToBot: "загрузить в бот",
+  yesUpload: "да, загрузить",
+  yesAdd: "да, добавить",
+  addNoun: "добавить",
+  yesAddAll: "да, добавить всё",
+  yesClearAll: "да, очистить всё",
+  exit: "выйти",
+  yesRemoveSubcategory: "да, снять"
 } as const;
 
 export const ONBOARDING_TEXTS = [

@@ -217,11 +217,7 @@ export class BotService {
       if (session.mode === "settings" && session.context.awaiting === "timezone") {
       const timezone = resolveTimezoneFromCity(text);
       if (!timezone) {
-        await this.sendMessage({
-          chat_id: user.chatId,
-          text: "Не удалось определить город.\n\nПришли другой город или отправь геопозицию.",
-          reply_markup: kb([[{ text: BUTTONS.back, action: "settings:time" }, { text: BUTTONS.main, action: "nav:home" }]])
-        });
+        await this.showTimeUnknown(user);
         return;
       }
       await this.updateUserSetting(user.id, "timezone_name", timezone, "timezone_source", "city");
@@ -382,7 +378,7 @@ export class BotService {
       if (session.mode !== "data" || !session.context.awaitingUploadType) {
         await this.sendMessage({
           chat_id: user.chatId,
-          text: "Сначала открой раздел данные и выбери, куда загрузить файл.",
+          text: "данные\n\nвыбери, куда хочешь\nсохранить или загрузить данные",
           reply_markup: kb([[{ text: BUTTONS.data, action: "data:open" }, { text: BUTTONS.main, action: "nav:home" }]])
         });
         return;
@@ -396,7 +392,7 @@ export class BotService {
       if (!snapshot) {
         await this.sendMessage({
           chat_id: user.chatId,
-          text: "Файл не удалось прочитать.\n\nПришли полную копию для этого бота ещё раз.",
+          text: "не удалось прочитать файл\n\nпришли другой файл\nили вернись назад",
           reply_markup: kb([[{ text: BUTTONS.back, action: "data:this-bot" }, { text: BUTTONS.main, action: "nav:home" }]])
         });
         return;
@@ -411,15 +407,17 @@ export class BotService {
       await this.sendMessage({
         chat_id: user.chatId,
         text:
-          `для этого бота\n\n` +
-          `записи: ${snapshot.entries}\n` +
-          `категории: ${snapshot.categories}\n` +
-          `подкатегории: ${snapshot.subcategories}\n` +
-          `черновик: ${snapshot.hasDraft ? "есть" : "нет"}\n` +
-          `новые записи: ${snapshot.queue}`,
+          `файл загружен\n\n` +
+          `внутри:\n` +
+          `записи — ${snapshot.entries}\n` +
+          `категории расходов — ${snapshot.expenseCategories}\n` +
+          `категории доходов — ${snapshot.incomeCategories}\n` +
+          `есть черновик — ${snapshot.hasDraft ? "да" : "нет"}\n` +
+          `новые записи — ${snapshot.queue}`,
         reply_markup: kb([
-          [{ text: BUTTONS.loadFromFile, action: "data:import-full-confirm", payload: { importId } }],
-          [{ text: BUTTONS.back, action: "data:this-bot" }, { text: BUTTONS.main, action: "nav:home" }]
+          [{ text: BUTTONS.uploadToBot, action: "data:import-full-preview-confirm", payload: { importId } }],
+          [{ text: BUTTONS.cancel, action: "data:this-bot" }],
+          [{ text: BUTTONS.main, action: "nav:home" }]
         ])
       });
         return;
@@ -1058,11 +1056,7 @@ export class BotService {
         return;
       case "settings:currency-custom":
         await this.repo.saveSession(user.id, { mode: "settings", stack: ["settings"], context: { awaiting: "currency" } });
-        await this.sendMessage({
-          chat_id: user.chatId,
-          text: "Пришли знак или короткое имя валюты.",
-          reply_markup: kb([[{ text: BUTTONS.cancel, action: "settings:currency" }, { text: BUTTONS.main, action: "nav:home" }]])
-        });
+        await this.showCustomCurrencySettings(user);
         return;
       case "settings:time":
         await this.repo.saveSession(user.id, { mode: "settings", stack: ["settings"], context: { awaiting: "timezone" } });
@@ -1072,7 +1066,27 @@ export class BotService {
         await this.showSubcategoriesSettings(user);
         return;
       case "settings:set-subcategories":
-        await this.updateUserSetting(user.id, "subcategories_enabled", params.enabled === "1" ? 1 : 0);
+        if (params.enabled === "0") {
+          await this.sendMessage({
+            chat_id: user.chatId,
+            text:
+              "выключить подкатегории?\n\n" +
+              "старые записи останутся,\n" +
+              "но в новых записях\n" +
+              "бот больше не будет\n" +
+              "предлагать подкатегории",
+            reply_markup: kb([
+              [{ text: BUTTONS.yesDisable, action: "settings:set-subcategories-confirm", payload: { enabled: 0 } }],
+              [{ text: BUTTONS.back, action: "settings:subcategories" }, { text: BUTTONS.main, action: "nav:home" }]
+            ])
+          });
+          return;
+        }
+        await this.updateUserSetting(user.id, "subcategories_enabled", 1);
+        await this.showSubcategoriesSettings(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), "значение сохранено");
+        return;
+      case "settings:set-subcategories-confirm":
+        await this.updateUserSetting(user.id, "subcategories_enabled", 0);
         await this.showSubcategoriesSettings(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), "значение сохранено");
         return;
       case "settings:quick-access":
@@ -1096,6 +1110,12 @@ export class BotService {
       case "settings:quick-access-slot-clear":
         await this.clearQuickAccessSlot(user, String(params.section), Number(params.slot ?? "1"));
         return;
+      case "settings:quick-access-reset":
+        await this.showQuickAccessResetConfirm(user, String(params.section));
+        return;
+      case "settings:quick-access-reset-confirm":
+        await this.clearAllQuickAccess(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), String(params.section));
+        return;
       case "settings:sorting":
         await this.showSortingRoot(user);
         return;
@@ -1104,6 +1124,9 @@ export class BotService {
         return;
       case "settings:sorting-subcategories-categories":
         await this.showSubcategorySortingCategoryChooser(user, String(params.type) as EntryType, Number(params.page ?? "0"));
+        return;
+      case "settings:sorting-subcategories-global":
+        await this.showSubcategorySortingGlobal(user);
         return;
       case "settings:sorting-subcategory-category":
         await this.showSubcategorySortingCategory(user, Number(params.id), String(params.type) as EntryType, Number(params.page ?? "0"));
@@ -1127,7 +1150,11 @@ export class BotService {
         await this.repo.saveSession(user.id, { mode: "data", stack: ["data"], context: { awaitingUploadType: "full" } });
         await this.sendMessage({
           chat_id: user.chatId,
-          text: "Пришли файл.",
+          text:
+            "загрузить из файла\n\n" +
+            "пришли файл с полной копией,\n" +
+            "и бот покажет, что в нём есть\n\n" +
+            "текущие данные пока не меняются",
           reply_markup: kb([[{ text: BUTTONS.back, action: "data:this-bot" }, { text: BUTTONS.main, action: "nav:home" }]])
         });
         return;
@@ -1135,8 +1162,26 @@ export class BotService {
         await this.repo.saveSession(user.id, { mode: "data", stack: ["data"], context: { awaitingUploadType: "entries" } });
         await this.sendMessage({
           chat_id: user.chatId,
-          text: "Пришли файл.",
+          text:
+            "загрузить из файла\n\n" +
+            "пришли файл с записями,\n" +
+            "и бот покажет,\n" +
+            "что из него можно добавить\n\n" +
+            "текущие данные пока не меняются",
           reply_markup: kb([[{ text: BUTTONS.back, action: "data:other-apps" }, { text: BUTTONS.main, action: "nav:home" }]])
+        });
+        return;
+      case "data:import-full-preview-confirm":
+        await this.sendMessage({
+          chat_id: user.chatId,
+          text:
+            "загрузить копию в этот бот?\n\n" +
+            "текущие данные будут заменены\n" +
+            "данными из файла",
+          reply_markup: kb([
+            [{ text: BUTTONS.yesUpload, action: "data:import-full-confirm", payload: { importId: Number(params.importId) } }],
+            [{ text: BUTTONS.back, action: "data:this-bot" }, { text: BUTTONS.main, action: "nav:home" }]
+          ])
         });
         return;
       case "data:import-full-confirm": {
@@ -1147,7 +1192,7 @@ export class BotService {
         }
         await this.repo.replaceUserDataFromSnapshot(user, pendingImport.previewJson);
         await this.repo.deleteImport(user.id, pendingImport.id);
-        await this.showHome(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), "данные загружены");
+        await this.showHome(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), "файл загружен");
         return;
       }
       case "data:import-entries-merge":
@@ -1167,7 +1212,7 @@ export class BotService {
         });
         await this.sendMessage({
           chat_id: user.chatId,
-          text: "Пришли исправленную строку.",
+          text: "пришли исправленную строку сообщением",
           reply_markup: kb([[{ text: BUTTONS.cancel, action: "data:import-fix-open", payload: { importId: params.importId } }, { text: BUTTONS.main, action: "nav:home" }]])
         });
         return;
@@ -1178,15 +1223,57 @@ export class BotService {
         await this.showImportFixItem(user, Number(params.importId), Number(params.index ?? "0") + 1);
         return;
       case "data:reset-settings":
+        await this.sendMessage({
+          chat_id: user.chatId,
+          text:
+            "сбросить настройки\n\n" +
+            "это сбросит только настройки бота:\n\n" +
+            "валюту\n" +
+            "время\n" +
+            "включены ли подкатегории\n" +
+            "быстрый доступ\n" +
+            "сортировку\n\n" +
+            "записи, категории и подкатегории\n" +
+            "останутся как есть",
+          reply_markup: kb([
+            [{ text: BUTTONS.reset, action: "data:reset-settings-confirm" }],
+            [{ text: BUTTONS.back, action: "data:open" }, { text: BUTTONS.main, action: "nav:home" }]
+          ])
+        });
+        return;
+      case "data:reset-settings-confirm":
+        await this.sendMessage({
+          chat_id: user.chatId,
+          text:
+            "сбросить настройки?\n\n" +
+            "записи останутся,\n" +
+            "но вид и поведение бота\n" +
+            "вернутся к начальному виду",
+          reply_markup: kb([
+            [{ text: BUTTONS.yesReset, action: "data:reset-settings-apply" }],
+            [{ text: BUTTONS.back, action: "data:reset-settings" }, { text: BUTTONS.main, action: "nav:home" }]
+          ])
+        });
+        return;
+      case "data:reset-settings-apply":
         await this.repo.resetUserSettings(user.id);
         await this.showData(user, "настройки сброшены");
         return;
       case "data:clear-all":
         await this.sendMessage({
           chat_id: user.chatId,
-          text: "очистить всё?\n\nэто самое опасное действие",
+          text:
+            "очистить всё\n\n" +
+            "это удалит:\n" +
+            "записи\n" +
+            "категории\n" +
+            "подкатегории\n" +
+            "настройки\n" +
+            "черновик\n" +
+            "новые записи\n\n" +
+            "вернуть это потом не получится",
           reply_markup: kb([
-            [{ text: BUTTONS.clearAll, action: "data:clear-all-confirm" }],
+            [{ text: BUTTONS.continue, action: "data:clear-all-confirm" }],
             [{ text: BUTTONS.back, action: "data:open" }, { text: BUTTONS.main, action: "nav:home" }]
           ])
         });
@@ -1194,9 +1281,11 @@ export class BotService {
       case "data:clear-all-confirm":
         await this.sendMessage({
           chat_id: user.chatId,
-          text: "подтверди очистить всё",
+          text:
+            "точно очистить всё?\n\n" +
+            "это действие нельзя отменить",
           reply_markup: kb([
-            [{ text: BUTTONS.clearAll, action: "data:clear-all-final" }],
+            [{ text: BUTTONS.yesClearAll, action: "data:clear-all-final" }],
             [{ text: BUTTONS.back, action: "data:open" }, { text: BUTTONS.main, action: "nav:home" }]
           ])
         });
@@ -1213,6 +1302,16 @@ export class BotService {
           content: JSON.stringify(snapshot, null, 2),
           caption: "полная копия для этого бота"
         });
+        await this.sendMessage({
+          chat_id: user.chatId,
+          text:
+            "файл готов\n\n" +
+            "в нём полная копия бота:\n" +
+            "записи, категории,\n" +
+            "подкатегории, настройки,\n" +
+            "черновик и новые записи",
+          reply_markup: kb([[{ text: BUTTONS.back, action: "data:this-bot" }, { text: BUTTONS.main, action: "nav:home" }]])
+        });
         return;
       }
       case "data:export-entries": {
@@ -1222,6 +1321,14 @@ export class BotService {
           filename: "finance-bot-entries.json",
           content: JSON.stringify(snapshot, null, 2),
           caption: "записи для других приложений"
+        });
+        await this.sendMessage({
+          chat_id: user.chatId,
+          text:
+            "файл готов\n\n" +
+            "это таблица с записями\n" +
+            "для других приложений",
+          reply_markup: kb([[{ text: BUTTONS.back, action: "data:other-apps" }, { text: BUTTONS.main, action: "nav:home" }]])
         });
         return;
       }
@@ -3237,7 +3344,17 @@ export class BotService {
   private async showSettings(user: UserRecord, notice?: string): Promise<void> {
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `${notice ? `${notice}\n\n` : ""}настройки`,
+      text:
+        `${notice ? `${notice}\n\n` : ""}` +
+        `настройки\n\n` +
+        `здесь можно настроить,\n` +
+        `как бот показывает и сохраняет записи\n\n` +
+        `сейчас:\n` +
+        `валюта — ${formatCurrencySettingLabel(user)}\n` +
+        `время — ${formatTimezoneSettingLabel(user.timezoneName)}\n` +
+        `подкатегории — ${user.subcategoriesEnabled ? "включены" : "выключены"}\n` +
+        `быстрый доступ — ${formatQuickAccessMode(user.quickAccessModeExpense)}\n` +
+        `сортировка — ${formatSortingMode(user.sortModeExpense)}`,
       reply_markup: kb([
         [{ text: BUTTONS.currency, action: "settings:currency" }, { text: BUTTONS.time, action: "settings:time" }],
         [{ text: BUTTONS.subcategories, action: "settings:subcategories" }],
@@ -3253,7 +3370,7 @@ export class BotService {
   private async showCurrencySettings(user: UserRecord, notice?: string): Promise<void> {
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `${notice ? `${notice}\n\n` : ""}валюта\n\nтекущее значение: ${user.currencyLabel}`,
+      text: `${notice ? `${notice}\n\n` : ""}валюта\n\nвыбери, как показывать суммы`,
       reply_markup: kb([
         [{ text: BUTTONS.ruble, action: "settings:set-currency", payload: { code: "RUB", label: "₽" } }],
         [{ text: BUTTONS.dollar, action: "settings:set-currency", payload: { code: "USD", label: "$" } }],
@@ -3267,15 +3384,61 @@ export class BotService {
   private async showTimeSettings(user: UserRecord, notice?: string): Promise<void> {
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `${notice ? `${notice}\n\n` : ""}пришли свой город или отправь геопозицию\n\nнапример:\nсанкт-петербург\nмосква\nхельсинки\n\nтекущее значение: ${user.timezoneName}`,
-      reply_markup: kb([[{ text: BUTTONS.back, action: "settings:open" }, { text: BUTTONS.main, action: "nav:home" }]])
+      text:
+        `${notice ? `${notice}\n\n` : ""}` +
+        `время\n\n` +
+        `пришли свой город\n` +
+        `или отправь геопозицию\n\n` +
+        `например:\n` +
+        `санкт-петербург\n` +
+        `москва\n` +
+        `хельсинки`,
+      reply_markup: kb([
+        [{ text: BUTTONS.sendLocation, action: "noop" }],
+        [{ text: BUTTONS.back, action: "settings:open" }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async showTimeUnknown(user: UserRecord): Promise<void> {
+    await this.sendMessage({
+      chat_id: user.chatId,
+      text:
+        "не получилось определить время\n\n" +
+        "пришли другой город\n" +
+        "или отправь геопозицию",
+      reply_markup: kb([
+        [{ text: BUTTONS.sendLocation, action: "noop" }],
+        [{ text: BUTTONS.back, action: "settings:time" }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async showCustomCurrencySettings(user: UserRecord): Promise<void> {
+    await this.sendMessage({
+      chat_id: user.chatId,
+      text:
+        "другая валюта\n\n" +
+        "пришли знак или короткое название\n" +
+        "сообщением\n\n" +
+        "например:\n" +
+        "£\n" +
+        "₸\n" +
+        "aed",
+      reply_markup: kb([[{ text: BUTTONS.back, action: "settings:currency" }, { text: BUTTONS.main, action: "nav:home" }]])
     });
   }
 
   private async showSubcategoriesSettings(user: UserRecord, notice?: string): Promise<void> {
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `${notice ? `${notice}\n\n` : ""}${user.subcategoriesEnabled ? "включены" : "выключены"}`,
+      text:
+        `${notice ? `${notice}\n\n` : ""}` +
+        `подкатегории\n\n` +
+        `они помогают делить записи\n` +
+        `внутри одной категории\n\n` +
+        `сейчас:\n` +
+        `${user.subcategoriesEnabled ? "включены" : "выключены"}`,
       reply_markup: kb([
         [{ text: user.subcategoriesEnabled ? BUTTONS.disable : BUTTONS.enable, action: "settings:set-subcategories", payload: { enabled: user.subcategoriesEnabled ? 0 : 1 } }],
         [{ text: BUTTONS.quickAccess, action: "settings:quick-access-section", payload: { section: "subcategories" } }],
@@ -3288,7 +3451,12 @@ export class BotService {
   private async showQuickAccessRoot(user: UserRecord, notice?: string): Promise<void> {
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `${notice ? `${notice}\n\n` : ""}быстрый доступ`,
+      text:
+        `${notice ? `${notice}\n\n` : ""}` +
+        `быстрый доступ\n\n` +
+        `здесь можно настроить,\n` +
+        `что бот показывает сверху\n` +
+        `для быстрого выбора`,
       reply_markup: kb([
         [{ text: BUTTONS.expenseCategories, action: "settings:quick-access-section", payload: { section: "expense" } }],
         [{ text: BUTTONS.incomeCategories, action: "settings:quick-access-section", payload: { section: "income" } }],
@@ -3309,43 +3477,64 @@ export class BotService {
         : section === "income"
           ? user.quickAccessModeIncome
           : user.quickAccessModeSubcategories;
-    const title = section === "expense" ? BUTTONS.expenseCategories : section === "income" ? BUTTONS.incomeCategories : BUTTONS.subcategories;
+    const title = section === "expense" ? "тип: расход" : section === "income" ? "тип: доход" : "подкатегорий";
     const slotRows: Array<Array<{ text: string; action: string; payload?: Record<string, string | number | undefined> }>> = [];
     let extraLines = "";
 
     if (section === "subcategories" && current === "custom") {
       const categories = await this.listQuickAccessSubcategoryCategories(user);
-      const visibleCategories = categories.slice(0, 6);
-      extraLines = visibleCategories.length
-        ? `\n\n${visibleCategories.map((item, index) => `${index + 1}. ${item.type === "expense" ? BUTTONS.expense : BUTTONS.income} · ${item.name}`).join("\n")}\n\nвыбери категорию`
-        : "\n\nпока категорий нет";
-      if (visibleCategories.length) {
-        slotRows.push(
-          visibleCategories.map((item, index) => ({
-            text: String(index + 1),
-            action: "settings:quick-access-section",
-            payload: { section: `subcategory:${item.id}` }
-          }))
-        );
-      }
-      if (categories.length > 6) {
-        slotRows.push(buildPageRow(0, true, "settings:quick-access-subcategory-categories", { page: 0 }));
+      extraLines =
+        "\n\nэто подкатегории,\n" +
+        "которые бот показывает сверху\n" +
+        "внутри выбранной категории\n\n" +
+        "что настраиваем?";
+      slotRows.push([{ text: BUTTONS.chooseCategory, action: "settings:quick-access-subcategory-categories", payload: { page: 0 } }]);
+      if (categories.length === 0) {
+        extraLines =
+          "\n\nэто подкатегории,\n" +
+          "которые бот показывает сверху\n" +
+          "внутри выбранной категории\n\n" +
+          "что настраиваем?";
       }
     } else if (current === "custom") {
       const slots = await this.getQuickAccessSlots(user, section);
-      extraLines = slots.length ? `\n\n${slots.map((item, index) => `${index + 1}. ${item.name}`).join("\n")}` : "";
-      slotRows.push(Array.from({ length: Math.min(slots.length + 1, 4) }, (_, index) => ({ text: String(index + 1), action: "settings:quick-access-slot", payload: { section, slot: index + 1 } })));
+      const slotLabels = Array.from({ length: 4 }, (_, index) => {
+        const item = slots[index];
+        return `${index + 1}. ${item ? item.name : "пусто"}`;
+      });
+      extraLines = slots.length
+        ? `\n\nэто 4 категории,\nкоторые бот показывает сверху\n\nсейчас:\n${slotLabels.join("\n")}`
+        : "\n\nпока ничего не выбрано\n\nможешь выбрать до 4 категорий";
+      slotRows.push(
+        Array.from({ length: 4 }, (_, index) => ({
+          text: slotLabels[index],
+          action: "settings:quick-access-slot",
+          payload: { section, slot: index + 1 }
+        }))
+      );
       if (slots.length > 0) {
+        slotRows.push([{ text: BUTTONS.resetAll, action: "settings:quick-access-reset", payload: { section } }]);
         slotRows.push([{ text: BUTTONS.done, action: "settings:quick-access", payload: { section } }]);
       }
     }
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `${notice ? `${notice}\n\n` : ""}${title}\n\nтекущее значение: ${formatQuickAccessMode(current)}${extraLines}`,
+      text:
+        `${notice ? `${notice}\n\n` : ""}` +
+        `быстрый доступ\n` +
+        `${title}` +
+        (section === "subcategories"
+          ? `${extraLines}`
+          : `\n\nэто категории, которые бот\nпоказывает сверху\nдля быстрого выбора\n\nсейчас:\n${current === "custom" ? BUTTONS.own : current === "disabled" ? BUTTONS.off : BUTTONS.automatically}${extraLines}`),
       reply_markup: kb([
-        [{ text: BUTTONS.automatically, action: "settings:set-quick-access", payload: { section, mode: "automatically" } }],
-        [{ text: BUTTONS.own, action: "settings:set-quick-access", payload: { section, mode: "custom" } }],
-        [{ text: BUTTONS.off, action: "settings:set-quick-access", payload: { section, mode: "disabled" } }],
+        ...(section === "subcategories"
+          ? []
+          : current === "custom"
+            ? []
+            : [
+                [{ text: BUTTONS.own, action: "settings:set-quick-access", payload: { section, mode: "custom" } }],
+                [{ text: BUTTONS.off, action: "settings:set-quick-access", payload: { section, mode: "disabled" } }]
+              ]),
         ...slotRows,
         [{ text: BUTTONS.back, action: "settings:quick-access" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
@@ -3429,7 +3618,11 @@ export class BotService {
     if (merged.length === 0) {
       await this.sendMessage({
         chat_id: user.chatId,
-        text: "пока категорий нет\nможно вернуться назад",
+        text:
+          "быстрый доступ подкатегорий\n\n" +
+          "подкатегорий пока нет\n\n" +
+          "можешь добавить первую,\n" +
+          "а потом выбрать быстрые",
         reply_markup: kb([[{ text: BUTTONS.back, action: "settings:quick-access-section", payload: { section: "subcategories" } }, { text: BUTTONS.main, action: "nav:home" }]])
       });
       return;
@@ -3437,7 +3630,7 @@ export class BotService {
     const lines = items.map((item, index) => `${index + 1}. ${item.name}`).join("\n");
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `подкатегории\n\n${lines}\n\nвыбери категорию`,
+      text: `быстрый доступ\nподкатегорий\n\n${lines}\n\nвыбери категорию`,
       reply_markup: kb([
         items.map((item, index) => ({ text: String(index + 1), action: "settings:quick-access-slot", payload: { section: `subcategory:${item.id}`, slot } })),
         ...(page > 0 || merged.length > (page + 1) * 6 ? [buildPageRow(page, merged.length > (page + 1) * 6, "settings:quick-access-slot", { section: "subcategories", slot })] : []),
@@ -3486,6 +3679,32 @@ export class BotService {
     await this.showQuickAccessSection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), section, "значение сохранено");
   }
 
+  private async showQuickAccessResetConfirm(user: UserRecord, section: string): Promise<void> {
+    await this.sendMessage({
+      chat_id: user.chatId,
+      text:
+        "сбросить быстрый доступ?\n\n" +
+        "все выбранные категории будут убраны",
+      reply_markup: kb([
+        [{ text: BUTTONS.yesResetAll, action: "settings:quick-access-reset-confirm", payload: { section } }],
+        [{ text: BUTTONS.back, action: "settings:quick-access-section", payload: { section } }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async clearAllQuickAccess(user: UserRecord, section: string): Promise<void> {
+    if (section.startsWith("subcategory:")) {
+      await this.repo.updateSubcategoryQuickAccessSlots(user.id, Number(section.split(":")[1]), []);
+      await this.showQuickAccessSubcategorySection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), Number(section.split(":")[1]), "значение сохранено");
+      return;
+    }
+    if (section === "expense" || section === "income") {
+      await this.repo.updateCategoryQuickAccessSlots(user.id, section, []);
+      await this.showQuickAccessSection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), section, "значение сохранено");
+      return;
+    }
+  }
+
   private applySlotSelection(currentIds: number[], slot: number, entityId: number): number[] {
     const next = currentIds.slice(0, 4);
     const targetIndex = Math.max(0, Math.min(slot - 1, 3));
@@ -3525,23 +3744,30 @@ export class BotService {
     }
     const current = user.quickAccessModeSubcategories;
     const slots = await this.repo.listQuickAccessSubcategories(user.id, categoryId);
-    const slotLines = slots.length ? `\n\n${slots.map((item, index) => `${index + 1}. ${item.name}`).join("\n")}` : "";
-    const rows: Array<Array<{ text: string; action: string; payload?: Record<string, string | number | undefined> }>> = [
-      [{ text: BUTTONS.automatically, action: "settings:set-quick-access", payload: { section: `subcategory:${categoryId}`, mode: "automatically" } }],
-      [{ text: BUTTONS.own, action: "settings:set-quick-access", payload: { section: `subcategory:${categoryId}`, mode: "custom" } }],
-      [{ text: BUTTONS.off, action: "settings:set-quick-access", payload: { section: `subcategory:${categoryId}`, mode: "disabled" } }]
-    ];
-    if (current === "custom") {
-      rows.push(Array.from({ length: Math.min(slots.length + 1, 4) }, (_, index) => ({ text: String(index + 1), action: "settings:quick-access-slot", payload: { section: `subcategory:${categoryId}`, slot: index + 1 } })));
-      if (slots.length > 0) {
-        rows.push([{ text: BUTTONS.done, action: "settings:quick-access-section", payload: { section: "subcategories" } }]);
-      }
-    }
+    const slotLabels = Array.from({ length: 4 }, (_, index) => {
+      const item = slots[index];
+      return `${index + 1}. ${item ? item.name : "пусто"}`;
+    });
+    const rows: Array<Array<{ text: string; action: string; payload?: Record<string, string | number | undefined> }>> = current === "custom"
+      ? [
+          ...slotLabels.map((label, index) => [{ text: label, action: "settings:quick-access-slot", payload: { section: `subcategory:${categoryId}`, slot: index + 1 } }]),
+          ...(slots.length > 0 ? [[{ text: BUTTONS.resetAll, action: "settings:quick-access-reset", payload: { section: `subcategory:${categoryId}` } }], [{ text: BUTTONS.done, action: "settings:quick-access-section", payload: { section: "subcategories" } }]] : [])
+        ]
+      : [
+          [{ text: BUTTONS.own, action: "settings:set-quick-access", payload: { section: `subcategory:${categoryId}`, mode: "custom" } }],
+          [{ text: BUTTONS.off, action: "settings:set-quick-access", payload: { section: `subcategory:${categoryId}`, mode: "disabled" } }]
+        ];
     rows.push([{ text: BUTTONS.back, action: "settings:quick-access-section", payload: { section: "subcategories" } }, { text: BUTTONS.main, action: "nav:home" }]);
 
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `${notice ? `${notice}\n\n` : ""}подкатегории\n\n${category.name}\n\nтекущее значение: ${formatQuickAccessMode(current)}${slotLines}`,
+      text:
+        `${notice ? `${notice}\n\n` : ""}` +
+        `быстрый доступ\nподкатегорий\n\n` +
+        `категория: ${category.name}` +
+        (slots.length === 0 && current === "custom"
+          ? `\n\nподкатегорий пока нет\n\nможешь добавить первую,\nа потом выбрать быстрые`
+          : `\n\nэто подкатегории,\nкоторые бот показывает сверху\nвнутри выбранной категории\n\nсейчас:\n${formatQuickAccessMode(current)}${current === "custom" ? `\n\n${slotLabels.join("\n")}` : ""}`),
       reply_markup: kb(rows)
     });
   }
@@ -3576,7 +3802,12 @@ export class BotService {
   private async showSortingRoot(user: UserRecord, notice?: string): Promise<void> {
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `${notice ? `${notice}\n\n` : ""}сортировка`,
+      text:
+        `${notice ? `${notice}\n\n` : ""}` +
+        `сортировка\n\n` +
+        `здесь можно выбрать,\n` +
+        `в каком порядке бот показывает\n` +
+        `категории и подкатегории`,
       reply_markup: kb([
         [{ text: BUTTONS.expenseCategories, action: "settings:sorting-section", payload: { section: "expense" } }],
         [{ text: BUTTONS.incomeCategories, action: "settings:sorting-section", payload: { section: "income" } }],
@@ -3593,21 +3824,30 @@ export class BotService {
         : section === "income"
           ? user.sortModeIncome
           : user.sortModeSubcategories;
-    const title = section === "expense" ? BUTTONS.expenseCategories : section === "income" ? BUTTONS.incomeCategories : BUTTONS.subcategories;
+    const title = section === "expense" ? "категории расходов" : section === "income" ? "категории доходов" : "подкатегорий";
     const extraRows =
       section === "subcategories"
         ? [
-            [{ text: BUTTONS.expenseCategories, action: "settings:sorting-subcategories-categories", payload: { type: "expense", page: 0 } }],
-            [{ text: BUTTONS.incomeCategories, action: "settings:sorting-subcategories-categories", payload: { type: "income", page: 0 } }]
+            [{ text: BUTTONS.allCategoriesScope, action: "settings:sorting-subcategories-global" }],
+            [{ text: BUTTONS.oneCategoryScope, action: "settings:sorting-subcategories-categories", payload: { type: "expense", page: 0 } }]
           ]
         : [];
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `${notice ? `${notice}\n\n` : ""}${title}\n\nтекущее значение: ${formatSortingMode(current)}`,
+      text:
+        `${notice ? `${notice}\n\n` : ""}` +
+        `сортировка\n` +
+        `${title}` +
+        (section === "subcategories"
+          ? `\n\nздесь ты выбираешь,\nв каком порядке бот показывает\nподкатегории\n\nчто настраиваем?`
+          : `\n\nэто порядок категорий\nв полном списке\n\nсейчас:\n${formatSortingMode(current)}`),
       reply_markup: kb([
-        [{ text: "по количеству операций", action: "settings:set-sorting", payload: { section, mode: "usage" } }],
-        [{ text: "недавние", action: "settings:set-sorting", payload: { section, mode: "recent" } }],
-        [{ text: "по алфавиту", action: "settings:set-sorting", payload: { section, mode: "alphabet" } }],
+        ...(section === "subcategories"
+          ? []
+          : [
+              [{ text: "недавние", action: "settings:set-sorting", payload: { section, mode: "recent" } }],
+              [{ text: "по алфавиту", action: "settings:set-sorting", payload: { section, mode: "alphabet" } }]
+            ]),
         ...extraRows,
         [{ text: BUTTONS.back, action: "settings:sorting" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
@@ -3639,7 +3879,7 @@ export class BotService {
     const lines = categories.map((item, index) => `${index + 1}. ${item.name}`).join("\n");
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `подкатегории\n\n${lines}\n\nвыбери категорию`,
+      text: `сортировка\nподкатегорий\n\n${lines}\n\nвыбери категорию`,
       reply_markup: kb([
         categories.map((item, index) => ({
           text: String(index + 1),
@@ -3647,6 +3887,25 @@ export class BotService {
           payload: { id: item.id, type, page }
         })),
         ...(page > 0 || categories.length === 6 ? [buildPageRow(page, categories.length === 6, "settings:sorting-subcategories-categories", { type })] : []),
+        [{ text: BUTTONS.back, action: "settings:sorting-section", payload: { section: "subcategories" } }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async showSubcategorySortingGlobal(user: UserRecord, notice?: string): Promise<void> {
+    await this.sendMessage({
+      chat_id: user.chatId,
+      text:
+        `${notice ? `${notice}\n\n` : ""}` +
+        `сортировка подкатегорий\n` +
+        `во всех категориях\n\n` +
+        `это общий порядок,\n` +
+        `если для категории\n` +
+        `нет своей настройки\n\n` +
+        `сейчас:\n${formatSortingMode(user.sortModeSubcategories)}`,
+      reply_markup: kb([
+        [{ text: "недавние", action: "settings:set-sorting", payload: { section: "subcategories", mode: "recent" } }],
+        [{ text: "по алфавиту", action: "settings:set-sorting", payload: { section: "subcategories", mode: "alphabet" } }],
         [{ text: BUTTONS.back, action: "settings:sorting-section", payload: { section: "subcategories" } }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
@@ -3661,9 +3920,15 @@ export class BotService {
     const current = category.sortModeOverride ?? user.sortModeSubcategories;
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `${notice ? `${notice}\n\n` : ""}подкатегории\n\n${category.name}\n\nтекущее значение: ${formatSortingMode(current)}`,
+      text:
+        `${notice ? `${notice}\n\n` : ""}` +
+        `сортировка подкатегорий\n` +
+        `категория: ${category.name}\n\n` +
+        `это порядок только\n` +
+        `для подкатегорий\n` +
+        `внутри этой категории\n\n` +
+        `сейчас:\n${formatSortingMode(current)}`,
       reply_markup: kb([
-        [{ text: "по количеству операций", action: "settings:set-sorting-category", payload: { id: categoryId, type, page, mode: "usage" } }],
         [{ text: "недавние", action: "settings:set-sorting-category", payload: { id: categoryId, type, page, mode: "recent" } }],
         [{ text: "по алфавиту", action: "settings:set-sorting-category", payload: { id: categoryId, type, page, mode: "alphabet" } }],
         [{ text: BUTTONS.resetToGeneral, action: "settings:set-sorting-category", payload: { id: categoryId, type, page, mode: "reset" } }],
@@ -3684,7 +3949,11 @@ export class BotService {
   private async showData(user: UserRecord, notice?: string): Promise<void> {
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `${notice ? `${notice}\n\n` : ""}данные`,
+      text:
+        `${notice ? `${notice}\n\n` : ""}` +
+        `данные\n\n` +
+        `выбери, куда хочешь\n` +
+        `сохранить или загрузить данные`,
       reply_markup: kb([
         [{ text: BUTTONS.forThisBot, action: "data:this-bot" }],
         [{ text: BUTTONS.forOtherApps, action: "data:other-apps" }],
@@ -3698,7 +3967,16 @@ export class BotService {
   private async showDataThisBot(user: UserRecord, notice?: string): Promise<void> {
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `${notice ? `${notice}\n\n` : ""}для этого бота`,
+      text:
+        `${notice ? `${notice}\n\n` : ""}` +
+        `для этого бота\n\n` +
+        `здесь можно сохранить файл\n` +
+        `с полной копией бота\n` +
+        `или загрузить его обратно\n\n` +
+        `в файл входят:\n` +
+        `записи, категории,\n` +
+        `подкатегории, настройки,\n` +
+        `черновик и новые записи`,
       reply_markup: kb([
         [{ text: BUTTONS.saveToFile, action: "data:export-full" }],
         [{ text: BUTTONS.loadFromFile, action: "data:import-full-open" }],
@@ -3710,7 +3988,17 @@ export class BotService {
   private async showDataOtherApps(user: UserRecord, notice?: string): Promise<void> {
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `${notice ? `${notice}\n\n` : ""}в другие приложения`,
+      text:
+        `${notice ? `${notice}\n\n` : ""}` +
+        `в другие приложения\n\n` +
+        `здесь можно сохранить файл\n` +
+        `только с записями\n` +
+        `или загрузить такой файл обратно\n\n` +
+        `в файл входят:\n` +
+        `дата, время, сумма, тип,\n` +
+        `категория, подкатегория, описание\n\n` +
+        `настройки и черновики\n` +
+        `сюда не входят`,
       reply_markup: kb([
         [{ text: BUTTONS.saveToFile, action: "data:export-entries" }],
         [{ text: BUTTONS.loadFromFile, action: "data:import-entries-open" }],
@@ -3737,13 +4025,12 @@ export class BotService {
       .map((item) => `- ${String(item.reason ?? "не удалось прочитать строку")}`)
       .join("\n");
 
-    const text =
-      `${notice ? `${notice}\n\n` : ""}` +
-      `в другие приложения\n\n` +
-      `записей: ${previewEntries.length}` +
-      (previewErrors.length > 0
-        ? `\nне удалось прочитать: ${previewErrors.length}\n\nкраткие причины:\n${reasonLines}`
-        : "");
+    const topBlock =
+      previewErrors.length > 0
+        ? `добавить всё из файла\n\nбудет добавлено:\n${previewEntries.length} записей\n\nне удалось прочитать:\n${previewErrors.length} строк` +
+          (reasonLines ? `\n\nчаще всего:\n${reasonLines.replace(/^- /gm, "")}` : "")
+        : `файл загружен\n\nнашёл:\n${previewEntries.length} записей\n\nиз файла будут взяты:\nсумма, тип, категория,\nподкатегория, описание,\nдата и время\n\nтекущие данные пока не меняются\n\nчто сделать?`;
+    const text = `${notice ? `${notice}\n\n` : ""}${topBlock}`;
 
     const rows: Array<Array<{ text: string; action: string; payload?: Record<string, string | number | undefined> }>> = [
       [{ text: BUTTONS.merge, action: "data:import-entries-merge", payload: { importId } }],
@@ -3848,11 +4135,9 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
-        `исправить\n\n` +
-        `строка:\n${String(current.rawText ?? "")}\n\n` +
-        `причина:\n${String(current.reason ?? "")}\n\n` +
-        `из записи удалось понять:\n${understood}` +
-        (!(parsed.type && parsed.amountMinor && parsed.category) ? `\n\nне хватает: ${parsed.missing.map(formatMissingField).join(", ")}` : ""),
+        `исправить импорт\n${index + 1} из ${errors.length}\n\n` +
+        `из файла удалось понять:\n${understood}` +
+        (!(parsed.type && parsed.amountMinor && parsed.category) ? `\n\nне хватает:\n${parsed.missing.map(formatMissingField).join("\n")}` : `\n\nвсё готово`),
       reply_markup: kb(buttons)
     });
   }
@@ -4493,6 +4778,27 @@ function formatSortingMode(mode: string): string {
   return "по количеству операций";
 }
 
+function formatCurrencySettingLabel(user: UserRecord): string {
+  if (user.currencyLabel === "₽") {
+    return "₽ рубль";
+  }
+  if (user.currencyLabel === "$") {
+    return "$ доллар";
+  }
+  if (user.currencyLabel === "€") {
+    return "€ евро";
+  }
+  return user.currencyLabel;
+}
+
+function formatTimezoneSettingLabel(timezone: string): string {
+  if (timezone === "Europe/Moscow") {
+    return "мск";
+  }
+  const city = timezone.split("/").pop()?.replace(/_/g, " ").toLowerCase();
+  return city || timezone.toLowerCase();
+}
+
 function hasNextPage(total: number, page: number, limit = 6): boolean {
   return (page + 1) * limit < total;
 }
@@ -4521,6 +4827,8 @@ function parseFullSnapshot(content: string):
   | {
       raw: Record<string, unknown>;
       categories: number;
+      expenseCategories: number;
+      incomeCategories: number;
       subcategories: number;
       entries: number;
       hasDraft: boolean;
@@ -4535,6 +4843,12 @@ function parseFullSnapshot(content: string):
     return {
       raw,
       categories: Array.isArray(raw.categories) ? raw.categories.length : 0,
+      expenseCategories: Array.isArray(raw.categories)
+        ? raw.categories.filter((item) => typeof item === "object" && item && (item as { type?: unknown }).type === "expense").length
+        : 0,
+      incomeCategories: Array.isArray(raw.categories)
+        ? raw.categories.filter((item) => typeof item === "object" && item && (item as { type?: unknown }).type === "income").length
+        : 0,
       subcategories: Array.isArray(raw.subcategories) ? raw.subcategories.length : 0,
       entries: Array.isArray(raw.entries) ? raw.entries.length : 0,
       hasDraft: Boolean(raw.draft),
