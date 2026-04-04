@@ -3363,47 +3363,18 @@ export class BotService {
       await this.showEntriesImportPreview(user, importId);
       return;
     }
-    const parsed = parseFixCandidate(String(current.rawText ?? ""));
-    if (!(parsed.type && parsed.amountMinor && parsed.category)) {
+    const staged = stageImportFixPreview({ entries, errors }, index);
+    if (staged.status === "missing") {
       await this.showImportFixItem(user, importId, index);
       return;
     }
-
-    const entry = {
-      type: parsed.type,
-      amountMinor: parsed.amountMinor,
-      categoryName: parsed.category,
-      subcategoryName: parsed.subcategory ?? null,
-      description: parsed.description ?? null,
-      entryDate: parsed.entryDate ?? null,
-      entryTime: parsed.entryTime ?? null,
-      isTimeAuto: parsed.isTimeAuto,
-      isDateMissing: parsed.isDateMissing
-    };
-
-    await this.repo.createEntry({
-      user,
-      type: entry.type,
-      amountMinor: entry.amountMinor,
-      categoryName: entry.categoryName,
-      subcategoryName: entry.subcategoryName ?? undefined,
-      description: entry.description ?? undefined,
-      entryDate: entry.entryDate,
-      entryTime: entry.entryTime,
-      isTimeAuto: entry.isTimeAuto,
-      isDateMissing: entry.isDateMissing,
-      source: "import-fix"
-    });
-
-    entries.push(entry);
-    errors.splice(index, 1);
     await this.repo.updateImportPreview(user.id, importId, {
       ...preview,
-      entries,
-      errors
+      entries: staged.preview.entries,
+      errors: staged.preview.errors
     });
 
-    if (errors.length === 0) {
+    if (staged.preview.errors.length === 0) {
       await this.telegram.sendMessage({
         chat_id: user.chatId,
         text: "проблемных строк больше нет"
@@ -3412,7 +3383,7 @@ export class BotService {
       return;
     }
 
-    await this.showImportFixItem(user, importId, Math.min(index, errors.length - 1));
+    await this.showImportFixItem(user, importId, Math.min(index, staged.preview.errors.length - 1));
   }
 
   private async toggleSelection(user: UserRecord, entryId: number, origin: string, page: number): Promise<void> {
@@ -4130,6 +4101,64 @@ function parseFixCandidate(rawText: string): {
     isDateMissing: !extractedDate,
     isTimeAuto: !extractedTime,
     missing: parsed.missing
+  };
+}
+
+export function stageImportFixPreview(
+  preview: {
+    entries: Array<Record<string, unknown>>;
+    errors: Array<Record<string, unknown>>;
+  },
+  index: number
+):
+  | {
+      status: "saved";
+      preview: {
+        entries: Array<Record<string, unknown>>;
+        errors: Array<Record<string, unknown>>;
+      };
+    }
+  | {
+      status: "missing";
+      preview: {
+        entries: Array<Record<string, unknown>>;
+        errors: Array<Record<string, unknown>>;
+      };
+    } {
+  const errors = [...preview.errors];
+  const entries = [...preview.entries];
+  const current = errors[index];
+  if (!current) {
+    return {
+      status: "missing",
+      preview: { entries, errors }
+    };
+  }
+
+  const parsed = parseFixCandidate(String(current.rawText ?? ""));
+  if (!(parsed.type && parsed.amountMinor && parsed.category)) {
+    return {
+      status: "missing",
+      preview: { entries, errors }
+    };
+  }
+
+  entries.push({
+    type: parsed.type,
+    amountMinor: parsed.amountMinor,
+    categoryName: parsed.category,
+    subcategoryName: parsed.subcategory ?? null,
+    description: parsed.description ?? null,
+    entryDate: parsed.entryDate ?? null,
+    entryTime: parsed.entryTime ?? null,
+    isTimeAuto: parsed.isTimeAuto,
+    isDateMissing: parsed.isDateMissing
+  });
+  errors.splice(index, 1);
+
+  return {
+    status: "saved",
+    preview: { entries, errors }
   };
 }
 
