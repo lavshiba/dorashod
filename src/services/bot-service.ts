@@ -62,12 +62,12 @@ export class BotService {
     }
 
     if (update.message?.location) {
-      await this.handleLocation(update.message.from?.id, update.message.chat.id, update.message.location);
+      await this.handleLocation(update.message.from?.id, update.message.chat.id, update.message.location, update.message.message_id);
       return;
     }
 
     if (update.message?.document) {
-      await this.handleDocument(update.message.from?.id, update.message.chat.id, update.message.document);
+      await this.handleDocument(update.message.from?.id, update.message.chat.id, update.message.document, update.message.message_id);
     }
   }
 
@@ -82,6 +82,7 @@ export class BotService {
 
     const user = await this.repo.getOrCreateUser(String(fromId), String(chatId));
     this.currentUserId = user.id;
+    const shouldDeleteIncoming = text !== "/start";
     try {
       const session = await this.repo.getSession(user.id);
 
@@ -383,6 +384,9 @@ export class BotService {
 
       await this.showHome(user);
     } finally {
+      if (shouldDeleteIncoming) {
+        await this.deleteIncomingMessage(user.chatId, messageId);
+      }
       this.currentUserId = null;
     }
   }
@@ -390,7 +394,8 @@ export class BotService {
   private async handleLocation(
     fromId: number | undefined,
     chatId: number,
-    location: { latitude: number; longitude: number }
+    location: { latitude: number; longitude: number },
+    messageId?: number
   ): Promise<void> {
     if (!fromId) {
       return;
@@ -407,6 +412,7 @@ export class BotService {
       }
       await this.showHome(user);
     } finally {
+      await this.deleteIncomingMessage(user.chatId, messageId);
       this.currentUserId = null;
     }
   }
@@ -414,7 +420,8 @@ export class BotService {
   private async handleDocument(
     fromId: number | undefined,
     chatId: number,
-    document: { file_id: string; file_name?: string; mime_type?: string }
+    document: { file_id: string; file_name?: string; mime_type?: string },
+    messageId?: number
   ): Promise<void> {
     if (!fromId) {
       return;
@@ -494,6 +501,7 @@ export class BotService {
 
       await this.showEntriesImportPreview(user, importId);
     } finally {
+      await this.deleteIncomingMessage(user.chatId, messageId);
       this.currentUserId = null;
     }
   }
@@ -1682,6 +1690,18 @@ export class BotService {
       stack: [],
       context: {}
     });
+  }
+
+  private async deleteIncomingMessage(chatId: string, messageId?: number): Promise<void> {
+    if (typeof messageId !== "number") {
+      return;
+    }
+
+    try {
+      await this.telegram.deleteMessage(chatId, messageId);
+    } catch {
+      // Telegram can refuse deletion for old, already removed or non-deletable messages.
+    }
   }
 
   private async showStart(user: UserRecord): Promise<void> {

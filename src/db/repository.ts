@@ -135,6 +135,17 @@ export class Repository {
   }
 
   async tryAcquireCallbackLock(userId: number, messageId: number, callbackData: string): Promise<boolean> {
+    await this.db
+      .prepare(
+        `
+        DELETE FROM callback_locks
+        WHERE user_id = ?
+          AND created_at < datetime('now', '-3 seconds')
+      `
+      )
+      .bind(userId)
+      .run();
+
     const result = await this.db
       .prepare(
         `
