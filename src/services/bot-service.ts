@@ -5246,6 +5246,18 @@ export class BotService {
     const analysis = await this.analyzeEntriesImport(user, previewEntries, mergeOnly);
     const existingKeys = mergeOnly ? new Set(await this.repo.getExistingEntryDedupKeys(user.id)) : new Set<string>();
     let added = 0;
+    const entriesToCreate: Array<{
+      type: EntryType;
+      amountMinor: number;
+      categoryName: string;
+      subcategoryName?: string | null;
+      description?: string | null;
+      source: string;
+      entryDate?: string | null;
+      entryTime?: string | null;
+      isTimeAuto?: boolean;
+      isDateMissing?: boolean;
+    }> = [];
 
     for (const item of previewEntries) {
       const key = makeEntryDedupKey({
@@ -5260,13 +5272,12 @@ export class BotService {
       if (mergeOnly && existingKeys.has(key)) {
         continue;
       }
-      await this.repo.createEntry({
-        user,
+      entriesToCreate.push({
         type: String(item.type) as EntryType,
         amountMinor: Number(item.amountMinor),
         categoryName: String(item.categoryName),
-        subcategoryName: item.subcategoryName ? String(item.subcategoryName) : undefined,
-        description: item.description ? String(item.description) : undefined,
+        subcategoryName: item.subcategoryName ? String(item.subcategoryName) : null,
+        description: item.description ? String(item.description) : null,
         entryDate: item.entryDate ? String(item.entryDate) : null,
         entryTime: item.entryTime ? String(item.entryTime) : null,
         isTimeAuto: Boolean(item.isTimeAuto),
@@ -5275,6 +5286,10 @@ export class BotService {
       });
       existingKeys.add(key);
       added += 1;
+    }
+
+    if (entriesToCreate.length > 0) {
+      await this.repo.createEntriesBulk(user, entriesToCreate);
     }
 
     await this.repo.deleteImport(user.id, importId);

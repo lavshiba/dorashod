@@ -443,6 +443,110 @@ export class Repository {
     }
   }
 
+  async createEntriesBulk(
+    user: UserRecord,
+    entries: Array<{
+      type: EntryType;
+      amountMinor: number;
+      categoryName: string;
+      subcategoryName?: string | null;
+      description?: string | null;
+      source: string;
+      entryDate?: string | null;
+      entryTime?: string | null;
+      isTimeAuto?: boolean;
+      isDateMissing?: boolean;
+    }>
+  ): Promise<void> {
+    const fallback = splitNowForUser(user.timezoneName);
+    const categoryCache = new Map<string, CategoryRecord>();
+    const subcategoryCache = new Map<string, SubcategoryRecord>();
+    const chunkSize = 100;
+
+    let statements: D1PreparedStatement[] = [];
+    let categoryUsage = new Map<number, number>();
+    let subcategoryUsage = new Map<number, number>();
+
+    const flush = async (): Promise<void> => {
+      if (statements.length === 0) {
+        return;
+      }
+      for (const [categoryId, count] of categoryUsage) {
+        statements.push(this.db.prepare("UPDATE categories SET usage_count_cache = usage_count_cache + ? WHERE id = ?").bind(count, categoryId));
+      }
+      for (const [subcategoryId, count] of subcategoryUsage) {
+        statements.push(this.db.prepare("UPDATE subcategories SET usage_count_cache = usage_count_cache + ? WHERE id = ?").bind(count, subcategoryId));
+      }
+      await this.db.batch(statements);
+      statements = [];
+      categoryUsage = new Map<number, number>();
+      subcategoryUsage = new Map<number, number>();
+    };
+
+    for (const item of entries) {
+      const categoryKey = `${item.type}:${normalizeName(item.categoryName)}`;
+      let category = categoryCache.get(categoryKey);
+      if (!category) {
+        category = await this.ensureCategory(user.id, item.type, item.categoryName);
+        categoryCache.set(categoryKey, category);
+      }
+
+      let subcategoryId: number | null = null;
+      if (item.subcategoryName && user.subcategoriesEnabled) {
+        const subcategoryKey = `${category.id}:${normalizeName(item.subcategoryName)}`;
+        let subcategory = subcategoryCache.get(subcategoryKey);
+        if (!subcategory) {
+          subcategory = await this.ensureSubcategory(user.id, category.id, item.subcategoryName);
+          subcategoryCache.set(subcategoryKey, subcategory);
+        }
+        subcategoryId = subcategory.id;
+      }
+
+      const entryDate = item.entryDate ?? fallback.date;
+      const entryTime = item.entryTime ?? fallback.time;
+      const entryDatetimeSort = item.isDateMissing ? null : `${entryDate}T${entryTime}`;
+
+      statements.push(
+        this.db
+          .prepare(
+            `
+            INSERT INTO entries (
+              user_id, type, amount_minor, currency_label, category_id, subcategory_id, description,
+              entry_date, entry_time, entry_datetime_sort, is_time_auto, is_date_missing, source
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `
+          )
+          .bind(
+            user.id,
+            item.type,
+            item.amountMinor,
+            user.currencyLabel,
+            category.id,
+            subcategoryId,
+            item.description ?? null,
+            entryDate,
+            entryTime,
+            entryDatetimeSort,
+            item.isTimeAuto ? 1 : 0,
+            item.isDateMissing ? 1 : 0,
+            item.source
+          )
+      );
+
+      categoryUsage.set(category.id, (categoryUsage.get(category.id) ?? 0) + 1);
+      if (subcategoryId) {
+        subcategoryUsage.set(subcategoryId, (subcategoryUsage.get(subcategoryId) ?? 0) + 1);
+      }
+
+      if (statements.length >= chunkSize) {
+        await flush();
+      }
+    }
+
+    await flush();
+  }
+
   async getHomeStats(userId: number, today: string, monthPrefix: string): Promise<{
     totalEntries: number;
     todayIncome: number;
