@@ -419,6 +419,8 @@ export class BotService {
     }
 
     switch (action) {
+      case "noop":
+        return;
       case "onboarding:show":
         await this.showOnboarding(user, Number(params.step ?? "0"));
         return;
@@ -1532,9 +1534,11 @@ export class BotService {
         ...(selectMode
           ? [
               [{ text: BUTTONS.chooseAll, action: "select:all", payload: { origin: "operations", page } }],
-              ...(hasSelection ? [[{ text: `действия: ${selectedIds.size}`, action: "select:actions", payload: { origin: "operations", page } }]] : [])
+              ...(hasSelection ? [[{ text: `действия: ${selectedIds.size}`, action: "select:actions", payload: { origin: "operations", page } }]] : []),
+              ...(page > 0 || items.length === 6 ? [buildPageRow(page, items.length === 6, selectMode ? "operations:select-mode" : "operations:list")] : [])
             ]
           : []),
+        ...(!selectMode && (page > 0 || items.length === 6) ? [buildPageRow(page, items.length === 6, "operations:list")] : []),
         [{ text: BUTTONS.search, action: "search:open" }],
         [{ text: BUTTONS.main, action: "nav:home" }]
       ])
@@ -1865,9 +1869,11 @@ export class BotService {
         ...(selectMode
           ? [
               [{ text: BUTTONS.chooseAll, action: "select:all", payload: { origin: "search", page, query } }],
-              ...(selectedIds.size > 0 ? [[{ text: `действия: ${selectedIds.size}`, action: "select:actions", payload: { origin: "search", page, query } }]] : [])
+              ...(selectedIds.size > 0 ? [[{ text: `действия: ${selectedIds.size}`, action: "select:actions", payload: { origin: "search", page, query } }]] : []),
+              ...(page > 0 || hasNextPage(data.total, page) ? [buildPageRow(page, hasNextPage(data.total, page), "search:select-mode", { query })] : [])
             ]
           : []),
+        ...(!selectMode && (page > 0 || hasNextPage(data.total, page)) ? [buildPageRow(page, hasNextPage(data.total, page), "search:results", { query })] : []),
         [{ text: BUTTONS.newSearch, action: "search:open" }],
         [{ text: BUTTONS.back, action: "search:open" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
@@ -1925,9 +1931,11 @@ export class BotService {
         ...(selectMode
           ? [
               [{ text: BUTTONS.chooseAll, action: "select:all", payload: { origin: "search", page, query: title } }],
-              ...(selectedIds.size > 0 ? [[{ text: `действия: ${selectedIds.size}`, action: "select:actions", payload: { origin: "search", page, query: title } }]] : [])
+              ...(selectedIds.size > 0 ? [[{ text: `действия: ${selectedIds.size}`, action: "select:actions", payload: { origin: "search", page, query: title } }]] : []),
+              ...(page > 0 || hasNextPage(data.total, page) ? [buildPageRow(page, hasNextPage(data.total, page), "search:quick", { period: periodLabel })] : [])
             ]
           : []),
+        ...(!selectMode && (page > 0 || hasNextPage(data.total, page)) ? [buildPageRow(page, hasNextPage(data.total, page), "search:quick", { period: periodLabel })] : []),
         [{ text: BUTTONS.newSearch, action: "search:open" }],
         [{ text: BUTTONS.back, action: "search:open" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
@@ -2013,6 +2021,7 @@ export class BotService {
       text: `${type === "expense" ? "по расходам" : "по доходам"}\n\n${lines}`,
       reply_markup: kb([
         numberButtons,
+        ...(page > 0 || hasNextPage(breakdown.total, page, 4) ? [buildPageRow(page, hasNextPage(breakdown.total, page, 4), "reports:breakdown", { type })] : []),
         [{ text: BUTTONS.back, action: "reports:current" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
@@ -2100,7 +2109,7 @@ export class BotService {
         `записей\n${card.entries}\n\n` +
         `внутри категории\n${formatShare(card.amountMinor, card.totalInCategory)}`,
       reply_markup: kb([
-        [{ text: "записи", action: "report:entries", payload: { page: 0, type, categoryId, subcategoryId } }],
+        [{ text: BUTTONS.allEntries, action: "report:entries", payload: { page: 0, type, categoryId, subcategoryId } }],
         [{ text: BUTTONS.back, action: "report:category", payload: { id: categoryId, type, page } }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
@@ -2186,7 +2195,30 @@ export class BotService {
                   }
                 }
               ],
-              ...(selectedIds.size > 0 ? [[{ text: `действия: ${selectedIds.size}`, action: "select:actions", payload: { origin: "report", page: input.page } }]] : [])
+              ...(selectedIds.size > 0 ? [[{ text: `действия: ${selectedIds.size}`, action: "select:actions", payload: { origin: "report", page: input.page } }]] : []),
+              ...(input.page > 0 || hasNextPage(data.total, input.page)
+                ? [
+                    buildPageRow(
+                      input.page,
+                      hasNextPage(data.total, input.page),
+                      "report:entries-select",
+                      {
+                        ...(input.type ? { type: input.type } : {}),
+                        ...(typeof input.categoryId === "number" ? { categoryId: input.categoryId } : {}),
+                        ...(typeof input.subcategoryId === "number" ? { subcategoryId: input.subcategoryId } : {})
+                      }
+                    )
+                  ]
+                : [])
+            ]
+          : []),
+        ...(!selectMode && (input.page > 0 || hasNextPage(data.total, input.page))
+          ? [
+              buildPageRow(input.page, hasNextPage(data.total, input.page), "report:entries", {
+                ...(input.type ? { type: input.type } : {}),
+                ...(typeof input.categoryId === "number" ? { categoryId: input.categoryId } : {}),
+                ...(typeof input.subcategoryId === "number" ? { subcategoryId: input.subcategoryId } : {})
+              })
             ]
           : []),
         [{ text: BUTTONS.back, action: this.reportEntriesBackAction(session, input), payload: this.reportEntriesBackPayload(session, input) }, { text: BUTTONS.main, action: "nav:home" }]
@@ -2236,6 +2268,7 @@ export class BotService {
         numberButtons,
         [{ text: BUTTONS.addCategory, action: "categories:add", payload: { type } }],
         ...(hiddenCount > 0 ? [[{ text: BUTTONS.hidden, action: "categories:hidden", payload: { type, page: 0 } }]] : []),
+        ...(page > 0 || categories.length === 6 ? [buildPageRow(page, categories.length === 6, "categories:list", { type })] : []),
         [{ text: BUTTONS.back, action: "categories:open" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
@@ -2265,6 +2298,7 @@ export class BotService {
       text: `скрытые\n\n${lines}`,
       reply_markup: kb([
         numberButtons,
+        ...(page > 0 || categories.length === 6 ? [buildPageRow(page, categories.length === 6, "categories:hidden", { type })] : []),
         [{ text: BUTTONS.back, action: "categories:list", payload: { type, page: 0 } }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
@@ -2302,8 +2336,8 @@ export class BotService {
   }
 
   private async showHiddenSubcategoryList(user: UserRecord, categoryId: number, type: EntryType, page: number): Promise<void> {
-    const items = await this.repo.listHiddenSubcategories(user.id, categoryId, user.sortModeSubcategories);
-    if (items.length === 0) {
+    const allItems = await this.repo.listHiddenSubcategories(user.id, categoryId, user.sortModeSubcategories);
+    if (allItems.length === 0) {
       await this.telegram.sendMessage({
         chat_id: user.chatId,
         text: "пока скрытых подкатегорий нет\nможно вернуться назад",
@@ -2312,6 +2346,7 @@ export class BotService {
       return;
     }
 
+    const items = allItems.slice(page * 6, page * 6 + 6);
     const lines = items.map((item, index) => `${index + 1}. ${item.name}`).join("\n");
     const numberButtons = items.map((item, index) => ({
       text: String(index + 1),
@@ -2323,6 +2358,7 @@ export class BotService {
       text: `скрытые\n\n${lines}`,
       reply_markup: kb([
         numberButtons,
+        ...(page > 0 || allItems.length > (page + 1) * 6 ? [buildPageRow(page, allItems.length > (page + 1) * 6, "subcategories:hidden", { categoryId, type })] : []),
         [{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page } }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
@@ -2529,14 +2565,16 @@ export class BotService {
 
   private async startSubcategoryTransferAll(user: UserRecord, subcategoryId: number, categoryId: number, type: EntryType, page: number): Promise<void> {
     const subcategories = (await this.repo.getSubcategories(user.id, categoryId, user.sortModeSubcategories)).filter((item) => item.id !== subcategoryId && !item.hiddenAt);
-    const lines = subcategories.length ? subcategories.slice(0, 6).map((item, index) => `${index + 1}. ${item.name}`).join("\n") : "";
+    const visibleItems = subcategories.slice(page * 6, page * 6 + 6);
+    const lines = visibleItems.length ? visibleItems.map((item, index) => `${index + 1}. ${item.name}`).join("\n") : "";
     await this.telegram.sendMessage({
       chat_id: user.chatId,
       text: `перенести все записи\n\n${subcategories.length ? `${lines}\n\nвыбери подкатегорию` : "можно снять подкатегорию у всех записей"}`,
       reply_markup: kb([
-        ...(subcategories.length
-          ? [subcategories.slice(0, 6).map((item, index) => ({ text: `${index + 1}`, action: "subcategory:transfer-to", payload: { id: subcategoryId, target: item.id, categoryId, type, page } }))]
+        ...(visibleItems.length
+          ? [visibleItems.map((item, index) => ({ text: `${index + 1}`, action: "subcategory:transfer-to", payload: { id: subcategoryId, target: item.id, categoryId, type, page } }))]
           : []),
+        ...(subcategories.length && (page > 0 || subcategories.length > 6) ? [buildPageRow(page, subcategories.length > (page + 1) * 6, "subcategory:transfer-all", { id: subcategoryId, categoryId, type })] : []),
         [{ text: BUTTONS.withoutSubcategory, action: "subcategory:transfer-to", payload: { id: subcategoryId, categoryId, type, page } }],
         [{ text: BUTTONS.back, action: "subcategory:view", payload: { id: subcategoryId, categoryId, type, page } }, { text: BUTTONS.main, action: "nav:home" }]
       ])
@@ -2626,7 +2664,25 @@ export class BotService {
         ...(selectMode
           ? [
               [{ text: BUTTONS.chooseAll, action: "select:all", payload: { origin: "category", page } }],
-              ...(selectedIds.size > 0 ? [[{ text: `действия: ${selectedIds.size}`, action: "select:actions", payload: { origin: "category", page } }]] : [])
+              ...(selectedIds.size > 0 ? [[{ text: `действия: ${selectedIds.size}`, action: "select:actions", payload: { origin: "category", page } }]] : []),
+              ...(page > 0 || hasNextPage(data.total, page)
+                ? [
+                    buildPageRow(page, hasNextPage(data.total, page), "category:entries-select", {
+                      categoryId,
+                      ...(typeof subcategoryId === "number" ? { id: subcategoryId } : {}),
+                      type
+                    })
+                  ]
+                : [])
+            ]
+          : []),
+        ...(!selectMode && (page > 0 || hasNextPage(data.total, page))
+          ? [
+              buildPageRow(page, hasNextPage(data.total, page), subcategoryId ? "subcategory:entries" : "category:entries", {
+                ...(typeof subcategoryId === "number" ? { id: subcategoryId } : {}),
+                categoryId,
+                type
+              })
             ]
           : []),
         [{ text: BUTTONS.back, action: subcategoryId ? "subcategory:view" : "category:view", payload: subcategoryId ? { id: subcategoryId, categoryId, type, page: 0 } : { id: categoryId, type, page: 0 } }, { text: BUTTONS.main, action: "nav:home" }]
@@ -2752,13 +2808,14 @@ export class BotService {
 
   private async showQuickAccessSlotEditor(user: UserRecord, section: string, slot: number, page: number): Promise<void> {
     if (section === "subcategories") {
-      await this.showQuickAccessSubcategoryCategoryChooser(user, slot);
+      await this.showQuickAccessSubcategoryCategoryChooser(user, slot, page);
       return;
     }
     if (section.startsWith("subcategory:")) {
       const categoryId = Number(section.split(":")[1]);
       const current = await this.repo.listQuickAccessSubcategories(user.id, categoryId);
-      const items = (await this.repo.getSubcategories(user.id, categoryId, user.sortModeSubcategories)).slice(page * 6, page * 6 + 6);
+      const allItems = await this.repo.getSubcategories(user.id, categoryId, user.sortModeSubcategories);
+      const items = allItems.slice(page * 6, page * 6 + 6);
       const lines = items.length ? items.map((item, index) => `${index + 1}. ${item.name}`).join("\n") : "пока подкатегорий нет";
       const slotItem = current[slot - 1];
       await this.repo.saveSession(user.id, { mode: "settings", stack: ["settings"], context: { lastQuickAccessCategoryId: categoryId } });
@@ -2770,6 +2827,7 @@ export class BotService {
             ? [items.map((item, index) => ({ text: String(index + 1), action: "settings:quick-access-slot-pick", payload: { section, slot, id: item.id, page } }))]
             : []),
           ...(slotItem ? [[{ text: BUTTONS.delete, action: "settings:quick-access-slot-clear", payload: { section, slot } }]] : []),
+          ...(page > 0 || allItems.length > (page + 1) * 6 ? [buildPageRow(page, allItems.length > (page + 1) * 6, "settings:quick-access-slot", { section, slot })] : []),
           [{ text: BUTTONS.back, action: "settings:quick-access-section", payload: { section: "subcategories" } }, { text: BUTTONS.main, action: "nav:home" }]
         ])
       });
@@ -2788,15 +2846,18 @@ export class BotService {
           ? [items.map((item, index) => ({ text: String(index + 1), action: "settings:quick-access-slot-pick", payload: { section, slot, id: item.id, page } }))]
           : []),
         ...(slotItem ? [[{ text: BUTTONS.delete, action: "settings:quick-access-slot-clear", payload: { section, slot } }]] : []),
+        ...(page > 0 || items.length === 6 ? [buildPageRow(page, items.length === 6, "settings:quick-access-slot", { section, slot })] : []),
         [{ text: BUTTONS.back, action: "settings:quick-access-section", payload: { section } }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
   }
 
-  private async showQuickAccessSubcategoryCategoryChooser(user: UserRecord, slot: number): Promise<void> {
-    const expense = await this.repo.listCategories(user.id, "expense", false, 0, 3, "usage");
-    const income = await this.repo.listCategories(user.id, "income", false, 0, 3, "usage");
-    const merged = [...expense, ...income].slice(0, 6);
+  private async showQuickAccessSubcategoryCategoryChooser(user: UserRecord, slot: number, page: number): Promise<void> {
+    const expense = await this.repo.listCategories(user.id, "expense", false, 0, 100, user.sortModeExpense);
+    const income = await this.repo.listCategories(user.id, "income", false, 0, 100, user.sortModeIncome);
+    const merged = [...expense, ...income]
+      .sort((left, right) => right.usageCountCache - left.usageCountCache || right.id - left.id);
+    const items = merged.slice(page * 6, page * 6 + 6);
     if (merged.length === 0) {
       await this.telegram.sendMessage({
         chat_id: user.chatId,
@@ -2805,12 +2866,13 @@ export class BotService {
       });
       return;
     }
-    const lines = merged.map((item, index) => `${index + 1}. ${item.name}`).join("\n");
+    const lines = items.map((item, index) => `${index + 1}. ${item.name}`).join("\n");
     await this.telegram.sendMessage({
       chat_id: user.chatId,
       text: `подкатегории\n\n${lines}\n\nвыбери категорию`,
       reply_markup: kb([
-        merged.map((item, index) => ({ text: String(index + 1), action: "settings:quick-access-slot", payload: { section: `subcategory:${item.id}`, slot } })),
+        items.map((item, index) => ({ text: String(index + 1), action: "settings:quick-access-slot", payload: { section: `subcategory:${item.id}`, slot } })),
+        ...(page > 0 || merged.length > (page + 1) * 6 ? [buildPageRow(page, merged.length > (page + 1) * 6, "settings:quick-access-slot", { section: "subcategories", slot })] : []),
         [{ text: BUTTONS.back, action: "settings:quick-access-section", payload: { section: "subcategories" } }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
@@ -3664,6 +3726,30 @@ function formatSortingMode(mode: string): string {
     return "по алфавиту";
   }
   return "по количеству операций";
+}
+
+function hasNextPage(total: number, page: number, limit = 6): boolean {
+  return (page + 1) * limit < total;
+}
+
+function buildPageRow(
+  page: number,
+  hasNext: boolean,
+  action: string,
+  payload: Record<string, string | number | undefined> = {}
+): Array<{ text: string; action: string; payload?: Record<string, string | number | undefined> }> {
+  return [
+    {
+      text: "◀️",
+      action: page > 0 ? action : "noop",
+      payload: page > 0 ? { ...payload, page: page - 1 } : undefined
+    },
+    {
+      text: "▶️",
+      action: hasNext ? action : "noop",
+      payload: hasNext ? { ...payload, page: page + 1 } : undefined
+    }
+  ];
 }
 
 function parseFullSnapshot(content: string):
