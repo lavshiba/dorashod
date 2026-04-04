@@ -8,6 +8,7 @@ import { parseCustomPeriodInput, parseQuickPeriod, splitNowForUser } from "@/uti
 import { parseEntryAttempt } from "@/utils/entry-parser";
 import { formatAmountFromMinor } from "@/utils/money";
 import { escapeHtml, normalizeName } from "@/utils/normalize";
+import { formatTelegramScreenText, isTelegramMessageNotModified } from "@/utils/telegram-text";
 import { resolveTimezoneFromCity, resolveTimezoneFromLocation } from "@/utils/timezone";
 
 interface TelegramUpdate {
@@ -29,12 +30,17 @@ interface TelegramUpdate {
     data?: string;
     from: { id: number };
     message?: {
+      message_id: number;
       chat: { id: number };
     };
   };
 }
 
 export class BotService {
+  private callbackContext: { chatId: string; messageId: number } | null = null;
+
+  private didEditCurrentCallback = false;
+
   constructor(
     private readonly repo: Repository,
     private readonly telegram: TelegramApi
@@ -111,7 +117,7 @@ export class BotService {
         }
       });
       if (shouldAskSubcategory) {
-        await this.telegram.sendMessage({
+        await this.sendMessage({
           chat_id: user.chatId,
           text: "Напиши подкатегорию.",
           reply_markup: kb([[{ text: BUTTONS.skip, action: "bulk:transfer-skip-subcategory" }, { text: BUTTONS.main, action: "nav:home" }]])
@@ -204,7 +210,7 @@ export class BotService {
     if (session.mode === "settings" && session.context.awaiting === "timezone") {
       const timezone = resolveTimezoneFromCity(text);
       if (!timezone) {
-        await this.telegram.sendMessage({
+        await this.sendMessage({
           chat_id: user.chatId,
           text: "Не удалось определить город.\n\nПришли другой город или отправь геопозицию.",
           reply_markup: kb([[{ text: BUTTONS.back, action: "settings:time" }, { text: BUTTONS.main, action: "nav:home" }]])
@@ -239,7 +245,7 @@ export class BotService {
             customPeriodLabel: parsed.label
           }
         });
-        await this.telegram.sendMessage({
+        await this.sendMessage({
           chat_id: user.chatId,
           text: `период понят не до конца\n\nкак бот понял:\n${parsed.label}\n\nподтверди или напиши период ещё раз`,
           reply_markup: kb([
@@ -249,7 +255,7 @@ export class BotService {
         });
         return;
       }
-      await this.telegram.sendMessage({
+      await this.sendMessage({
         chat_id: user.chatId,
         text: `период понят не до конца\n\nкак бот понял:\n${text}\n\nподтверди или напиши период ещё раз`,
         reply_markup: kb([[{ text: BUTTONS.back, action: "reports:open" }, { text: BUTTONS.main, action: "nav:home" }]])
@@ -268,7 +274,7 @@ export class BotService {
     }
 
     if (session.mode === "search") {
-      await this.telegram.sendMessage({
+      await this.sendMessage({
         chat_id: user.chatId,
         text: "Пришло сообщение, похожее на новую запись.\n\n[искать это] или [в новые записи]?",
         reply_markup: kb([[{ text: BUTTONS.searchThis, action: "search:use-text" }, { text: BUTTONS.toNewEntries, action: "search:to-queue" }]])
@@ -308,7 +314,7 @@ export class BotService {
         })
       );
       await this.repo.saveSession(user.id, { mode: "add", stack: ["home"], context: { source: "message" } });
-      await this.telegram.sendMessage({
+      await this.sendMessage({
         chat_id: user.chatId,
         text: `Из записи удалось понять:\n${this.describeDraft({
           type: parsed.type,
@@ -357,7 +363,7 @@ export class BotService {
     const user = await this.repo.getOrCreateUser(String(fromId), String(chatId));
     const session = await this.repo.getSession(user.id);
     if (session.mode !== "data" || !session.context.awaitingUploadType) {
-      await this.telegram.sendMessage({
+      await this.sendMessage({
         chat_id: user.chatId,
         text: "Сначала открой раздел данные и выбери, куда загрузить файл.",
         reply_markup: kb([[{ text: BUTTONS.data, action: "data:open" }, { text: BUTTONS.main, action: "nav:home" }]])
@@ -371,7 +377,7 @@ export class BotService {
     if (uploadType === "full") {
       const snapshot = parseFullSnapshot(downloaded.content);
       if (!snapshot) {
-        await this.telegram.sendMessage({
+        await this.sendMessage({
           chat_id: user.chatId,
           text: "Файл не удалось прочитать.\n\nПришли полную копию для этого бота ещё раз.",
           reply_markup: kb([[{ text: BUTTONS.back, action: "data:this-bot" }, { text: BUTTONS.main, action: "nav:home" }]])
@@ -385,7 +391,7 @@ export class BotService {
         stack: ["data"],
         context: { importId, awaitingUploadType: undefined }
       });
-      await this.telegram.sendMessage({
+      await this.sendMessage({
         chat_id: user.chatId,
         text:
           `для этого бота\n\n` +
@@ -430,12 +436,19 @@ export class BotService {
       await this.telegram.answerCallbackQuery(callbackQuery.id);
     }
 
-    if (session.mode === "edit" && action === "nav:home") {
-      await this.handleEditLeave(user, "home");
-      return;
-    }
+    this.callbackContext = {
+      chatId: String(callbackQuery.message.chat.id),
+      messageId: Number((callbackQuery.message as { message_id?: number }).message_id ?? 0)
+    };
+    this.didEditCurrentCallback = false;
 
-    switch (action) {
+    try {
+      if (session.mode === "edit" && action === "nav:home") {
+        await this.handleEditLeave(user, "home");
+        return;
+      }
+
+      switch (action) {
       case "noop":
         return;
       case "onboarding:show":
@@ -452,7 +465,7 @@ export class BotService {
         return;
       case "onboarding:skip":
         await this.repo.completeOnboarding(user.id);
-        await this.telegram.sendMessage({
+        await this.sendMessage({
           chat_id: user.chatId,
           text: "Можно добавить доход или расход сейчас, или перейти на главную.",
           reply_markup: kb([
@@ -474,7 +487,7 @@ export class BotService {
       case "add:start":
         await this.repo.saveSession(user.id, { mode: "add", stack: ["home"], context: { type: params.type } });
         await this.repo.saveDraft(user.id, { type: String(params.type) as EntryType }, "amount");
-        await this.telegram.sendMessage({
+        await this.sendMessage({
           chat_id: user.chatId,
           text: "Напиши сумму.",
           reply_markup: kb([[{ text: BUTTONS.cancel, action: "add:cancel" }, { text: BUTTONS.main, action: "nav:home" }]])
@@ -504,7 +517,7 @@ export class BotService {
         await this.continueDraft(user);
         return;
       case "draft:delete":
-        await this.telegram.sendMessage({
+        await this.sendMessage({
           chat_id: user.chatId,
           text: "Удалить черновик?",
           reply_markup: kb([[{ text: BUTTONS.delete, action: "draft:confirm-delete" }, { text: BUTTONS.back, action: "draft:open" }]])
@@ -545,7 +558,7 @@ export class BotService {
         await this.applyBulkTransfer(user);
         return;
       case "bulk:delete":
-        await this.telegram.sendMessage({
+        await this.sendMessage({
           chat_id: user.chatId,
           text: "Удалить выбранные записи?",
           reply_markup: kb([
@@ -595,7 +608,7 @@ export class BotService {
         );
         return;
       case "entry:delete":
-        await this.telegram.sendMessage({
+        await this.sendMessage({
           chat_id: user.chatId,
           text: "Удалить запись?",
           reply_markup: kb([
@@ -650,7 +663,7 @@ export class BotService {
         return;
       case "search:prompt":
         await this.repo.saveSession(user.id, { mode: "search", stack: ["home"], context: { awaiting: "query" } });
-        await this.telegram.sendMessage({
+        await this.sendMessage({
           chat_id: user.chatId,
           text: "Напиши запрос сообщением.",
           reply_markup: kb([[{ text: BUTTONS.cancel, action: "search:open" }, { text: BUTTONS.main, action: "nav:home" }]])
@@ -754,7 +767,7 @@ export class BotService {
         return;
       case "reports:custom":
         await this.repo.saveSession(user.id, { mode: "reports", stack: ["home"], context: { awaiting: "custom-period" } });
-        await this.telegram.sendMessage({
+        await this.sendMessage({
           chat_id: user.chatId,
           text: "Напиши период сообщением.",
           reply_markup: kb([[{ text: BUTTONS.cancel, action: "reports:open" }, { text: BUTTONS.main, action: "nav:home" }]])
@@ -786,7 +799,7 @@ export class BotService {
         return;
       case "categories:add":
         await this.repo.saveSession(user.id, { mode: "categories", stack: ["categories"], context: { awaiting: "new-category", type: params.type } });
-        await this.telegram.sendMessage({
+        await this.sendMessage({
           chat_id: user.chatId,
           text: "Напиши название категории.",
           reply_markup: kb([[{ text: BUTTONS.cancel, action: "categories:list", payload: { type: params.type } }, { text: BUTTONS.main, action: "nav:home" }]])
@@ -846,7 +859,7 @@ export class BotService {
           stack: ["categories"],
           context: { awaiting: "new-subcategory", categoryId: Number(params.categoryId), type: params.type, page: Number(params.page ?? "0"), subpage: Number(params.subpage ?? "0"), source: String(params.source ?? "list") }
         });
-        await this.telegram.sendMessage({
+        await this.sendMessage({
           chat_id: user.chatId,
           text: "Напиши название подкатегории.",
           reply_markup: kb([[{ text: BUTTONS.cancel, action: "category:view", payload: { id: params.categoryId, type: params.type, page: params.page, subpage: params.subpage, source: params.source } }, { text: BUTTONS.main, action: "nav:home" }]])
@@ -992,7 +1005,7 @@ export class BotService {
         return;
       case "settings:currency-custom":
         await this.repo.saveSession(user.id, { mode: "settings", stack: ["settings"], context: { awaiting: "currency" } });
-        await this.telegram.sendMessage({
+        await this.sendMessage({
           chat_id: user.chatId,
           text: "Пришли знак или короткое имя валюты.",
           reply_markup: kb([[{ text: BUTTONS.cancel, action: "settings:currency" }, { text: BUTTONS.main, action: "nav:home" }]])
@@ -1059,7 +1072,7 @@ export class BotService {
         return;
       case "data:import-full-open":
         await this.repo.saveSession(user.id, { mode: "data", stack: ["data"], context: { awaitingUploadType: "full" } });
-        await this.telegram.sendMessage({
+        await this.sendMessage({
           chat_id: user.chatId,
           text: "Пришли файл.",
           reply_markup: kb([[{ text: BUTTONS.back, action: "data:this-bot" }, { text: BUTTONS.main, action: "nav:home" }]])
@@ -1067,7 +1080,7 @@ export class BotService {
         return;
       case "data:import-entries-open":
         await this.repo.saveSession(user.id, { mode: "data", stack: ["data"], context: { awaitingUploadType: "entries" } });
-        await this.telegram.sendMessage({
+        await this.sendMessage({
           chat_id: user.chatId,
           text: "Пришли файл.",
           reply_markup: kb([[{ text: BUTTONS.back, action: "data:other-apps" }, { text: BUTTONS.main, action: "nav:home" }]])
@@ -1081,7 +1094,7 @@ export class BotService {
         }
         await this.repo.replaceUserDataFromSnapshot(user, pendingImport.previewJson);
         await this.repo.deleteImport(user.id, pendingImport.id);
-        await this.telegram.sendMessage({
+        await this.sendMessage({
           chat_id: user.chatId,
           text: "данные загружены"
         });
@@ -1103,7 +1116,7 @@ export class BotService {
           stack: ["data"],
           context: { importId: Number(params.importId), fixIndex: Number(params.index ?? "0"), awaiting: "fix-line" }
         });
-        await this.telegram.sendMessage({
+        await this.sendMessage({
           chat_id: user.chatId,
           text: "Пришли исправленную строку.",
           reply_markup: kb([[{ text: BUTTONS.cancel, action: "data:import-fix-open", payload: { importId: params.importId } }, { text: BUTTONS.main, action: "nav:home" }]])
@@ -1120,7 +1133,7 @@ export class BotService {
         await this.showData(user);
         return;
       case "data:clear-all":
-        await this.telegram.sendMessage({
+        await this.sendMessage({
           chat_id: user.chatId,
           text: "очистить всё?\n\nэто самое опасное действие",
           reply_markup: kb([
@@ -1130,7 +1143,7 @@ export class BotService {
         });
         return;
       case "data:clear-all-confirm":
-        await this.telegram.sendMessage({
+        await this.sendMessage({
           chat_id: user.chatId,
           text: "подтверди очистить всё",
           reply_markup: kb([
@@ -1163,9 +1176,50 @@ export class BotService {
         });
         return;
       }
-      default:
-        await this.showHome(user);
+        default:
+          await this.showHome(user);
+      }
+    } finally {
+      this.callbackContext = null;
+      this.didEditCurrentCallback = false;
     }
+  }
+
+  private async sendMessage(
+    payload: {
+      chat_id: string;
+      text: string;
+      reply_markup?: {
+        inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
+      };
+    },
+    options?: { forceNew?: boolean; formatText?: boolean }
+  ): Promise<void> {
+    const text = options?.formatText === false ? payload.text : formatTelegramScreenText(payload.text);
+    if (!options?.forceNew && this.callbackContext && !this.didEditCurrentCallback && this.callbackContext.chatId === String(payload.chat_id)) {
+      try {
+        await this.telegram.editMessageText({
+          chat_id: this.callbackContext.chatId,
+          message_id: this.callbackContext.messageId,
+          text,
+          reply_markup: payload.reply_markup
+        });
+        this.didEditCurrentCallback = true;
+        return;
+      } catch (error) {
+        if (isTelegramMessageNotModified(error)) {
+          this.didEditCurrentCallback = true;
+          return;
+        }
+
+        // Fallback to a fresh message if Telegram refuses editing.
+      }
+    }
+
+    await this.telegram.sendMessage({
+      ...payload,
+      text
+    });
   }
 
   private async showStart(user: UserRecord): Promise<void> {
@@ -1193,7 +1247,7 @@ export class BotService {
               [{ text: BUTTONS.skip, action: "onboarding:skip" }]
             ];
 
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: `<b>${BOT_TITLE}</b>\n\n${escapeHtml(ONBOARDING_TEXTS[step])}\n\n${onboardingProgress(step)}`,
       reply_markup: kb(rows)
@@ -1223,7 +1277,7 @@ export class BotService {
 
     if (stats.totalEntries === 0) {
       rows.push([{ text: BUTTONS.howToUse, callback_data: "a=onboarding%3Ashow&step=0" }]);
-      await this.telegram.sendMessage({
+      await this.sendMessage({
         chat_id: user.chatId,
         text: `${notice ? `${notice}\n\n` : ""}пока записей нет\nможно добавить доход или расход кнопками\nили просто написать запись сообщением\n-450 продукты пятёрочка хлеб`,
         reply_markup: { inline_keyboard: rows }
@@ -1242,7 +1296,7 @@ export class BotService {
       ? `${formatAmountByType(stats.lastEntry.amountMinor, stats.lastEntry.type, user.currencyLabel)} · ${stats.lastEntry.categoryName}${stats.lastEntry.subcategoryName ? ` · ${stats.lastEntry.subcategoryName}` : ""}`
       : "нет";
 
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text:
         `${notice ? `${notice}\n\n` : ""}` +
@@ -1260,7 +1314,7 @@ export class BotService {
     if (draft.step === "amount") {
       const parsed = parseEntryAttempt(`${payload.type === "income" ? "+" : "-"}${text}`);
       if (!parsed.amountMinor) {
-        await this.telegram.sendMessage({ chat_id: user.chatId, text: "Не удалось понять сумму. Напиши сумму ещё раз." });
+        await this.sendMessage({ chat_id: user.chatId, text: "Не удалось понять сумму. Напиши сумму ещё раз." });
         return;
       }
       payload.amountMinor = parsed.amountMinor;
@@ -1279,7 +1333,7 @@ export class BotService {
         await this.promptAddSubcategory(user, category.id);
         return;
       }
-      await this.telegram.sendMessage({
+      await this.sendMessage({
         chat_id: user.chatId,
         text: "Напиши описание.",
         reply_markup: kb([[{ text: BUTTONS.skip, action: "add:skip-description" }]])
@@ -1290,7 +1344,7 @@ export class BotService {
     if (draft.step === "subcategory") {
       payload.subcategoryName = text.trim();
       await this.repo.saveDraft(user.id, payload, "description");
-      await this.telegram.sendMessage({
+      await this.sendMessage({
         chat_id: user.chatId,
         text: "Напиши описание.",
         reply_markup: kb([[{ text: BUTTONS.skip, action: "add:skip-description" }]])
@@ -1320,7 +1374,7 @@ export class BotService {
 
     await this.repo.deleteDraft(user.id);
     await this.repo.clearSession(user.id);
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: "запись добавлена",
       reply_markup: kb([
@@ -1341,7 +1395,7 @@ export class BotService {
     if (field === "amount") {
       const parsed = parseEntryAttempt(`${draft.payload.type === "income" ? "+" : "-"}${text}`);
       if (!parsed.amountMinor) {
-        await this.telegram.sendMessage({ chat_id: user.chatId, text: "Не удалось понять сумму. Напиши сумму ещё раз." });
+        await this.sendMessage({ chat_id: user.chatId, text: "Не удалось понять сумму. Напиши сумму ещё раз." });
         return;
       }
       draft.payload.amountMinor = parsed.amountMinor;
@@ -1355,7 +1409,7 @@ export class BotService {
     } else if (field === "date") {
       const parsed = parseEditableDate(text);
       if (!parsed) {
-        await this.telegram.sendMessage({ chat_id: user.chatId, text: "Не удалось понять дату. Напиши дату ещё раз." });
+        await this.sendMessage({ chat_id: user.chatId, text: "Не удалось понять дату. Напиши дату ещё раз." });
         return;
       }
       draft.payload.entryDate = parsed.entryDate;
@@ -1370,7 +1424,7 @@ export class BotService {
     } else if (field === "time") {
       const parsed = parseEditableTime(text);
       if (!parsed) {
-        await this.telegram.sendMessage({ chat_id: user.chatId, text: "Не удалось понять время. Напиши время ещё раз." });
+        await this.sendMessage({ chat_id: user.chatId, text: "Не удалось понять время. Напиши время ещё раз." });
         return;
       }
       draft.payload.entryTime = parsed.entryTime;
@@ -1394,7 +1448,7 @@ export class BotService {
     }
 
     if (draft.step === "amount") {
-      await this.telegram.sendMessage({ chat_id: user.chatId, text: "Напиши сумму." });
+      await this.sendMessage({ chat_id: user.chatId, text: "Напиши сумму." });
       return;
     }
     if (draft.step === "category") {
@@ -1405,7 +1459,7 @@ export class BotService {
       await this.promptAddSubcategory(user, draft.payload.categoryId);
       return;
     }
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: "Напиши описание или нажми пропустить.",
       reply_markup: kb([[{ text: BUTTONS.skip, action: "add:skip-description" }]])
@@ -1415,12 +1469,12 @@ export class BotService {
   private async promptAddCategory(user: UserRecord, type: EntryType): Promise<void> {
     const items = await this.getAddQuickCategories(user, type);
     if (items.length === 0) {
-      await this.telegram.sendMessage({ chat_id: user.chatId, text: "Напиши категорию." });
+      await this.sendMessage({ chat_id: user.chatId, text: "Напиши категорию." });
       return;
     }
 
     const lines = items.map((item, index) => `${index + 1}. ${item.name}`).join("\n");
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: `Напиши категорию.\n\n${lines}`,
       reply_markup: kb([
@@ -1433,7 +1487,7 @@ export class BotService {
   private async promptAddSubcategory(user: UserRecord, categoryId: number): Promise<void> {
     const items = await this.getAddQuickSubcategories(user, categoryId);
     if (items.length === 0) {
-      await this.telegram.sendMessage({
+      await this.sendMessage({
         chat_id: user.chatId,
         text: "Напиши подкатегорию.",
         reply_markup: kb([[{ text: BUTTONS.skip, action: "add:skip-subcategory" }]])
@@ -1442,7 +1496,7 @@ export class BotService {
     }
 
     const lines = items.map((item, index) => `${index + 1}. ${item.name}`).join("\n");
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: `Напиши подкатегорию.\n\n${lines}`,
       reply_markup: kb([
@@ -1501,7 +1555,7 @@ export class BotService {
       await this.promptAddSubcategory(user, category.id);
       return;
     }
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: "Напиши описание.",
       reply_markup: kb([[{ text: BUTTONS.skip, action: "add:skip-description" }]])
@@ -1523,7 +1577,7 @@ export class BotService {
     draft.payload.subcategoryId = subcategory.id;
     draft.payload.subcategoryName = subcategory.name;
     await this.repo.saveDraft(user.id, draft.payload, "description");
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: "Напиши описание.",
       reply_markup: kb([[{ text: BUTTONS.skip, action: "add:skip-description" }]])
@@ -1539,7 +1593,7 @@ export class BotService {
     draft.payload.subcategoryId = undefined;
     draft.payload.subcategoryName = undefined;
     await this.repo.saveDraft(user.id, draft.payload, "description");
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: "Напиши описание.",
       reply_markup: kb([[{ text: BUTTONS.skip, action: "add:skip-description" }]])
@@ -1553,7 +1607,7 @@ export class BotService {
       return;
     }
 
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: `черновик\n\n${this.describeDraft(draft.payload, user.currencyLabel)}`,
       reply_markup: kb([
@@ -1571,7 +1625,7 @@ export class BotService {
       return;
     }
     await this.repo.saveSession(user.id, { mode: "queue", stack: ["home"], context: { queueId: item.id } });
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text:
         `новые записи\n\nиз записи удалось понять:\n${this.describeQueueParsed(item.parsed, user.currencyLabel)}\n\n` +
@@ -1638,7 +1692,7 @@ export class BotService {
   private async showOperations(user: UserRecord, page: number, selectMode = false): Promise<void> {
     const items = await this.repo.getEntryList(user.id, page);
     if (items.length === 0) {
-      await this.telegram.sendMessage({
+      await this.sendMessage({
         chat_id: user.chatId,
         text: "пока записей нет\nможно добавить доход или расход с главной",
         reply_markup: kb([[{ text: BUTTONS.main, action: "nav:home" }]])
@@ -1661,7 +1715,7 @@ export class BotService {
     }));
     const hasSelection = selectedIds.size > 0;
 
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: `операции\n\n${lines}`,
       reply_markup: kb([
@@ -1720,7 +1774,7 @@ export class BotService {
                 page
               }
           : { page };
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text:
         `${formatAmountByType(entry.amountMinor, entry.type, user.currencyLabel)}\n` +
@@ -1809,7 +1863,7 @@ export class BotService {
       return;
     }
 
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text:
         `изменить\n\n${this.describeDraft(draft.payload, user.currencyLabel)}\n` +
@@ -1845,7 +1899,7 @@ export class BotService {
       time: "Напиши время."
     };
 
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: prompts[field] ?? "Напиши значение.",
       reply_markup: kb([[{ text: BUTTONS.cancel, action: "edit:back" }, { text: BUTTONS.main, action: "nav:home" }]])
@@ -1892,7 +1946,7 @@ export class BotService {
       return;
     }
 
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: "Есть несохранённые изменения.\n\nУйти без сохранения?",
       reply_markup: kb([
@@ -1955,7 +2009,7 @@ export class BotService {
 
   private async showSearchEntry(user: UserRecord): Promise<void> {
     await this.repo.saveSession(user.id, { mode: "search", stack: ["home"], context: {} });
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: "поиск",
       reply_markup: kb([
@@ -1982,7 +2036,7 @@ export class BotService {
       context: { ...currentSession.context, query, visibleEntryIds: data.items.map((item) => item.id), visibleSource: "search" }
     });
     if (data.total === 0) {
-      await this.telegram.sendMessage({
+      await this.sendMessage({
         chat_id: user.chatId,
         text: `Запрос: ${query}\nНайдено: 0\n\nПока ничего не найдено.\nМожно сделать новый поиск или вернуться назад.`,
         reply_markup: kb([
@@ -2002,7 +2056,7 @@ export class BotService {
       payload: { id: item.id, page, query, origin: "search" }
     }));
 
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: `запрос: ${query}\nнайдено: ${data.total}\n\n${lines}`,
       reply_markup: kb([
@@ -2044,7 +2098,7 @@ export class BotService {
       context: { ...currentSession.context, query: title, searchPeriod: periodLabel, searchFrom: from, searchTo: to, visibleEntryIds: data.items.map((item) => item.id), visibleSource: "search" }
     });
     if (data.total === 0) {
-      await this.telegram.sendMessage({
+      await this.sendMessage({
         chat_id: user.chatId,
         text: `запрос: ${title}\nнайдено: 0\n\nпока ничего не найдено\nможно сделать новый поиск или вернуться назад`,
         reply_markup: kb([
@@ -2064,7 +2118,7 @@ export class BotService {
       payload: { id: item.id, page, query: title, origin: "search" }
     }));
 
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: `запрос: ${title}\nнайдено: ${data.total}\n\n${lines}`,
       reply_markup: kb([
@@ -2085,7 +2139,7 @@ export class BotService {
   }
 
   private async showReportsEntry(user: UserRecord): Promise<void> {
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: "отчёт",
       reply_markup: kb([
@@ -2112,7 +2166,7 @@ export class BotService {
       context: { reportPeriod: periodKey, reportTitle: title, reportFrom: from, reportTo: to }
     });
     const summary = await this.repo.getSummaryByDateRange(user.id, from, to);
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: `доход\n${formatAmountByType(summary.income, "income", user.currencyLabel)}\n\nрасход\n${formatAmountByType(summary.expense, "expense", user.currencyLabel)}\n\nбаланс\n${formatAmountFromMinor(summary.income - summary.expense, user.currencyLabel)}\n\nзаписей\n${summary.entries}`,
       reply_markup: kb([
@@ -2138,7 +2192,7 @@ export class BotService {
     });
 
     if (breakdown.total === 0) {
-      await this.telegram.sendMessage({
+      await this.sendMessage({
         chat_id: user.chatId,
         text: `пока записей нет\nможно выбрать другой период`,
         reply_markup: kb([
@@ -2158,7 +2212,7 @@ export class BotService {
       payload: { id: item.categoryId, type, page }
     }));
 
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: `${type === "expense" ? "по расходам" : "по доходам"}\n\n${lines}`,
       reply_markup: kb([
@@ -2204,7 +2258,7 @@ export class BotService {
         ]
       : [];
 
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text:
         `${card.category.name}\n\n` +
@@ -2248,7 +2302,7 @@ export class BotService {
       return;
     }
 
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text:
         `${card.subcategory.name}\n\n` +
@@ -2294,7 +2348,7 @@ export class BotService {
     });
 
     if (data.total === 0) {
-      await this.telegram.sendMessage({
+      await this.sendMessage({
         chat_id: user.chatId,
         text: "пока записей нет\nможно выбрать другой период",
         reply_markup: kb([
@@ -2313,7 +2367,7 @@ export class BotService {
       payload: { id: item.id, page: input.page, origin: "report", source: "report" }
     }));
 
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: `все записи\n\n${lines}`,
       reply_markup: kb([
@@ -2374,7 +2428,7 @@ export class BotService {
   }
 
   private async showCategoryRoot(user: UserRecord): Promise<void> {
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: "категории",
       reply_markup: kb([
@@ -2390,7 +2444,7 @@ export class BotService {
     const categories = await this.repo.listCategories(user.id, type, false, page, 6, sortMode);
     const hiddenCount = await this.repo.getHiddenCategoryCount(user.id, type);
     if (categories.length === 0) {
-      await this.telegram.sendMessage({
+      await this.sendMessage({
         chat_id: user.chatId,
         text: "пока категорий нет\nможно создать категорию",
         reply_markup: kb([
@@ -2408,7 +2462,7 @@ export class BotService {
       action: "category:view",
       payload: { id: item.id, page, type, source: "hidden" }
     }));
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: `${type === "expense" ? "расходы" : "доходы"}\n\n${lines}`,
       reply_markup: kb([
@@ -2425,7 +2479,7 @@ export class BotService {
     const sortMode = type === "expense" ? user.sortModeExpense : user.sortModeIncome;
     const categories = await this.repo.listCategories(user.id, type, true, page, 6, sortMode);
     if (categories.length === 0) {
-      await this.telegram.sendMessage({
+      await this.sendMessage({
         chat_id: user.chatId,
         text: "пока скрытых категорий нет\nможно вернуться назад",
         reply_markup: kb([[{ text: BUTTONS.back, action: "categories:list", payload: { type, page: 0 } }, { text: BUTTONS.main, action: "nav:home" }]])
@@ -2440,7 +2494,7 @@ export class BotService {
       payload: { id: item.id, page, type }
     }));
 
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: `скрытые\n\n${lines}`,
       reply_markup: kb([
@@ -2465,7 +2519,7 @@ export class BotService {
     const visibleSubcategories = subcategories.slice(subpage * 6, subpage * 6 + 6);
     const usageCount = await this.repo.getCategoryUsageCount(category.id);
     const hiddenSubcategoryCount = await this.repo.getHiddenSubcategoryCount(user.id, category.id);
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text:
         `тип: ${type === "expense" ? "расход" : "доход"}\n` +
@@ -2491,7 +2545,7 @@ export class BotService {
   private async showHiddenSubcategoryList(user: UserRecord, categoryId: number, type: EntryType, page: number, subpage = 0): Promise<void> {
     const allItems = await this.repo.listHiddenSubcategories(user.id, categoryId, user.sortModeSubcategories);
     if (allItems.length === 0) {
-      await this.telegram.sendMessage({
+      await this.sendMessage({
         chat_id: user.chatId,
         text: "пока скрытых подкатегорий нет\nможно вернуться назад",
         reply_markup: kb([[{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page, subpage, source: "list" } }, { text: BUTTONS.main, action: "nav:home" }]])
@@ -2506,7 +2560,7 @@ export class BotService {
       action: "subcategory:view",
       payload: { id: item.id, categoryId, type, page, subpage, source: "hidden" }
     }));
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: `скрытые\n\n${lines}`,
       reply_markup: kb([
@@ -2524,7 +2578,7 @@ export class BotService {
       return;
     }
     const usageCount = await this.repo.getSubcategoryUsageCount(subcategoryId);
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: `${subcategory.name}\n\nзаписей: ${usageCount}`,
       reply_markup: kb([
@@ -2545,7 +2599,7 @@ export class BotService {
   private async handleCategoryDelete(user: UserRecord, categoryId: number, type: EntryType, page: number, subpage = 0, source = "list"): Promise<void> {
     const usageCount = await this.repo.getCategoryUsageCount(categoryId);
     if (usageCount > 0) {
-      await this.telegram.sendMessage({
+      await this.sendMessage({
         chat_id: user.chatId,
         text: "Удалить категорию нельзя, пока в ней есть записи.\n\nМожно скрыть её или потом перенести все записи.",
         reply_markup: kb([
@@ -2567,7 +2621,7 @@ export class BotService {
   private async handleSubcategoryDelete(user: UserRecord, subcategoryId: number, categoryId: number, type: EntryType, page: number, subpage = 0, source = "list"): Promise<void> {
     const usageCount = await this.repo.getSubcategoryUsageCount(subcategoryId);
     if (usageCount > 0) {
-      await this.telegram.sendMessage({
+      await this.sendMessage({
         chat_id: user.chatId,
         text: "Удалить подкатегорию нельзя, пока в ней есть записи.\n\nМожно скрыть её или потом перенести все записи.",
         reply_markup: kb([
@@ -2592,7 +2646,7 @@ export class BotService {
       stack: ["categories"],
       context: { awaiting: "rename-category", categoryId, type, page, subpage, source }
     });
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: "Напиши новое название категории.",
       reply_markup: kb([[{ text: BUTTONS.cancel, action: "category:view", payload: { id: categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]])
@@ -2605,7 +2659,7 @@ export class BotService {
       stack: ["categories"],
       context: { awaiting: "rename-subcategory", subcategoryId, categoryId, type, page, subpage, source }
     });
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: "Напиши новое название подкатегории.",
       reply_markup: kb([[{ text: BUTTONS.cancel, action: "subcategory:view", payload: { id: subcategoryId, categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]])
@@ -2615,7 +2669,7 @@ export class BotService {
   private async handleCategoryCreate(user: UserRecord, type: EntryType, text: string): Promise<void> {
     const existing = await this.repo.findCategoryByNormalizedName(user.id, type, text);
     if (existing?.hiddenAt) {
-      await this.telegram.sendMessage({
+      await this.sendMessage({
         chat_id: user.chatId,
         text: "Такая категория уже есть в скрытых.\n\nМожно вернуть её.",
         reply_markup: kb([
@@ -2632,7 +2686,7 @@ export class BotService {
   private async handleSubcategoryCreate(user: UserRecord, categoryId: number, type: EntryType, page: number, text: string, subpage = 0, source = "list"): Promise<void> {
     const existing = await this.repo.findSubcategoryByNormalizedName(categoryId, text);
     if (existing?.hiddenAt) {
-      await this.telegram.sendMessage({
+      await this.sendMessage({
         chat_id: user.chatId,
         text: "Такая подкатегория уже есть в скрытых.\n\nМожно вернуть её.",
         reply_markup: kb([
@@ -2650,7 +2704,7 @@ export class BotService {
     const existing = await this.repo.findCategoryByNormalizedName(user.id, type, text);
     if (existing && existing.id !== categoryId) {
       if (existing.hiddenAt) {
-        await this.telegram.sendMessage({
+        await this.sendMessage({
           chat_id: user.chatId,
         text: "Такая категория уже есть в скрытых.\n\nМожно вернуть её.",
         reply_markup: kb([
@@ -2660,7 +2714,7 @@ export class BotService {
       });
       return;
       }
-      await this.telegram.sendMessage({
+      await this.sendMessage({
         chat_id: user.chatId,
         text: "Такая категория уже есть.",
         reply_markup: kb([[{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]])
@@ -2675,7 +2729,7 @@ export class BotService {
     const existing = await this.repo.findSubcategoryByNormalizedName(categoryId, text);
     if (existing && existing.id !== subcategoryId) {
       if (existing.hiddenAt) {
-        await this.telegram.sendMessage({
+        await this.sendMessage({
           chat_id: user.chatId,
         text: "Такая подкатегория уже есть в скрытых.\n\nМожно вернуть её.",
         reply_markup: kb([
@@ -2685,7 +2739,7 @@ export class BotService {
       });
       return;
       }
-      await this.telegram.sendMessage({
+      await this.sendMessage({
         chat_id: user.chatId,
         text: "Такая подкатегория уже есть.",
         reply_markup: kb([[{ text: BUTTONS.back, action: "subcategory:view", payload: { id: subcategoryId, categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]])
@@ -2702,7 +2756,7 @@ export class BotService {
       stack: ["categories"],
       context: { awaiting: "transfer-category-name", categoryId, type, page, subpage, source }
     });
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: "Напиши категорию.\n\nЕсли в новой категории нет нужных подкатегорий, подкатегории у записей очистятся.",
       reply_markup: kb([[{ text: BUTTONS.cancel, action: "category:view", payload: { id: categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]])
@@ -2713,7 +2767,7 @@ export class BotService {
     const result = await this.repo.transferAllCategoryEntries(user, categoryId, type, text);
     if (result.status === "same") {
       await this.repo.clearSession(user.id);
-      await this.telegram.sendMessage({
+      await this.sendMessage({
         chat_id: user.chatId,
         text: "Это уже эта категория.",
         reply_markup: kb([[{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]])
@@ -2722,7 +2776,7 @@ export class BotService {
     }
     await this.repo.clearSession(user.id);
     await this.showCategoryCard(user, categoryId, type, page, subpage, source);
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text:
         `записи перенесены: ${result.movedCount}` +
@@ -2734,7 +2788,7 @@ export class BotService {
     const subcategories = (await this.repo.getSubcategories(user.id, categoryId, user.sortModeSubcategories)).filter((item) => item.id !== subcategoryId && !item.hiddenAt);
     const visibleItems = subcategories.slice(page * 6, page * 6 + 6);
     const lines = visibleItems.length ? visibleItems.map((item, index) => `${index + 1}. ${item.name}`).join("\n") : "";
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: `перенести все записи\n\n${subcategories.length ? `${lines}\n\nвыбери подкатегорию` : "можно снять подкатегорию у всех записей"}`,
       reply_markup: kb([
@@ -2761,7 +2815,7 @@ export class BotService {
     const movedCount = await this.repo.getSubcategoryUsageCount(subcategoryId);
     await this.repo.transferAllSubcategoryEntries(user.id, subcategoryId, targetSubcategoryId);
     await this.showSubcategoryCard(user, subcategoryId, categoryId, type, page, subpage, source);
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: `записи перенесены: ${movedCount}`
     });
@@ -2785,7 +2839,7 @@ export class BotService {
     });
 
     if (data.total === 0) {
-      await this.telegram.sendMessage({
+      await this.sendMessage({
         chat_id: user.chatId,
         text: "пока записей нет\nможно вернуться назад",
         reply_markup: kb([[{ text: BUTTONS.back, action: subcategoryId ? "subcategory:view" : "category:view", payload: subcategoryId ? { id: subcategoryId, categoryId, type, page: 0, source } : { id: categoryId, type, page: 0, source } }, { text: BUTTONS.main, action: "nav:home" }]])
@@ -2816,7 +2870,7 @@ export class BotService {
       payload: { id: item.id, page, source: "category", origin: "category" }
     }));
 
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: `все записи\n\n${lines}`,
       reply_markup: kb([
@@ -2866,7 +2920,7 @@ export class BotService {
   }
 
   private async showSettings(user: UserRecord): Promise<void> {
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
         text: "настройки",
       reply_markup: kb([
@@ -2882,7 +2936,7 @@ export class BotService {
   }
 
   private async showCurrencySettings(user: UserRecord): Promise<void> {
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: `валюта\n\nтекущее значение: ${user.currencyLabel}`,
       reply_markup: kb([
@@ -2896,7 +2950,7 @@ export class BotService {
   }
 
   private async showTimeSettings(user: UserRecord): Promise<void> {
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: `пришли свой город или отправь геопозицию\n\nнапример:\nсанкт-петербург\nмосква\nхельсинки\n\nтекущее значение: ${user.timezoneName}`,
       reply_markup: kb([[{ text: BUTTONS.back, action: "settings:open" }, { text: BUTTONS.main, action: "nav:home" }]])
@@ -2904,7 +2958,7 @@ export class BotService {
   }
 
   private async showSubcategoriesSettings(user: UserRecord): Promise<void> {
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: user.subcategoriesEnabled ? "включены" : "выключены",
       reply_markup: kb([
@@ -2917,7 +2971,7 @@ export class BotService {
   }
 
   private async showQuickAccessRoot(user: UserRecord): Promise<void> {
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: "быстрый доступ",
       reply_markup: kb([
@@ -2970,7 +3024,7 @@ export class BotService {
         slotRows.push([{ text: BUTTONS.done, action: "settings:quick-access", payload: { section } }]);
       }
     }
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: `${title}\n\nтекущее значение: ${formatQuickAccessMode(current)}${extraLines}`,
       reply_markup: kb([
@@ -3021,7 +3075,7 @@ export class BotService {
       const items = allItems.slice(page * 6, page * 6 + 6);
       const lines = items.length ? items.map((item, index) => `${index + 1}. ${item.name}`).join("\n") : "пока подкатегорий нет";
       const slotItem = current[slot - 1];
-      await this.telegram.sendMessage({
+      await this.sendMessage({
         chat_id: user.chatId,
         text: `быстрый доступ\n\nслот ${slot}${slotItem ? `: ${slotItem.name}` : ""}\n\n${lines}`,
         reply_markup: kb([
@@ -3040,7 +3094,7 @@ export class BotService {
     const items = await this.repo.listCategories(user.id, section as EntryType, false, page, 6, "usage");
     const lines = items.length ? items.map((item, index) => `${index + 1}. ${item.name}`).join("\n") : "пока категорий нет";
     const slotItem = current[slot - 1];
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: `быстрый доступ\n\nслот ${slot}${slotItem ? `: ${slotItem.name}` : ""}\n\n${lines}`,
       reply_markup: kb([
@@ -3058,7 +3112,7 @@ export class BotService {
     const merged = await this.listQuickAccessSubcategoryCategories(user);
     const items = merged.slice(page * 6, page * 6 + 6);
     if (merged.length === 0) {
-      await this.telegram.sendMessage({
+      await this.sendMessage({
         chat_id: user.chatId,
         text: "пока категорий нет\nможно вернуться назад",
         reply_markup: kb([[{ text: BUTTONS.back, action: "settings:quick-access-section", payload: { section: "subcategories" } }, { text: BUTTONS.main, action: "nav:home" }]])
@@ -3066,7 +3120,7 @@ export class BotService {
       return;
     }
     const lines = items.map((item, index) => `${index + 1}. ${item.name}`).join("\n");
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: `подкатегории\n\n${lines}\n\nвыбери категорию`,
       reply_markup: kb([
@@ -3170,7 +3224,7 @@ export class BotService {
     }
     rows.push([{ text: BUTTONS.back, action: "settings:quick-access-section", payload: { section: "subcategories" } }, { text: BUTTONS.main, action: "nav:home" }]);
 
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: `подкатегории\n\n${category.name}\n\nтекущее значение: ${formatQuickAccessMode(current)}${slotLines}`,
       reply_markup: kb(rows)
@@ -3185,7 +3239,7 @@ export class BotService {
       return;
     }
 
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: `подкатегории\n\n${items
         .map((item, index) => `${index + 1}. ${item.type === "expense" ? BUTTONS.expense : BUTTONS.income} · ${item.name}`)
@@ -3205,7 +3259,7 @@ export class BotService {
   }
 
   private async showSortingRoot(user: UserRecord): Promise<void> {
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: "сортировка",
       reply_markup: kb([
@@ -3232,7 +3286,7 @@ export class BotService {
             [{ text: BUTTONS.incomeCategories, action: "settings:sorting-subcategories-categories", payload: { type: "income", page: 0 } }]
           ]
         : [];
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: `${title}\n\nтекущее значение: ${formatSortingMode(current)}`,
       reply_markup: kb([
@@ -3259,7 +3313,7 @@ export class BotService {
   private async showSubcategorySortingCategoryChooser(user: UserRecord, type: EntryType, page: number): Promise<void> {
     const categories = await this.repo.listCategories(user.id, type, false, page, 6, type === "expense" ? user.sortModeExpense : user.sortModeIncome);
     if (categories.length === 0) {
-      await this.telegram.sendMessage({
+      await this.sendMessage({
         chat_id: user.chatId,
         text: "пока категорий нет\nможно вернуться назад",
         reply_markup: kb([[{ text: BUTTONS.back, action: "settings:sorting-section", payload: { section: "subcategories" } }, { text: BUTTONS.main, action: "nav:home" }]])
@@ -3268,7 +3322,7 @@ export class BotService {
     }
 
     const lines = categories.map((item, index) => `${index + 1}. ${item.name}`).join("\n");
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: `подкатегории\n\n${lines}\n\nвыбери категорию`,
       reply_markup: kb([
@@ -3290,7 +3344,7 @@ export class BotService {
       return;
     }
     const current = category.sortModeOverride ?? user.sortModeSubcategories;
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: `подкатегории\n\n${category.name}\n\nтекущее значение: ${formatSortingMode(current)}`,
       reply_markup: kb([
@@ -3313,7 +3367,7 @@ export class BotService {
   }
 
   private async showData(user: UserRecord): Promise<void> {
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: "данные",
       reply_markup: kb([
@@ -3327,7 +3381,7 @@ export class BotService {
   }
 
   private async showDataThisBot(user: UserRecord): Promise<void> {
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
         text: "для этого бота",
       reply_markup: kb([
@@ -3339,7 +3393,7 @@ export class BotService {
   }
 
   private async showDataOtherApps(user: UserRecord): Promise<void> {
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
         text: "в другие приложения",
       reply_markup: kb([
@@ -3386,7 +3440,7 @@ export class BotService {
 
     rows.push([{ text: BUTTONS.back, action: "data:other-apps" }, { text: BUTTONS.main, action: "nav:home" }]);
 
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text,
       reply_markup: kb(rows)
@@ -3437,7 +3491,7 @@ export class BotService {
     }
 
     await this.repo.deleteImport(user.id, importId);
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: `записи добавлены: ${added}`
     });
@@ -3454,7 +3508,7 @@ export class BotService {
     const errors = Array.isArray(pendingImport.previewJson.errors) ? (pendingImport.previewJson.errors as Array<Record<string, unknown>>) : [];
     const current = errors[index];
     if (!current) {
-      await this.telegram.sendMessage({
+      await this.sendMessage({
         chat_id: user.chatId,
         text: "проблемных строк больше нет"
       });
@@ -3483,7 +3537,7 @@ export class BotService {
       stack: ["data"],
       context: { importId, fixIndex: index }
     });
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text:
         `исправить\n\n` +
@@ -3546,7 +3600,7 @@ export class BotService {
     });
 
     if (staged.preview.errors.length === 0) {
-      await this.telegram.sendMessage({
+      await this.sendMessage({
         chat_id: user.chatId,
         text: "проблемных строк больше нет"
       });
@@ -3716,7 +3770,7 @@ export class BotService {
     const entries = await Promise.all(selectedIds.map((id) => this.repo.getEntryById(user.id, id)));
     const hasSubcategory = entries.some((entry) => entry?.subcategoryId);
 
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: `действия: ${selectedIds.length}`,
       reply_markup: kb([
@@ -3795,7 +3849,7 @@ export class BotService {
     }
 
     if (typeSet.size > 1) {
-      await this.telegram.sendMessage({
+      await this.sendMessage({
         chat_id: user.chatId,
         text: "Нельзя перенести вместе доходы и расходы.\n\nСними лишний выбор и попробуй ещё раз.",
         reply_markup: kb([
@@ -3818,7 +3872,7 @@ export class BotService {
       }
     });
 
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: "Напиши категорию.",
       reply_markup: kb([[{ text: BUTTONS.cancel, action: "select:actions", payload: { origin, page } }, { text: BUTTONS.main, action: "nav:home" }]])
@@ -3887,7 +3941,7 @@ export class BotService {
 
   private async showBulkResult(user: UserRecord, origin: string, page: number, notice: string): Promise<void> {
     await this.refreshEntryListByOrigin(user, origin, page);
-    await this.telegram.sendMessage({
+    await this.sendMessage({
       chat_id: user.chatId,
       text: notice
     });

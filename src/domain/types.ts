@@ -127,6 +127,15 @@ export interface TelegramMessagePayload {
   };
 }
 
+export interface TelegramEditMessagePayload {
+  chat_id: string;
+  message_id: number;
+  text: string;
+  reply_markup?: {
+    inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
+  };
+}
+
 export interface TelegramDocumentPayload {
   chat_id: string;
   filename: string;

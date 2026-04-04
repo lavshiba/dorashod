@@ -1,8 +1,9 @@
-import type { TelegramDocumentPayload, TelegramMessagePayload } from "@/domain/types";
+import type { TelegramDocumentPayload, TelegramEditMessagePayload, TelegramMessagePayload } from "@/domain/types";
 
 interface TelegramApiResponse<T> {
   ok: boolean;
   result: T;
+  description?: string;
 }
 
 export class TelegramApi {
@@ -16,6 +17,13 @@ export class TelegramApi {
 
   async sendMessage(payload: TelegramMessagePayload): Promise<void> {
     await this.call("sendMessage", {
+      ...payload,
+      parse_mode: "HTML"
+    });
+  }
+
+  async editMessageText(payload: TelegramEditMessagePayload): Promise<void> {
+    await this.call("editMessageText", {
       ...payload,
       parse_mode: "HTML"
     });
@@ -92,7 +100,7 @@ export class TelegramApi {
 
     const body = (await response.json()) as TelegramApiResponse<T>;
     if (!body.ok) {
-      throw new Error(`Telegram API ${method} returned ok=false`);
+      throw new Error(body.description ? `Telegram API ${method} returned ok=false: ${body.description}` : `Telegram API ${method} returned ok=false`);
     }
 
     return body.result;
