@@ -40,6 +40,7 @@ export interface CategoryRecord {
   type: EntryType;
   name: string;
   hiddenAt: string | null;
+  quickAccessSlot: number | null;
   usageCountCache: number;
 }
 
@@ -48,6 +49,7 @@ export interface SubcategoryRecord {
   categoryId: number;
   name: string;
   hiddenAt: string | null;
+  quickAccessSlot: number | null;
   usageCountCache: number;
 }
 

@@ -1,4 +1,4 @@
-import type { DraftPayload, EntryRecord, EntryType, UiSession, UserRecord } from "@/domain/types";
+import type { CategoryRecord, DraftPayload, EntryRecord, EntryType, SubcategoryRecord, UiSession, UserRecord } from "@/domain/types";
 import type { Repository } from "@/db/repository";
 import type { TelegramApi } from "@/telegram/api";
 import { BUTTONS, BOT_TITLE, ONBOARDING_TEXTS, onboardingProgress } from "@/ui/text";
@@ -461,6 +461,15 @@ export class BotService {
           reply_markup: kb([[{ text: BUTTONS.cancel, action: "add:cancel" }, { text: BUTTONS.main, action: "nav:home" }]])
         });
         return;
+      case "add:pick-category":
+        await this.pickAddCategory(user, Number(params.id));
+        return;
+      case "add:pick-subcategory":
+        await this.pickAddSubcategory(user, Number(params.id));
+        return;
+      case "add:skip-subcategory":
+        await this.skipAddSubcategory(user);
+        return;
       case "add:skip-description":
         await this.finalizeDraft(user, undefined);
         return;
@@ -856,6 +865,15 @@ export class BotService {
       case "settings:set-quick-access":
         await this.applyQuickAccessMode(user, String(params.section), String(params.mode));
         return;
+      case "settings:quick-access-slot":
+        await this.showQuickAccessSlotEditor(user, String(params.section), Number(params.slot ?? "1"), Number(params.page ?? "0"));
+        return;
+      case "settings:quick-access-slot-pick":
+        await this.applyQuickAccessSlot(user, String(params.section), Number(params.slot ?? "1"), Number(params.id), Number(params.page ?? "0"));
+        return;
+      case "settings:quick-access-slot-clear":
+        await this.clearQuickAccessSlot(user, String(params.section), Number(params.slot ?? "1"));
+        return;
       case "settings:sorting":
         await this.showSortingRoot(user);
         return;
@@ -1082,7 +1100,7 @@ export class BotService {
       }
       payload.amountMinor = parsed.amountMinor;
       await this.repo.saveDraft(user.id, payload, "category");
-      await this.telegram.sendMessage({ chat_id: user.chatId, text: "Напиши категорию." });
+      await this.promptAddCategory(user, payload.type ?? "expense");
       return;
     }
 
@@ -1093,11 +1111,7 @@ export class BotService {
       const subcategoryCount = user.subcategoriesEnabled ? await this.repo.getSubcategoryCount(user.id, category.id) : 0;
       await this.repo.saveDraft(user.id, payload, subcategoryCount > 0 ? "subcategory" : "description");
       if (subcategoryCount > 0) {
-        await this.telegram.sendMessage({
-          chat_id: user.chatId,
-          text: "Напиши подкатегорию.",
-          reply_markup: kb([[{ text: BUTTONS.skip, action: "add:skip-description" }]])
-        });
+        await this.promptAddSubcategory(user, category.id);
         return;
       }
       await this.telegram.sendMessage({
@@ -1192,12 +1206,150 @@ export class BotService {
       return;
     }
     if (draft.step === "category") {
-      await this.telegram.sendMessage({ chat_id: user.chatId, text: "Напиши категорию." });
+      await this.promptAddCategory(user, draft.payload.type ?? "expense");
+      return;
+    }
+    if (draft.step === "subcategory" && draft.payload.categoryId) {
+      await this.promptAddSubcategory(user, draft.payload.categoryId);
       return;
     }
     await this.telegram.sendMessage({
       chat_id: user.chatId,
       text: "Напиши описание или нажми пропустить.",
+      reply_markup: kb([[{ text: BUTTONS.skip, action: "add:skip-description" }]])
+    });
+  }
+
+  private async promptAddCategory(user: UserRecord, type: EntryType): Promise<void> {
+    const items = await this.getAddQuickCategories(user, type);
+    if (items.length === 0) {
+      await this.telegram.sendMessage({ chat_id: user.chatId, text: "Напиши категорию." });
+      return;
+    }
+
+    const lines = items.map((item, index) => `${index + 1}. ${item.name}`).join("\n");
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: `Напиши категорию.\n\n${lines}`,
+      reply_markup: kb([
+        items.map((item, index) => ({ text: String(index + 1), action: "add:pick-category", payload: { id: item.id } })),
+        [{ text: BUTTONS.cancel, action: "add:cancel" }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async promptAddSubcategory(user: UserRecord, categoryId: number): Promise<void> {
+    const items = await this.getAddQuickSubcategories(user, categoryId);
+    if (items.length === 0) {
+      await this.telegram.sendMessage({
+        chat_id: user.chatId,
+        text: "Напиши подкатегорию.",
+        reply_markup: kb([[{ text: BUTTONS.skip, action: "add:skip-subcategory" }]])
+      });
+      return;
+    }
+
+    const lines = items.map((item, index) => `${index + 1}. ${item.name}`).join("\n");
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: `Напиши подкатегорию.\n\n${lines}`,
+      reply_markup: kb([
+        items.map((item, index) => ({ text: String(index + 1), action: "add:pick-subcategory", payload: { id: item.id } })),
+        [{ text: BUTTONS.skip, action: "add:skip-subcategory" }],
+        [{ text: BUTTONS.cancel, action: "add:cancel" }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async getAddQuickCategories(user: UserRecord, type: EntryType): Promise<CategoryRecord[]> {
+    const mode = type === "expense" ? user.quickAccessModeExpense : user.quickAccessModeIncome;
+    if (mode === "disabled") {
+      return [];
+    }
+    if (mode === "custom") {
+      return this.repo.listQuickAccessCategories(user.id, type);
+    }
+    return this.repo.listCategories(user.id, type, false, 0, 4, "usage");
+  }
+
+  private async getAddQuickSubcategories(user: UserRecord, categoryId: number): Promise<SubcategoryRecord[]> {
+    if (!user.subcategoriesEnabled) {
+      return [];
+    }
+    const mode = user.quickAccessModeSubcategories;
+    if (mode === "disabled") {
+      return [];
+    }
+    if (mode === "custom") {
+      return this.repo.listQuickAccessSubcategories(user.id, categoryId);
+    }
+    return (await this.repo.getSubcategories(user.id, categoryId, "usage")).slice(0, 4);
+  }
+
+  private async pickAddCategory(user: UserRecord, categoryId: number): Promise<void> {
+    const draft = await this.repo.getDraft(user.id);
+    if (!draft?.payload.type) {
+      await this.showHome(user);
+      return;
+    }
+    const category = await this.repo.getCategory(user.id, categoryId);
+    if (!category) {
+      await this.promptAddCategory(user, draft.payload.type);
+      return;
+    }
+
+    draft.payload.categoryId = category.id;
+    draft.payload.categoryName = category.name;
+    draft.payload.subcategoryId = undefined;
+    draft.payload.subcategoryName = undefined;
+
+    const subcategoryCount = user.subcategoriesEnabled ? await this.repo.getSubcategoryCount(user.id, category.id) : 0;
+    await this.repo.saveDraft(user.id, draft.payload, subcategoryCount > 0 ? "subcategory" : "description");
+    if (subcategoryCount > 0) {
+      await this.promptAddSubcategory(user, category.id);
+      return;
+    }
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: "Напиши описание.",
+      reply_markup: kb([[{ text: BUTTONS.skip, action: "add:skip-description" }]])
+    });
+  }
+
+  private async pickAddSubcategory(user: UserRecord, subcategoryId: number): Promise<void> {
+    const draft = await this.repo.getDraft(user.id);
+    if (!draft?.payload.categoryId) {
+      await this.showHome(user);
+      return;
+    }
+    const subcategory = await this.repo.getSubcategory(user.id, subcategoryId);
+    if (!subcategory) {
+      await this.promptAddSubcategory(user, draft.payload.categoryId);
+      return;
+    }
+
+    draft.payload.subcategoryId = subcategory.id;
+    draft.payload.subcategoryName = subcategory.name;
+    await this.repo.saveDraft(user.id, draft.payload, "description");
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: "Напиши описание.",
+      reply_markup: kb([[{ text: BUTTONS.skip, action: "add:skip-description" }]])
+    });
+  }
+
+  private async skipAddSubcategory(user: UserRecord): Promise<void> {
+    const draft = await this.repo.getDraft(user.id);
+    if (!draft) {
+      await this.showHome(user);
+      return;
+    }
+    draft.payload.subcategoryId = undefined;
+    draft.payload.subcategoryName = undefined;
+    await this.repo.saveDraft(user.id, draft.payload, "description");
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: "Напиши описание.",
       reply_markup: kb([[{ text: BUTTONS.skip, action: "add:skip-description" }]])
     });
   }
@@ -2493,13 +2645,23 @@ export class BotService {
           ? user.quickAccessModeIncome
           : user.quickAccessModeSubcategories;
     const title = section === "expense" ? BUTTONS.expenseCategories : section === "income" ? BUTTONS.incomeCategories : BUTTONS.subcategories;
+    const slots = await this.getQuickAccessSlots(user, section);
+    const slotLines = slots.length ? `\n\n${slots.map((item, index) => `${index + 1}. ${item.name}`).join("\n")}` : "";
+    const slotRows: Array<Array<{ text: string; action: string; payload?: Record<string, string | number | undefined> }>> = [];
+    if (current === "custom") {
+      slotRows.push(Array.from({ length: Math.min(slots.length + 1, 4) }, (_, index) => ({ text: String(index + 1), action: "settings:quick-access-slot", payload: { section, slot: index + 1 } })));
+      if (slots.length > 0) {
+        slotRows.push([{ text: BUTTONS.done, action: "settings:quick-access", payload: { section } }]);
+      }
+    }
     await this.telegram.sendMessage({
       chat_id: user.chatId,
-      text: `${title}\n\nтекущее значение: ${formatQuickAccessMode(current)}`,
+      text: `${title}\n\nтекущее значение: ${formatQuickAccessMode(current)}${slotLines}`,
       reply_markup: kb([
         [{ text: BUTTONS.automatically, action: "settings:set-quick-access", payload: { section, mode: "automatically" } }],
         [{ text: BUTTONS.own, action: "settings:set-quick-access", payload: { section, mode: "custom" } }],
         [{ text: BUTTONS.off, action: "settings:set-quick-access", payload: { section, mode: "disabled" } }],
+        ...slotRows,
         [{ text: BUTTONS.back, action: "settings:quick-access" }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
@@ -2514,6 +2676,155 @@ export class BotService {
           : "quick_access_mode_subcategories";
     await this.updateUserSetting(user.id, field, mode);
     await this.showQuickAccessSection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), section);
+  }
+
+  private async getQuickAccessSlots(user: UserRecord, section: string): Promise<Array<CategoryRecord | SubcategoryRecord>> {
+    if (section === "expense" || section === "income") {
+      return this.repo.listQuickAccessCategories(user.id, section);
+    }
+    const categoryId = await this.getLatestQuickAccessSubcategoryCategoryId(user.id);
+    if (!categoryId) {
+      return [];
+    }
+    return this.repo.listQuickAccessSubcategories(user.id, categoryId);
+  }
+
+  private async showQuickAccessSlotEditor(user: UserRecord, section: string, slot: number, page: number): Promise<void> {
+    if (section === "subcategories") {
+      await this.showQuickAccessSubcategoryCategoryChooser(user, slot);
+      return;
+    }
+    if (section.startsWith("subcategory:")) {
+      const categoryId = Number(section.split(":")[1]);
+      const current = await this.repo.listQuickAccessSubcategories(user.id, categoryId);
+      const items = (await this.repo.getSubcategories(user.id, categoryId, user.sortModeSubcategories)).slice(page * 6, page * 6 + 6);
+      const lines = items.length ? items.map((item, index) => `${index + 1}. ${item.name}`).join("\n") : "пока подкатегорий нет";
+      const slotItem = current[slot - 1];
+      await this.repo.saveSession(user.id, { mode: "settings", stack: ["settings"], context: { lastQuickAccessCategoryId: categoryId } });
+      await this.telegram.sendMessage({
+        chat_id: user.chatId,
+        text: `быстрый доступ\n\nслот ${slot}${slotItem ? `: ${slotItem.name}` : ""}\n\n${lines}`,
+        reply_markup: kb([
+          ...(items.length
+            ? [items.map((item, index) => ({ text: String(index + 1), action: "settings:quick-access-slot-pick", payload: { section, slot, id: item.id, page } }))]
+            : []),
+          ...(slotItem ? [[{ text: BUTTONS.delete, action: "settings:quick-access-slot-clear", payload: { section, slot } }]] : []),
+          [{ text: BUTTONS.back, action: "settings:quick-access-section", payload: { section: "subcategories" } }, { text: BUTTONS.main, action: "nav:home" }]
+        ])
+      });
+      return;
+    }
+
+    const current = await this.repo.listQuickAccessCategories(user.id, section as EntryType);
+    const items = await this.repo.listCategories(user.id, section as EntryType, false, page, 6, "usage");
+    const lines = items.length ? items.map((item, index) => `${index + 1}. ${item.name}`).join("\n") : "пока категорий нет";
+    const slotItem = current[slot - 1];
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: `быстрый доступ\n\nслот ${slot}${slotItem ? `: ${slotItem.name}` : ""}\n\n${lines}`,
+      reply_markup: kb([
+        ...(items.length
+          ? [items.map((item, index) => ({ text: String(index + 1), action: "settings:quick-access-slot-pick", payload: { section, slot, id: item.id, page } }))]
+          : []),
+        ...(slotItem ? [[{ text: BUTTONS.delete, action: "settings:quick-access-slot-clear", payload: { section, slot } }]] : []),
+        [{ text: BUTTONS.back, action: "settings:quick-access-section", payload: { section } }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async showQuickAccessSubcategoryCategoryChooser(user: UserRecord, slot: number): Promise<void> {
+    const expense = await this.repo.listCategories(user.id, "expense", false, 0, 3, "usage");
+    const income = await this.repo.listCategories(user.id, "income", false, 0, 3, "usage");
+    const merged = [...expense, ...income].slice(0, 6);
+    if (merged.length === 0) {
+      await this.telegram.sendMessage({
+        chat_id: user.chatId,
+        text: "пока категорий нет\nможно вернуться назад",
+        reply_markup: kb([[{ text: BUTTONS.back, action: "settings:quick-access-section", payload: { section: "subcategories" } }, { text: BUTTONS.main, action: "nav:home" }]])
+      });
+      return;
+    }
+    const lines = merged.map((item, index) => `${index + 1}. ${item.name}`).join("\n");
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: `подкатегории\n\n${lines}\n\nвыбери категорию`,
+      reply_markup: kb([
+        merged.map((item, index) => ({ text: String(index + 1), action: "settings:quick-access-slot", payload: { section: `subcategory:${item.id}`, slot } })),
+        [{ text: BUTTONS.back, action: "settings:quick-access-section", payload: { section: "subcategories" } }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async applyQuickAccessSlot(user: UserRecord, section: string, slot: number, entityId: number, page: number): Promise<void> {
+    if (section.startsWith("subcategory:")) {
+      const categoryId = Number(section.split(":")[1]);
+      const current = await this.repo.listQuickAccessSubcategories(user.id, categoryId);
+      const next = this.applySlotSelection(
+        current.map((item) => item.id),
+        slot,
+        entityId
+      );
+      await this.repo.updateSubcategoryQuickAccessSlots(user.id, categoryId, next);
+      await this.repo.saveSession(user.id, { mode: "settings", stack: ["settings"], context: { lastQuickAccessCategoryId: categoryId } });
+      await this.showQuickAccessSection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), "subcategories");
+      return;
+    }
+
+    const current = await this.repo.listQuickAccessCategories(user.id, section as EntryType);
+    const next = this.applySlotSelection(
+      current.map((item) => item.id),
+      slot,
+      entityId
+    );
+    await this.repo.updateCategoryQuickAccessSlots(user.id, section as EntryType, next);
+    await this.showQuickAccessSlotEditor(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), section, slot, page);
+  }
+
+  private async clearQuickAccessSlot(user: UserRecord, section: string, slot: number): Promise<void> {
+    if (section.startsWith("subcategory:")) {
+      const categoryId = Number(section.split(":")[1]);
+      const current = await this.repo.listQuickAccessSubcategories(user.id, categoryId);
+      const next = current.map((item) => item.id).filter((_, index) => index !== slot - 1);
+      await this.repo.updateSubcategoryQuickAccessSlots(user.id, categoryId, next);
+      await this.repo.saveSession(user.id, { mode: "settings", stack: ["settings"], context: { lastQuickAccessCategoryId: categoryId } });
+      await this.showQuickAccessSection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), "subcategories");
+      return;
+    }
+
+    const current = await this.repo.listQuickAccessCategories(user.id, section as EntryType);
+    const next = current.map((item) => item.id).filter((_, index) => index !== slot - 1);
+    await this.repo.updateCategoryQuickAccessSlots(user.id, section as EntryType, next);
+    await this.showQuickAccessSection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), section);
+  }
+
+  private applySlotSelection(currentIds: number[], slot: number, entityId: number): number[] {
+    const next = currentIds.slice(0, 4);
+    const targetIndex = Math.max(0, Math.min(slot - 1, 3));
+    const existingIndex = next.indexOf(entityId);
+
+    if (existingIndex >= 0) {
+      const swapValue = next[targetIndex];
+      next[targetIndex] = entityId;
+      if (typeof swapValue === "number") {
+        next[existingIndex] = swapValue;
+      } else {
+        next.splice(existingIndex, 1);
+      }
+      return next.filter((value, index, array) => typeof value === "number" && array.indexOf(value) === index);
+    }
+
+    if (targetIndex >= next.length) {
+      next.push(entityId);
+      return next;
+    }
+
+    next[targetIndex] = entityId;
+    return next.filter((value, index, array) => typeof value === "number" && array.indexOf(value) === index);
+  }
+
+  private async getLatestQuickAccessSubcategoryCategoryId(userId: number): Promise<number | null> {
+    const session = await this.repo.getSession(userId);
+    return typeof session.context.lastQuickAccessCategoryId === "number" ? (session.context.lastQuickAccessCategoryId as number) : null;
   }
 
   private async showSortingRoot(user: UserRecord): Promise<void> {

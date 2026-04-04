@@ -1081,6 +1081,35 @@ export class Repository {
     return (result.results ?? []).map(mapCategory);
   }
 
+  async listQuickAccessCategories(userId: number, type: EntryType): Promise<CategoryRecord[]> {
+    const rows = await this.db
+      .prepare(
+        `
+        SELECT *
+        FROM categories
+        WHERE user_id = ? AND type = ? AND hidden_at IS NULL AND quick_access_slot IS NOT NULL
+        ORDER BY quick_access_slot ASC, id ASC
+      `
+      )
+      .bind(userId, type)
+      .all<Record<string, D1Value>>();
+    return (rows.results ?? []).map(mapCategory);
+  }
+
+  async updateCategoryQuickAccessSlots(userId: number, type: EntryType, categoryIds: number[]): Promise<void> {
+    const statements = [
+      this.db.prepare("UPDATE categories SET quick_access_slot = NULL, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND type = ?").bind(userId, type)
+    ];
+    for (const [index, categoryId] of categoryIds.slice(0, 4).entries()) {
+      statements.push(
+        this.db
+          .prepare("UPDATE categories SET quick_access_slot = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND type = ? AND id = ?")
+          .bind(index + 1, userId, type, categoryId)
+      );
+    }
+    await this.db.batch(statements);
+  }
+
   async resetUserSettings(userId: number): Promise<void> {
     await this.db
       .prepare(
@@ -1141,6 +1170,37 @@ export class Repository {
       .bind(userId, categoryId)
       .all<Record<string, D1Value>>();
     return (rows.results ?? []).map(mapSubcategory);
+  }
+
+  async listQuickAccessSubcategories(userId: number, categoryId: number): Promise<SubcategoryRecord[]> {
+    const rows = await this.db
+      .prepare(
+        `
+        SELECT *
+        FROM subcategories
+        WHERE user_id = ? AND category_id = ? AND hidden_at IS NULL AND quick_access_slot IS NOT NULL
+        ORDER BY quick_access_slot ASC, id ASC
+      `
+      )
+      .bind(userId, categoryId)
+      .all<Record<string, D1Value>>();
+    return (rows.results ?? []).map(mapSubcategory);
+  }
+
+  async updateSubcategoryQuickAccessSlots(userId: number, categoryId: number, subcategoryIds: number[]): Promise<void> {
+    const statements = [
+      this.db
+        .prepare("UPDATE subcategories SET quick_access_slot = NULL, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND category_id = ?")
+        .bind(userId, categoryId)
+    ];
+    for (const [index, subcategoryId] of subcategoryIds.slice(0, 4).entries()) {
+      statements.push(
+        this.db
+          .prepare("UPDATE subcategories SET quick_access_slot = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND category_id = ? AND id = ?")
+          .bind(index + 1, userId, categoryId, subcategoryId)
+      );
+    }
+    await this.db.batch(statements);
   }
 
   async getSubcategory(userId: number, subcategoryId: number): Promise<SubcategoryRecord | null> {
@@ -1609,6 +1669,7 @@ function mapCategory(row: Record<string, D1Value>): CategoryRecord {
     type: String(row.type) as EntryType,
     name: String(row.name),
     hiddenAt: row.hidden_at ? String(row.hidden_at) : null,
+    quickAccessSlot: row.quick_access_slot === null || typeof row.quick_access_slot === "undefined" ? null : Number(row.quick_access_slot),
     usageCountCache: Number(row.usage_count_cache)
   };
 }
@@ -1619,6 +1680,7 @@ function mapSubcategory(row: Record<string, D1Value>): SubcategoryRecord {
     categoryId: Number(row.category_id),
     name: String(row.name),
     hiddenAt: row.hidden_at ? String(row.hidden_at) : null,
+    quickAccessSlot: row.quick_access_slot === null || typeof row.quick_access_slot === "undefined" ? null : Number(row.quick_access_slot),
     usageCountCache: Number(row.usage_count_cache)
   };
 }
