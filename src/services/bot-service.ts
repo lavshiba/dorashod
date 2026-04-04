@@ -546,7 +546,12 @@ export class BotService {
         await this.repo.saveSession(user.id, { mode: "data", stack: ["data"], context: { awaitingUploadType: "entries" } });
         await this.sendMessage({
           chat_id: user.chatId,
-          text: "Пришли файл.",
+          text:
+            "загрузить из файла\n\n" +
+            "пришли файл с записями,\n" +
+            "и бот покажет,\n" +
+            "что из него можно добавить\n\n" +
+            "текущие данные пока не меняются",
           reply_markup: kb([[{ text: BUTTONS.back, action: "data:other-apps" }, { text: BUTTONS.main, action: "nav:home" }]])
         });
         return;
@@ -656,9 +661,35 @@ export class BotService {
         await this.applyBulkDelete(user, String(params.origin), Number(params.page ?? "0"));
         return;
       case "bulk:remove-subcategory":
+        await this.sendMessage({
+          chat_id: user.chatId,
+          text:
+            "снять подкатегорию?\n\n" +
+            "у выбранных записей\n" +
+            "останется только категория",
+          reply_markup: kb([
+            [{ text: BUTTONS.yesRemoveSubcategory, action: "bulk:remove-subcategory-confirm", payload: { origin: params.origin, page: params.page } }],
+            [{ text: BUTTONS.back, action: "select:actions", payload: { origin: params.origin, page: params.page } }, { text: BUTTONS.main, action: "nav:home" }]
+          ])
+        });
+        return;
+      case "bulk:remove-subcategory-confirm":
         await this.applyBulkRemoveSubcategory(user, String(params.origin), Number(params.page ?? "0"));
         return;
       case "bulk:cancel":
+        await this.sendMessage({
+          chat_id: user.chatId,
+          text:
+            "выйти из выбора?\n\n" +
+            "отмеченные записи будут сняты",
+          reply_markup: kb([
+            [{ text: BUTTONS.exit, action: "bulk:cancel-confirm", payload: { origin: params.origin, page: params.page } }],
+            [{ text: BUTTONS.stay, action: "select:actions", payload: { origin: params.origin, page: params.page } }],
+            [{ text: BUTTONS.main, action: "nav:home" }]
+          ])
+        });
+        return;
+      case "bulk:cancel-confirm":
         await this.clearBulkSelection(user, String(params.origin), Number(params.page ?? "0"));
         return;
       case "operations:view":
