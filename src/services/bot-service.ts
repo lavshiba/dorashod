@@ -1480,19 +1480,11 @@ export class BotService {
         await this.repo.saveSession(user.id, { mode: "data", stack: ["data"], context: { awaitingUploadType: "entries" } });
         await this.showEntriesImportAwaiting(user, "data:other-apps");
         return;
+      case "data:import-full-preview":
+        await this.showFullImportPreview(user, Number(params.importId));
+        return;
       case "data:import-full-preview-confirm":
-        await this.sendMessage({
-          chat_id: user.chatId,
-          text:
-            `<b>${BOT_TITLE}</b>\n\n` +
-            "загрузить копию в этот бот?\n\n" +
-            "текущие данные будут заменены\n" +
-            "данными из файла",
-          reply_markup: kb([
-            [{ text: BUTTONS.yesUpload, action: "data:import-full-confirm", payload: { importId: Number(params.importId) } }],
-            [{ text: BUTTONS.back, action: "data:this-bot" }, { text: BUTTONS.main, action: "nav:home" }]
-          ])
-        });
+        await this.showFullImportConfirm(user, Number(params.importId));
         return;
       case "data:import-full-confirm": {
         const pendingImport = await this.repo.getImport(user.id, Number(params.importId));
@@ -1507,6 +1499,9 @@ export class BotService {
       }
       case "data:import-entries-merge":
         await this.showEntriesImportMergePlan(user, Number(params.importId));
+        return;
+      case "data:import-preview":
+        await this.showEntriesImportPreview(user, Number(params.importId));
         return;
       case "data:import-entries-add-all":
         await this.showEntriesImportAddAllPlan(user, Number(params.importId));
@@ -4859,6 +4854,55 @@ export class BotService {
     });
   }
 
+  private async showFullImportPreview(user: UserRecord, importId: number): Promise<void> {
+    const pendingImport = await this.repo.getImport(user.id, importId);
+    if (!pendingImport) {
+      await this.showDataThisBot(user);
+      return;
+    }
+
+    const snapshot = pendingImport.previewJson as {
+      entries?: number;
+      expenseCategories?: number;
+      incomeCategories?: number;
+      hasDraft?: boolean;
+      queue?: number;
+    };
+
+    await this.sendMessage({
+      chat_id: user.chatId,
+      text:
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `файл загружен\n\n` +
+        `внутри:\n` +
+        `записи — ${Number(snapshot.entries ?? 0)}\n` +
+        `категории расходов — ${Number(snapshot.expenseCategories ?? 0)}\n` +
+        `категории доходов — ${Number(snapshot.incomeCategories ?? 0)}\n` +
+        `есть черновик — ${snapshot.hasDraft ? "да" : "нет"}\n` +
+        `новые записи — ${Number(snapshot.queue ?? 0)}`,
+      reply_markup: kb([
+        [{ text: BUTTONS.uploadToBot, action: "data:import-full-preview-confirm", payload: { importId } }],
+        [{ text: BUTTONS.cancel, action: "data:this-bot" }],
+        [{ text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async showFullImportConfirm(user: UserRecord, importId: number): Promise<void> {
+    await this.sendMessage({
+      chat_id: user.chatId,
+      text:
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `загрузить копию в этот бот?\n\n` +
+        `текущие данные будут заменены\n` +
+        `данными из файла`,
+      reply_markup: kb([
+        [{ text: BUTTONS.yesUpload, action: "data:import-full-confirm", payload: { importId } }],
+        [{ text: BUTTONS.back, action: "data:import-full-preview", payload: { importId } }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
   private async showDataOtherApps(user: UserRecord, notice?: string): Promise<void> {
     await this.sendMessage({
       chat_id: user.chatId,
@@ -4958,7 +5002,7 @@ export class BotService {
         `будет создано:\n${analysis.createdCategories} категории\n${analysis.createdSubcategories} подкатегорий`,
       reply_markup: kb([
         [{ text: `добавить ${analysis.addedEntries}`, action: "data:import-entries-merge-confirm", payload: { importId } }],
-        [{ text: BUTTONS.back, action: "data:other-apps" }, { text: BUTTONS.main, action: "nav:home" }]
+        [{ text: BUTTONS.back, action: "data:import-preview", payload: { importId } }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
   }
@@ -4981,7 +5025,7 @@ export class BotService {
         `в бот попадут:\n${analysis.addedEntries} записей\n${analysis.createdCategories} категории\n${analysis.createdSubcategories} подкатегорий`,
       reply_markup: kb([
         [{ text: BUTTONS.yesAdd, action: "data:import-entries-merge-apply", payload: { importId } }],
-        [{ text: BUTTONS.back, action: "data:other-apps" }, { text: BUTTONS.main, action: "nav:home" }]
+        [{ text: BUTTONS.back, action: "data:import-entries-merge", payload: { importId } }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
   }
@@ -5006,7 +5050,7 @@ export class BotService {
         "повторы тоже будут добавлены",
       reply_markup: kb([
         [{ text: `добавить ${analysis.addedEntries}`, action: "data:import-entries-add-all-confirm", payload: { importId } }],
-        [{ text: BUTTONS.back, action: "data:other-apps" }, { text: BUTTONS.main, action: "nav:home" }]
+        [{ text: BUTTONS.back, action: "data:import-preview", payload: { importId } }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
   }
@@ -5021,7 +5065,7 @@ export class BotService {
         "включая возможные повторы",
       reply_markup: kb([
         [{ text: BUTTONS.yesAddAll, action: "data:import-entries-add-all-apply", payload: { importId } }],
-        [{ text: BUTTONS.back, action: "data:other-apps" }, { text: BUTTONS.main, action: "nav:home" }]
+        [{ text: BUTTONS.back, action: "data:import-entries-add-all", payload: { importId } }, { text: BUTTONS.main, action: "nav:home" }]
       ])
     });
   }
