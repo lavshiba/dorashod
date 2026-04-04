@@ -272,15 +272,37 @@ export class BotService {
         const item = parseEntryAttempt(line);
         await this.repo.enqueueIntake(user.id, "message-batch", line, item, item.missing);
       }
-      await this.showHome(user, "Новые записи добавлены в очередь.");
+      if (session.mode === "search") {
+        await this.sendMessage({
+          chat_id: user.chatId,
+          text:
+            "это похоже на новые записи\n\n" +
+            `я сохранил их в новые записи:\n${parsed.lines.length}\n\n` +
+            "поиск не запускал",
+          reply_markup: kb([
+            [{ text: `новые записи: ${parsed.lines.length}`, action: "queue:open" }],
+            [{ text: BUTTONS.enterQuery, action: "search:prompt" }],
+            [{ text: BUTTONS.main, action: "nav:home" }]
+          ])
+        });
+        return;
+      }
+      await this.showHome(user, `новые записи: ${parsed.lines.length}`);
       return;
       }
 
       if (session.mode === "search") {
       await this.sendMessage({
         chat_id: user.chatId,
-        text: "Пришло сообщение, похожее на новую запись.\n\n[искать это] или [в новые записи]?",
-        reply_markup: kb([[{ text: BUTTONS.searchThis, action: "search:use-text" }, { text: BUTTONS.toNewEntries, action: "search:to-queue" }]])
+        text:
+          "это похоже на новую запись,\n" +
+          "а не на поисковый запрос\n\n" +
+          "что сделать?",
+        reply_markup: kb([
+          [{ text: BUTTONS.searchThis, action: "search:use-text" }],
+          [{ text: BUTTONS.toNewEntries, action: "search:to-queue" }],
+          [{ text: BUTTONS.back, action: "search:open" }, { text: BUTTONS.main, action: "nav:home" }]
+        ])
       });
       await this.repo.saveSession(user.id, { ...session, context: { ...session.context, pendingText: text } });
       return;
@@ -319,13 +341,18 @@ export class BotService {
       await this.repo.saveSession(user.id, { mode: "add", stack: ["home"], context: { source: "message" } });
       await this.sendMessage({
         chat_id: user.chatId,
-        text: `Из записи удалось понять:\n${this.describeDraft({
-          type: parsed.type,
-          amountMinor: parsed.amountMinor,
-          categoryName: parsed.category,
-          subcategoryName: parsed.subcategory,
-          description: parsed.description
-        }, user.currencyLabel)}\n\nНе хватает: ${parsed.missing.map(formatMissingField).join(", ")}.`,
+        text:
+          `из записи удалось понять:\n\n${this.describeDraft(
+            {
+              type: parsed.type,
+              amountMinor: parsed.amountMinor,
+              categoryName: parsed.category,
+              subcategoryName: parsed.subcategory,
+              description: parsed.description
+            },
+            user.currencyLabel
+          )}\n\n` +
+          `не хватает:\n${parsed.missing.map(formatMissingField).join("\n")}`,
         reply_markup: kb([[{ text: BUTTONS.cancel, action: "add:cancel" }, { text: BUTTONS.main, action: "nav:home" }]])
       });
       await this.continueDraft(user);
