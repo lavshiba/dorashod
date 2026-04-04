@@ -296,6 +296,7 @@ export class BotService {
         await this.sendMessage({
           chat_id: user.chatId,
           text:
+            `<b>${BOT_TITLE}</b>\n\n` +
             "это похоже на новые записи\n\n" +
             `я сохранил их в новые записи:\n${parsed.lines.length}\n\n` +
             "поиск не запускал",
@@ -315,6 +316,7 @@ export class BotService {
       await this.sendMessage({
         chat_id: user.chatId,
         text:
+          `<b>${BOT_TITLE}</b>\n\n` +
           "это похоже на новую запись,\n" +
           "а не на поисковый запрос\n\n" +
           "что сделать?",
@@ -575,6 +577,7 @@ export class BotService {
         await this.sendMessage({
           chat_id: user.chatId,
           text:
+            `<b>${BOT_TITLE}</b>\n\n` +
             "загрузить из файла\n\n" +
             "пришли файл с записями,\n" +
             "и бот покажет,\n" +
@@ -914,6 +917,7 @@ export class BotService {
         await this.sendMessage({
           chat_id: user.chatId,
           text:
+            `<b>${BOT_TITLE}</b>\n\n` +
             "свой период\n\n" +
             "пришли период сообщением\n\n" +
             "например:\n" +
@@ -961,6 +965,7 @@ export class BotService {
         await this.sendMessage({
           chat_id: user.chatId,
           text:
+            `<b>${BOT_TITLE}</b>\n\n` +
             `новая категория\n` +
             `тип: ${String(params.type) === "expense" ? "расход" : "доход"}\n\n` +
             "пришли название категории сообщением",
@@ -992,6 +997,7 @@ export class BotService {
         await this.sendMessage({
           chat_id: user.chatId,
           text:
+            `<b>${BOT_TITLE}</b>\n\n` +
             "скрыть категорию?\n\n" +
             "она исчезнет из обычного выбора,\n" +
             "но старые записи останутся",
@@ -1063,6 +1069,7 @@ export class BotService {
         await this.sendMessage({
           chat_id: user.chatId,
           text:
+            `<b>${BOT_TITLE}</b>\n\n` +
             "скрыть подкатегорию?\n\n" +
             "она исчезнет из обычного выбора,\n" +
             "но старые записи останутся",
@@ -1262,6 +1269,7 @@ export class BotService {
           await this.sendMessage({
             chat_id: user.chatId,
             text:
+              `<b>${BOT_TITLE}</b>\n\n` +
               "выключить подкатегории?\n\n" +
               "старые записи останутся,\n" +
               "но в новых записях\n" +
@@ -1343,6 +1351,7 @@ export class BotService {
         await this.sendMessage({
           chat_id: user.chatId,
           text:
+            `<b>${BOT_TITLE}</b>\n\n` +
             "загрузить из файла\n\n" +
             "пришли файл с полной копией,\n" +
             "и бот покажет, что в нём есть\n\n" +
@@ -1355,6 +1364,7 @@ export class BotService {
         await this.sendMessage({
           chat_id: user.chatId,
           text:
+            `<b>${BOT_TITLE}</b>\n\n` +
             "загрузить из файла\n\n" +
             "пришли файл с записями,\n" +
             "и бот покажет,\n" +
@@ -1367,6 +1377,7 @@ export class BotService {
         await this.sendMessage({
           chat_id: user.chatId,
           text:
+            `<b>${BOT_TITLE}</b>\n\n` +
             "загрузить копию в этот бот?\n\n" +
             "текущие данные будут заменены\n" +
             "данными из файла",
@@ -1433,6 +1444,7 @@ export class BotService {
         await this.sendMessage({
           chat_id: user.chatId,
           text:
+            `<b>${BOT_TITLE}</b>\n\n` +
             "сбросить настройки\n\n" +
             "это сбросит только настройки бота:\n\n" +
             "валюту\n" +
@@ -1452,6 +1464,7 @@ export class BotService {
         await this.sendMessage({
           chat_id: user.chatId,
           text:
+            `<b>${BOT_TITLE}</b>\n\n` +
             "сбросить настройки?\n\n" +
             "записи останутся,\n" +
             "но вид и поведение бота\n" +
@@ -1470,6 +1483,7 @@ export class BotService {
         await this.sendMessage({
           chat_id: user.chatId,
           text:
+            `<b>${BOT_TITLE}</b>\n\n` +
             "очистить всё\n\n" +
             "это удалит:\n" +
             "записи\n" +
@@ -1489,6 +1503,7 @@ export class BotService {
         await this.sendMessage({
           chat_id: user.chatId,
           text:
+            `<b>${BOT_TITLE}</b>\n\n` +
             "точно очистить всё?\n\n" +
             "это действие нельзя отменить",
           reply_markup: kb([
@@ -1512,6 +1527,7 @@ export class BotService {
         await this.sendMessage({
           chat_id: user.chatId,
           text:
+            `<b>${BOT_TITLE}</b>\n\n` +
             "файл готов\n\n" +
             "в нём полная копия бота:\n" +
             "записи, категории,\n" +
@@ -1532,6 +1548,7 @@ export class BotService {
         await this.sendMessage({
           chat_id: user.chatId,
           text:
+            `<b>${BOT_TITLE}</b>\n\n` +
             "файл готов\n\n" +
             "это таблица с записями\n" +
             "для других приложений",
