@@ -3449,7 +3449,7 @@ export class BotService {
           `<b>${BOT_TITLE}</b>\n\n` +
           `${notice ? `${notice}\n\n` : ""}` +
           `скрытые категории\n${type === "expense" ? "расходы" : "доходы"}\n\n` +
-          `пока скрытых категорий нет\n\n` +
+          `скрытых категорий пока нет\n\n` +
           `можно вернуться назад`,
         reply_markup: kb([[{ text: BUTTONS.back, action: "categories:list", payload: { type, page: 0 } }, { text: BUTTONS.main, action: "nav:home" }]])
       });
@@ -3531,7 +3531,7 @@ export class BotService {
           `<b>${BOT_TITLE}</b>\n\n` +
           `${notice ? `${notice}\n\n` : ""}` +
           `скрытые подкатегории\n${category?.name ?? ""}\n\n` +
-          `пока скрытых подкатегорий нет\n\n` +
+          `скрытых подкатегорий пока нет\n\n` +
           `можно вернуться назад`,
         reply_markup: kb([[{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page, subpage, source: "list" } }, { text: BUTTONS.main, action: "nav:home" }]])
       });
@@ -4429,7 +4429,7 @@ export class BotService {
 
     const current = await this.repo.listQuickAccessCategories(user.id, section as EntryType);
     const items = await this.repo.listCategories(user.id, section as EntryType, false, page, 6, "usage");
-    const lines = items.length ? items.map((item, index) => `${index + 1}. ${item.name}`).join("\n") : "пока категорий нет";
+    const lines = items.length ? items.map((item, index) => `${index + 1}. ${item.name}`).join("\n") : "категорий пока нет";
     const slotItem = current[slot - 1];
     await this.sendMessage({
       chat_id: user.chatId,
@@ -4723,7 +4723,7 @@ export class BotService {
           `<b>${BOT_TITLE}</b>\n\n` +
           `сортировка\n` +
           `подкатегорий\n\n` +
-          `пока категорий нет\n\n` +
+          `категорий пока нет\n\n` +
           `можно вернуться назад`,
         reply_markup: kb([[{ text: BUTTONS.back, action: "settings:sorting-section", payload: { section: "subcategories" } }, { text: BUTTONS.main, action: "nav:home" }]])
       });
