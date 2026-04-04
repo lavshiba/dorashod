@@ -678,6 +678,7 @@ export class BotService {
         await this.sendMessage({
           chat_id: user.chatId,
           text:
+            `<b>${BOT_TITLE}</b>\n\n` +
             "удалить записи?\n\n" +
             `будет удалено:\n${bulkCount} записи\n\n` +
             "вернуть их потом не получится",
@@ -695,6 +696,7 @@ export class BotService {
         await this.sendMessage({
           chat_id: user.chatId,
           text:
+            `<b>${BOT_TITLE}</b>\n\n` +
             "снять подкатегорию?\n\n" +
             "у выбранных записей\n" +
             "останется только категория",
@@ -711,6 +713,7 @@ export class BotService {
         await this.sendMessage({
           chat_id: user.chatId,
           text:
+            `<b>${BOT_TITLE}</b>\n\n` +
             "выйти из выбора?\n\n" +
             "отмеченные записи будут сняты",
           reply_markup: kb([
@@ -4400,6 +4403,7 @@ export class BotService {
     await this.sendMessage({
       chat_id: user.chatId,
       text:
+        `<b>${BOT_TITLE}</b>\n\n` +
         `${notice ? `${notice}\n\n` : ""}` +
         `в другие приложения\n\n` +
         `здесь можно сохранить файл\n` +
