@@ -1900,6 +1900,39 @@ export class BotService {
   private async handleAddInput(user: UserRecord, session: UiSession, text: string): Promise<void> {
     const draft = (await this.repo.getDraft(user.id)) ?? { payload: {} as DraftPayload, step: "amount" };
     const payload = draft.payload;
+    const incomingAttempt = parseEntryAttempt(text);
+    const hasDraftProgress = Boolean(payload.amountMinor || payload.categoryName || payload.subcategoryName || payload.description);
+
+    if (incomingAttempt.isBatch) {
+      for (const line of incomingAttempt.lines) {
+        const item = parseEntryAttempt(line);
+        await this.repo.enqueueIntake(user.id, "add-conflict-batch", line, item, item.missing);
+      }
+      await this.showHome(user, `новые записи: ${incomingAttempt.lines.length}`);
+      return;
+    }
+
+    if (incomingAttempt.missing.length === 0 && incomingAttempt.type && incomingAttempt.amountMinor && incomingAttempt.category) {
+      if (draft.step === "amount" && !hasDraftProgress) {
+        await this.repo.createEntry({
+          user,
+          type: incomingAttempt.type,
+          amountMinor: incomingAttempt.amountMinor,
+          categoryName: incomingAttempt.category,
+          subcategoryName: incomingAttempt.subcategory,
+          description: incomingAttempt.description,
+          source: "message"
+        });
+        await this.repo.deleteDraft(user.id);
+        await this.repo.clearSession(user.id);
+        await this.showHome(user, "запись добавлена");
+        return;
+      }
+
+      await this.repo.enqueueIntake(user.id, "add-conflict", text, incomingAttempt, incomingAttempt.missing);
+      await this.showHome(user, "новые записи: 1");
+      return;
+    }
 
     if (draft.step === "amount") {
       const parsed = parseEntryAttempt(`${payload.type === "income" ? "+" : "-"}${text}`);
