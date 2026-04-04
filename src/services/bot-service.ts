@@ -548,12 +548,13 @@ export class BotService {
         await this.showEntryCard(
           user,
           Number(params.id),
-          params.source === "report" ? "report" : params.source === "category" ? "category" : "operations",
-          Number(params.page ?? "0")
+          params.source === "report" ? "report" : params.source === "search" ? "search" : params.source === "category" ? "category" : "operations",
+          Number(params.page ?? "0"),
+          typeof params.query === "string" ? String(params.query) : undefined
         );
         return;
       case "entry:move":
-        await this.moveEntryCard(user, Number(params.id), String(params.source ?? "operations"), Number(params.page ?? "0"));
+        await this.moveEntryCard(user, Number(params.id), String(params.source ?? "operations"), Number(params.page ?? "0"), typeof params.query === "string" ? String(params.query) : undefined);
         return;
       case "entry:edit":
         await this.startEditEntry(
@@ -1543,7 +1544,7 @@ export class BotService {
   private async showEntryCard(user: UserRecord, entryId: number, source: "operations" | "search" | "report" | "category", page: number, query?: string): Promise<void> {
     const entry = await this.repo.getEntryById(user.id, entryId);
     if (!entry) {
-      await this.showOperations(user, 0);
+      await this.refreshEntryListByOrigin(user, source, page, query);
       return;
     }
     const backText = source === "search" ? BUTTONS.toResults : BUTTONS.back;
@@ -3369,12 +3370,13 @@ export class BotService {
     await this.showOperations(user, page);
   }
 
-  private async moveEntryCard(user: UserRecord, entryId: number, source: string, page: number): Promise<void> {
+  private async moveEntryCard(user: UserRecord, entryId: number, source: string, page: number, query?: string): Promise<void> {
     await this.showEntryCard(
       user,
       entryId,
       source === "report" ? "report" : source === "search" ? "search" : source === "category" ? "category" : "operations",
-      page
+      page,
+      query
     );
   }
 
@@ -3481,8 +3483,16 @@ export class BotService {
   }
 
   private async showBulkResult(user: UserRecord, origin: string, page: number, notice: string): Promise<void> {
+    await this.refreshEntryListByOrigin(user, origin, page);
+    await this.telegram.sendMessage({
+      chat_id: user.chatId,
+      text: notice
+    });
+  }
+
+  private async refreshEntryListByOrigin(user: UserRecord, origin: string, page: number, query?: string): Promise<void> {
+    const session = await this.repo.getSession(user.id);
     if (origin === "search") {
-      const session = await this.repo.getSession(user.id);
       if (session.context.searchPeriod) {
         await this.showSearchPeriodResults(
           user,
@@ -3493,30 +3503,29 @@ export class BotService {
         );
         return;
       }
-      await this.showSearchResults(user, String(session.context.query ?? ""), page);
+      await this.showSearchResults(user, query ?? String(session.context.query ?? ""), page);
       return;
     }
-
     if (origin === "report") {
-      const session = await this.repo.getSession(user.id);
       await this.showReportEntries(user, {
         page,
         type: typeof session.context.reportEntriesType === "string" ? (String(session.context.reportEntriesType) as EntryType) : undefined,
         categoryId: typeof session.context.reportEntriesCategoryId === "number" ? (session.context.reportEntriesCategoryId as number) : undefined,
         subcategoryId: typeof session.context.reportEntriesSubcategoryId === "number" ? (session.context.reportEntriesSubcategoryId as number) : undefined
       });
-      await this.telegram.sendMessage({
-        chat_id: user.chatId,
-        text: notice
-      });
       return;
     }
-
+    if (origin === "category") {
+      await this.showCategoryEntries(
+        user,
+        Number(session.context.categoryEntriesCategoryId),
+        typeof session.context.categoryEntriesSubcategoryId === "number" ? (session.context.categoryEntriesSubcategoryId as number) : undefined,
+        String(session.context.categoryEntriesType) as EntryType,
+        page
+      );
+      return;
+    }
     await this.showOperations(user, page);
-    await this.telegram.sendMessage({
-      chat_id: user.chatId,
-      text: notice
-    });
   }
 
   private reportEntriesBackAction(session: UiSession, input: { type?: EntryType; categoryId?: number; subcategoryId?: number }): string {
