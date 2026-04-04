@@ -210,7 +210,7 @@ export class BotService {
 
       if (session.mode === "settings" && session.context.awaiting === "currency") {
       await this.updateUserSetting(user.id, "currency_label", text.trim(), "currency_code", "CUSTOM");
-      await this.showCurrencySettings(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), "значение сохранено");
+      await this.showCurrencySettings(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), "валюта изменена");
       return;
       }
 
@@ -221,7 +221,7 @@ export class BotService {
         return;
       }
       await this.updateUserSetting(user.id, "timezone_name", timezone, "timezone_source", "city");
-      await this.showTimeSettings(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), "значение сохранено");
+      await this.showTimeSettings(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), "время изменено");
       return;
       }
 
@@ -380,7 +380,7 @@ export class BotService {
       if (session.mode === "settings" && session.context.awaiting === "timezone") {
         const timezone = resolveTimezoneFromLocation(location.latitude, location.longitude);
         await this.updateUserSetting(user.id, "timezone_name", timezone, "timezone_source", "location");
-        await this.showTimeSettings(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), "значение сохранено");
+        await this.showTimeSettings(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), "время изменено");
         return;
       }
       await this.showHome(user);
@@ -1078,8 +1078,29 @@ export class BotService {
           String(params.source ?? "list")
         );
         return;
+      case "category:delete-confirm":
+        await this.applyCategoryDelete(
+          user,
+          Number(params.id),
+          String(params.type) as EntryType,
+          Number(params.page ?? "0"),
+          Number(params.subpage ?? "0"),
+          String(params.source ?? "list")
+        );
+        return;
       case "subcategory:delete":
         await this.handleSubcategoryDelete(
+          user,
+          Number(params.id),
+          Number(params.categoryId),
+          String(params.type) as EntryType,
+          Number(params.page ?? "0"),
+          Number(params.subpage ?? "0"),
+          String(params.source ?? "list")
+        );
+        return;
+      case "subcategory:delete-confirm":
+        await this.applySubcategoryDelete(
           user,
           Number(params.id),
           Number(params.categoryId),
@@ -1163,7 +1184,7 @@ export class BotService {
         return;
       case "settings:set-currency":
         await this.updateUserSetting(user.id, "currency_label", String(params.label), "currency_code", String(params.code));
-        await this.showCurrencySettings(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), "значение сохранено");
+        await this.showCurrencySettings(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), "валюта изменена");
         return;
       case "settings:currency-custom":
         await this.repo.saveSession(user.id, { mode: "settings", stack: ["settings"], context: { awaiting: "currency" } });
@@ -1194,11 +1215,11 @@ export class BotService {
           return;
         }
         await this.updateUserSetting(user.id, "subcategories_enabled", 1);
-        await this.showSubcategoriesSettings(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), "значение сохранено");
+        await this.showSubcategoriesSettings(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), "подкатегории включены");
         return;
       case "settings:set-subcategories-confirm":
         await this.updateUserSetting(user.id, "subcategories_enabled", 0);
-        await this.showSubcategoriesSettings(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), "значение сохранено");
+        await this.showSubcategoriesSettings(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), "подкатегории выключены");
         return;
       case "settings:quick-access":
         await this.showQuickAccessRoot(user);
@@ -2139,7 +2160,7 @@ export class BotService {
     await this.showQueue(user);
   }
 
-  private async showOperations(user: UserRecord, page: number, selectMode = false): Promise<void> {
+  private async showOperations(user: UserRecord, page: number, selectMode = false, notice?: string): Promise<void> {
     const items = await this.repo.getEntryList(user.id, page);
     if (items.length === 0) {
       await this.sendMessage({
@@ -2168,7 +2189,7 @@ export class BotService {
 
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `<b>${BOT_TITLE}</b>\n\nоперации\n\n${lines}`,
+      text: `<b>${BOT_TITLE}</b>\n\n${notice ? `${notice}\n\n` : ""}операции\n\n${lines}`,
       reply_markup: kb([
         ...numberRows,
         [
@@ -2496,7 +2517,7 @@ export class BotService {
     await this.showSearchPeriodResults(user, period, 0, range.from, range.to);
   }
 
-  private async showSearchResults(user: UserRecord, query: string, page: number, selectMode = false): Promise<void> {
+  private async showSearchResults(user: UserRecord, query: string, page: number, selectMode = false, notice?: string): Promise<void> {
     const currentSession = await this.repo.getSession(user.id);
     const data = await this.repo.searchEntries(user.id, query, page);
     await this.repo.saveSession(user.id, {
@@ -2537,6 +2558,7 @@ export class BotService {
       text:
         `<b>${BOT_TITLE}</b>\n\n` +
         `поиск записей\n\n` +
+        `${notice ? `${notice}\n\n` : ""}` +
         `запрос:\n${query}\n\n` +
         `найдено: ${data.total}\n\n` +
         `${lines}`,
@@ -2563,7 +2585,8 @@ export class BotService {
     page: number,
     from: string | null,
     to: string | null,
-    selectMode = false
+    selectMode = false,
+    notice?: string
   ): Promise<void> {
     const title = periodToLabel(periodLabel);
     const currentSession = await this.repo.getSession(user.id);
@@ -2604,7 +2627,7 @@ export class BotService {
 
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `<b>${BOT_TITLE}</b>\n\nзаписи за ${title}\n\n${lines}`,
+      text: `<b>${BOT_TITLE}</b>\n\nзаписи за ${title}\n\n${notice ? `${notice}\n\n` : ""}${lines}`,
       reply_markup: kb([
         ...chunkButtons(numberButtons, 3),
         [{ text: BUTTONS.newSearch, action: "search:open" }],
@@ -2841,7 +2864,8 @@ export class BotService {
   private async showReportEntries(
     user: UserRecord,
     input: { page: number; type?: EntryType; categoryId?: number; subcategoryId?: number },
-    selectMode = false
+    selectMode = false,
+    notice?: string
   ): Promise<void> {
     const session = await this.repo.getSession(user.id);
     const from = (session.context.reportFrom as string | null | undefined) ?? null;
@@ -2872,7 +2896,11 @@ export class BotService {
     if (data.total === 0) {
       await this.sendMessage({
         chat_id: user.chatId,
-        text: "пока записей нет\nможно выбрать другой период",
+        text:
+          `<b>${BOT_TITLE}</b>\n\n` +
+          `${reportEntriesTitle(input, String(session.context.reportTitle ?? ""))}\n\n` +
+          `пока записей нет\n\n` +
+          `можно выбрать другой период`,
         reply_markup: kb([
           [{ text: BUTTONS.anotherPeriod, action: "reports:open" }],
           [{ text: BUTTONS.back, action: "reports:open" }, { text: BUTTONS.main, action: "nav:home" }]
@@ -2895,6 +2923,7 @@ export class BotService {
       text:
         `<b>${BOT_TITLE}</b>\n\n` +
         `${reportEntriesTitle(input, title)}\n\n` +
+        `${notice ? `${notice}\n\n` : ""}` +
         `${lines}`,
       reply_markup: kb([
         ...chunkButtons(numberButtons, 3),
@@ -3072,9 +3101,10 @@ export class BotService {
       text:
         `<b>${BOT_TITLE}</b>\n\n` +
         `${category.name}\n\n` +
-        `${notice ? `${notice}\n\n` : ""}` +
         `тип: ${type === "expense" ? "расход" : "доход"}\n` +
-        `записей: ${usageCount}\n\n` +
+        `записей: ${usageCount}` +
+        `${category.hiddenAt ? `\n\nэта категория сейчас скрыта` : ""}\n\n` +
+        `${notice ? `${notice}\n\n` : ""}` +
         `${visibleSubcategories.length ? `подкатегории:\n\n${visibleSubcategories.map((item, index) => `${index + 1}. ${item.name}\nзаписей: ${item.usageCountCache}`).join("\n\n")}` : "подкатегорий пока нет"}`,
       reply_markup: kb([
         ...(visibleSubcategories.length
@@ -3141,7 +3171,13 @@ export class BotService {
     const usageCount = await this.repo.getSubcategoryUsageCount(subcategoryId);
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `${notice ? `${notice}\n\n` : ""}${subcategory.name}\n\nзаписей: ${usageCount}`,
+      text:
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `${subcategory.name}\n\n` +
+        `категория: ${(await this.repo.getCategory(user.id, categoryId))?.name ?? ""}\n` +
+        `записей: ${usageCount}` +
+        `${subcategory.hiddenAt ? `\n\nэта подкатегория сейчас скрыта` : ""}` +
+        `${notice ? `\n\n${notice}` : ""}`,
       reply_markup: kb([
         [{ text: BUTTONS.edit, action: "subcategory:edit", payload: { id: subcategory.id, categoryId, page, subpage, type, source } }],
         [{ text: subcategory.hiddenAt ? BUTTONS.restore : BUTTONS.hide, action: subcategory.hiddenAt ? "subcategory:restore" : "subcategory:hide", payload: { id: subcategory.id, categoryId, page, subpage, type, source } }],
@@ -3162,7 +3198,11 @@ export class BotService {
     if (usageCount > 0) {
       await this.sendMessage({
         chat_id: user.chatId,
-        text: "Удалить категорию нельзя, пока в ней есть записи.\n\nМожно скрыть её или потом перенести все записи.",
+        text:
+          `<b>${BOT_TITLE}</b>\n\n` +
+          `удалить категорию нельзя\n\n` +
+          `в ней уже есть записи:\n${usageCount}\n\n` +
+          `сначала скрой категорию\nили перенеси записи в другую`,
         reply_markup: kb([
           [{ text: BUTTONS.hide, action: "category:hide", payload: { id: categoryId, page, subpage, type, source } }],
           [{ text: BUTTONS.transferAllEntries, action: "category:transfer-all", payload: { id: categoryId, page, subpage, type, source } }],
@@ -3171,6 +3211,21 @@ export class BotService {
       });
       return;
     }
+    await this.sendMessage({
+      chat_id: user.chatId,
+      text:
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `удалить категорию?\n\n` +
+        `в ней нет записей\n\n` +
+        `вернуть её потом не получится`,
+      reply_markup: kb([
+        [{ text: BUTTONS.yesDelete, action: "category:delete-confirm", payload: { id: categoryId, page, subpage, type, source } }],
+        [{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, page, subpage, type, source } }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async applyCategoryDelete(user: UserRecord, categoryId: number, type: EntryType, page: number, subpage = 0, source = "list"): Promise<void> {
     await this.repo.deleteCategory(user.id, categoryId);
     if (source === "hidden") {
       await this.showHiddenCategoryList(user, type, page, "категория удалена");
@@ -3184,7 +3239,11 @@ export class BotService {
     if (usageCount > 0) {
       await this.sendMessage({
         chat_id: user.chatId,
-        text: "Удалить подкатегорию нельзя, пока в ней есть записи.\n\nМожно скрыть её или потом перенести все записи.",
+        text:
+          `<b>${BOT_TITLE}</b>\n\n` +
+          `удалить подкатегорию нельзя\n\n` +
+          `в ней уже есть записи:\n${usageCount}\n\n` +
+          `сначала скрой подкатегорию\nили перенеси записи в другую`,
         reply_markup: kb([
           [{ text: BUTTONS.hide, action: "subcategory:hide", payload: { id: subcategoryId, categoryId, page, subpage, type, source } }],
           [{ text: BUTTONS.transferAllEntries, action: "subcategory:transfer-all", payload: { id: subcategoryId, categoryId, page, subpage, type, source } }],
@@ -3193,6 +3252,21 @@ export class BotService {
       });
       return;
     }
+    await this.sendMessage({
+      chat_id: user.chatId,
+      text:
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `удалить подкатегорию?\n\n` +
+        `в ней нет записей\n\n` +
+        `вернуть её потом не получится`,
+      reply_markup: kb([
+        [{ text: BUTTONS.yesDelete, action: "subcategory:delete-confirm", payload: { id: subcategoryId, categoryId, page, subpage, type, source } }],
+        [{ text: BUTTONS.back, action: "subcategory:view", payload: { id: subcategoryId, categoryId, page, subpage, type, source } }, { text: BUTTONS.main, action: "nav:home" }]
+      ])
+    });
+  }
+
+  private async applySubcategoryDelete(user: UserRecord, subcategoryId: number, categoryId: number, type: EntryType, page: number, subpage = 0, source = "list"): Promise<void> {
     await this.repo.deleteSubcategory(user.id, subcategoryId);
     if (source === "hidden") {
       await this.showHiddenSubcategoryList(user, categoryId, type, page, subpage, "подкатегория удалена");
@@ -3427,8 +3501,11 @@ export class BotService {
     type: EntryType,
     page: number,
     selectMode = false,
-    source = "list"
+    source = "list",
+    notice?: string
   ): Promise<void> {
+    const category = await this.repo.getCategory(user.id, categoryId);
+    const subcategory = typeof subcategoryId === "number" ? await this.repo.getSubcategory(user.id, subcategoryId) : null;
     const data = await this.repo.getEntriesByDateRange({
       userId: user.id,
       page,
@@ -3440,7 +3517,12 @@ export class BotService {
     if (data.total === 0) {
       await this.sendMessage({
         chat_id: user.chatId,
-        text: "пока записей нет\nможно вернуться назад",
+        text:
+          `<b>${BOT_TITLE}</b>\n\n` +
+          `записи\n` +
+          `${subcategory ? `${category?.name ?? ""} → ${subcategory.name}` : category?.name ?? ""}\n\n` +
+          `пока записей нет\n\n` +
+          `можно вернуться назад`,
         reply_markup: kb([[{ text: BUTTONS.back, action: subcategoryId ? "subcategory:view" : "category:view", payload: subcategoryId ? { id: subcategoryId, categoryId, type, page: 0, source } : { id: categoryId, type, page: 0, source } }, { text: BUTTONS.main, action: "nav:home" }]])
       });
       return;
@@ -3471,7 +3553,12 @@ export class BotService {
 
     await this.sendMessage({
       chat_id: user.chatId,
-      text: `все записи\n\n${lines}`,
+      text:
+        `<b>${BOT_TITLE}</b>\n\n` +
+        `записи\n` +
+        `${subcategory ? `${category?.name ?? ""} → ${subcategory.name}` : category?.name ?? ""}\n\n` +
+        `${notice ? `${notice}\n\n` : ""}` +
+        `${lines}`,
       reply_markup: kb([
         numberButtons,
         [
@@ -3715,7 +3802,7 @@ export class BotService {
   private async applyQuickAccessMode(user: UserRecord, section: string, mode: string): Promise<void> {
     if (section.startsWith("subcategory:")) {
       await this.updateUserSetting(user.id, "quick_access_mode_subcategories", mode);
-      await this.showQuickAccessSubcategorySection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), Number(section.split(":")[1]), "значение сохранено");
+      await this.showQuickAccessSubcategorySection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), Number(section.split(":")[1]));
       return;
     }
     const field =
@@ -3725,7 +3812,7 @@ export class BotService {
           ? "quick_access_mode_income"
           : "quick_access_mode_subcategories";
     await this.updateUserSetting(user.id, field, mode);
-    await this.showQuickAccessSection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), section, "значение сохранено");
+    await this.showQuickAccessSection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), section);
   }
 
   private async getQuickAccessSlots(user: UserRecord, section: string): Promise<Array<CategoryRecord | SubcategoryRecord>> {
@@ -3831,7 +3918,7 @@ export class BotService {
         entityId
       );
       await this.repo.updateSubcategoryQuickAccessSlots(user.id, categoryId, next);
-      await this.showQuickAccessSubcategorySection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), categoryId, "значение сохранено");
+      await this.showQuickAccessSubcategorySection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), categoryId);
       return;
     }
 
@@ -3842,7 +3929,7 @@ export class BotService {
       entityId
     );
     await this.repo.updateCategoryQuickAccessSlots(user.id, section as EntryType, next);
-    await this.showQuickAccessSlotEditor(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), section, slot, page, "значение сохранено");
+    await this.showQuickAccessSlotEditor(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), section, slot, page);
   }
 
   private async clearQuickAccessSlot(user: UserRecord, section: string, slot: number): Promise<void> {
@@ -3851,14 +3938,14 @@ export class BotService {
       const current = await this.repo.listQuickAccessSubcategories(user.id, categoryId);
       const next = current.map((item) => item.id).filter((_, index) => index !== slot - 1);
       await this.repo.updateSubcategoryQuickAccessSlots(user.id, categoryId, next);
-      await this.showQuickAccessSubcategorySection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), categoryId, "значение сохранено");
+      await this.showQuickAccessSubcategorySection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), categoryId);
       return;
     }
 
     const current = await this.repo.listQuickAccessCategories(user.id, section as EntryType);
     const next = current.map((item) => item.id).filter((_, index) => index !== slot - 1);
     await this.repo.updateCategoryQuickAccessSlots(user.id, section as EntryType, next);
-    await this.showQuickAccessSection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), section, "значение сохранено");
+    await this.showQuickAccessSection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), section);
   }
 
   private async showQuickAccessResetConfirm(user: UserRecord, section: string): Promise<void> {
@@ -3877,12 +3964,12 @@ export class BotService {
   private async clearAllQuickAccess(user: UserRecord, section: string): Promise<void> {
     if (section.startsWith("subcategory:")) {
       await this.repo.updateSubcategoryQuickAccessSlots(user.id, Number(section.split(":")[1]), []);
-      await this.showQuickAccessSubcategorySection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), Number(section.split(":")[1]), "значение сохранено");
+      await this.showQuickAccessSubcategorySection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), Number(section.split(":")[1]));
       return;
     }
     if (section === "expense" || section === "income") {
       await this.repo.updateCategoryQuickAccessSlots(user.id, section, []);
-      await this.showQuickAccessSection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), section, "значение сохранено");
+      await this.showQuickAccessSection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), section);
       return;
     }
   }
@@ -4042,7 +4129,7 @@ export class BotService {
           ? "sort_mode_income"
           : "sort_mode_subcategories";
     await this.updateUserSetting(user.id, field, mode);
-    await this.showSortingSection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), section, "значение сохранено");
+    await this.showSortingSection(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), section);
   }
 
   private async showSubcategorySortingCategoryChooser(user: UserRecord, type: EntryType, page: number): Promise<void> {
@@ -4117,7 +4204,7 @@ export class BotService {
 
   private async applyCategorySortingMode(user: UserRecord, categoryId: number, type: EntryType, page: number, mode: string): Promise<void> {
     await this.repo.updateCategorySortModeOverride(user.id, categoryId, mode === "reset" ? null : mode);
-    await this.showSubcategorySortingCategory(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), categoryId, type, page, "значение сохранено");
+    await this.showSubcategorySortingCategory(await this.repo.getOrCreateUser(user.telegramUserId, user.chatId), categoryId, type, page);
   }
 
   private userNow(timezone: string): { date: string; time: string; sort: string } {
@@ -4872,14 +4959,10 @@ export class BotService {
   }
 
   private async showBulkResult(user: UserRecord, origin: string, page: number, notice: string): Promise<void> {
-    await this.refreshEntryListByOrigin(user, origin, page);
-    await this.sendMessage({
-      chat_id: user.chatId,
-      text: notice
-    });
+    await this.refreshEntryListByOrigin(user, origin, page, undefined, notice);
   }
 
-  private async refreshEntryListByOrigin(user: UserRecord, origin: string, page: number, query?: string): Promise<void> {
+  private async refreshEntryListByOrigin(user: UserRecord, origin: string, page: number, query?: string, notice?: string): Promise<void> {
     const session = await this.repo.getSession(user.id);
     if (origin === "search") {
       if (session.context.searchPeriod) {
@@ -4888,11 +4971,13 @@ export class BotService {
           String(session.context.searchPeriod),
           page,
           (session.context.searchFrom as string | null | undefined) ?? null,
-          (session.context.searchTo as string | null | undefined) ?? null
+          (session.context.searchTo as string | null | undefined) ?? null,
+          false,
+          notice
         );
         return;
       }
-      await this.showSearchResults(user, query ?? String(session.context.query ?? ""), page);
+      await this.showSearchResults(user, query ?? String(session.context.query ?? ""), page, false, notice);
       return;
     }
     if (origin === "report") {
@@ -4901,7 +4986,7 @@ export class BotService {
         type: typeof session.context.reportEntriesType === "string" ? (String(session.context.reportEntriesType) as EntryType) : undefined,
         categoryId: typeof session.context.reportEntriesCategoryId === "number" ? (session.context.reportEntriesCategoryId as number) : undefined,
         subcategoryId: typeof session.context.reportEntriesSubcategoryId === "number" ? (session.context.reportEntriesSubcategoryId as number) : undefined
-      });
+      }, false, notice);
       return;
     }
     if (origin === "category") {
@@ -4912,11 +4997,12 @@ export class BotService {
         String(session.context.categoryEntriesType) as EntryType,
         page,
         false,
-        String(session.context.categoryEntriesSource ?? "list")
+        String(session.context.categoryEntriesSource ?? "list"),
+        notice
       );
       return;
     }
-    await this.showOperations(user, page);
+    await this.showOperations(user, page, false, notice);
   }
 
   private reportEntriesBackAction(session: UiSession, input: { type?: EntryType; categoryId?: number; subcategoryId?: number }): string {
