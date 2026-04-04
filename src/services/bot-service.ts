@@ -1103,7 +1103,7 @@ export class BotService {
           Number(params.page ?? "0"),
           Number(params.subpage ?? "0"),
           "list",
-          "категория возвращена"
+          undefined
         );
         return;
       case "categories:hidden":
@@ -1231,7 +1231,7 @@ export class BotService {
           Number(params.page ?? "0"),
           Number(params.subpage ?? "0"),
           params.source === "hidden" ? "list" : String(params.source ?? "list"),
-          "подкатегория возвращена"
+          undefined
         );
         return;
       case "category:delete":
@@ -1555,7 +1555,7 @@ export class BotService {
           text:
             `<b>${BOT_TITLE}</b>\n\n` +
             `исправить импорт\n\n` +
-            `пришли исправленную строку сообщением`,
+            `пришли строку сообщением ещё раз`,
           reply_markup: kb([[{ text: BUTTONS.cancel, action: "data:import-fix-open", payload: { importId: params.importId } }, { text: BUTTONS.main, action: "nav:home" }]])
         });
         return;
@@ -2811,7 +2811,7 @@ export class BotService {
       source === "search" ? "search" : source === "report" ? "report" : source === "category" ? "category" : "operations",
       Number(session.context.page ?? 0),
       typeof session.context.query === "string" ? String(session.context.query) : undefined,
-      "изменения сохранены"
+      "запись обновлена"
     );
   }
 
@@ -3827,14 +3827,14 @@ export class BotService {
         text:
           `<b>${BOT_TITLE}</b>\n\n` +
           "изменить категорию\n\n" +
-          "такая категория уже есть\n\n" +
+          "не получилось создать категорию\n\n" +
           "пришли другое название сообщением",
         reply_markup: kb([[{ text: BUTTONS.back, action: "category:view", payload: { id: categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]])
       });
       return;
     }
     await this.repo.renameCategory(user.id, categoryId, text);
-    await this.showCategoryCard(user, categoryId, type, page, subpage, source, "изменения сохранены");
+    await this.showCategoryCard(user, categoryId, type, page, subpage, source);
   }
 
   private async handleSubcategoryRename(user: UserRecord, subcategoryId: number, categoryId: number, type: EntryType, page: number, text: string, subpage = 0, source = "list"): Promise<void> {
@@ -3860,14 +3860,14 @@ export class BotService {
         text:
           `<b>${BOT_TITLE}</b>\n\n` +
           "изменить подкатегорию\n\n" +
-          "такая подкатегория уже есть\n\n" +
+          "не получилось создать подкатегорию\n\n" +
           "пришли другое название сообщением",
         reply_markup: kb([[{ text: BUTTONS.back, action: "subcategory:view", payload: { id: subcategoryId, categoryId, type, page, subpage, source } }, { text: BUTTONS.main, action: "nav:home" }]])
       });
       return;
     }
     await this.repo.renameSubcategory(user.id, subcategoryId, text);
-    await this.showSubcategoryCard(user, subcategoryId, categoryId, type, page, subpage, source, "изменения сохранены");
+    await this.showSubcategoryCard(user, subcategoryId, categoryId, type, page, subpage, source);
   }
 
   private async startCategoryTransferAll(
