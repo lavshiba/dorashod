@@ -484,11 +484,10 @@ export class BotService {
         }
 
         const importId = await this.repo.createImport(user.id, "full-backup", "preview", snapshot.raw);
-        await this.repo.saveSession(user.id, {
+        await this.saveSessionKeepingScreen(user.id, {
           mode: "data",
           stack: ["data"],
           context: {
-            ...(typeof session.context.screenMessageId === "number" ? { screenMessageId: session.context.screenMessageId } : {}),
             importId,
             awaitingUploadType: undefined
           }
@@ -503,11 +502,10 @@ export class BotService {
       entries: preview.entries,
       errors: preview.errors
     });
-    await this.repo.saveSession(user.id, {
+    await this.saveSessionKeepingScreen(user.id, {
       mode: "data",
       stack: ["data"],
       context: {
-        ...(typeof session.context.screenMessageId === "number" ? { screenMessageId: session.context.screenMessageId } : {}),
         importId,
         awaitingUploadType: undefined
       }
@@ -1465,22 +1463,20 @@ export class BotService {
         await this.showDataOtherApps(user);
         return;
       case "data:import-full-open":
-        await this.repo.saveSession(user.id, {
+        await this.saveSessionKeepingScreen(user.id, {
           mode: "data",
           stack: ["data"],
           context: {
-            ...(typeof session.context.screenMessageId === "number" ? { screenMessageId: session.context.screenMessageId } : {}),
             awaitingUploadType: "full"
           }
         });
         await this.showFullImportAwaiting(user);
         return;
       case "data:import-entries-open":
-        await this.repo.saveSession(user.id, {
+        await this.saveSessionKeepingScreen(user.id, {
           mode: "data",
           stack: ["data"],
           context: {
-            ...(typeof session.context.screenMessageId === "number" ? { screenMessageId: session.context.screenMessageId } : {}),
             awaitingUploadType: "entries"
           }
         });
@@ -1531,11 +1527,10 @@ export class BotService {
         await this.showImportFixItem(user, Number(params.importId), Number(params.index ?? "0"));
         return;
       case "data:import-fix-edit":
-        await this.repo.saveSession(user.id, {
+        await this.saveSessionKeepingScreen(user.id, {
           mode: "import",
           stack: ["data"],
           context: {
-            ...(typeof session.context.screenMessageId === "number" ? { screenMessageId: session.context.screenMessageId } : {}),
             importId: Number(params.importId),
             fixIndex: Number(params.index ?? "0"),
             awaiting: "fix-line"
@@ -1904,12 +1899,7 @@ export class BotService {
   }
 
   private async showHome(user: UserRecord, notice?: string): Promise<void> {
-    const existingSession = await this.repo.getSession(user.id);
-    await this.repo.saveSession(user.id, {
-      mode: "idle",
-      stack: [],
-      context: typeof existingSession.context.screenMessageId === "number" ? { screenMessageId: existingSession.context.screenMessageId } : {}
-    });
+    await this.clearSessionKeepingScreen(user.id);
 
     const nowForUser = this.userNow(user.timezoneName);
     const stats = await this.repo.getHomeStats(user.id, nowForUser.date, nowForUser.date.slice(0, 7));
@@ -2164,7 +2154,7 @@ export class BotService {
     }
 
     await this.repo.saveDraft(user.id, draft.payload, "edit-menu");
-    await this.repo.saveSession(user.id, { ...session, context: { ...session.context, awaitingField: undefined } });
+    await this.saveSessionKeepingScreen(user.id, { ...session, context: { ...session.context, awaitingField: undefined } });
     await this.showEditScreen(user);
   }
 
