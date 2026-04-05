@@ -29,6 +29,7 @@ class FakeTelegram {
   edits: Array<Record<string, unknown>> = [];
   sends: Array<Record<string, unknown>> = [];
   deletes: Array<{ chatId: string; messageId: number }> = [];
+  editError: Error | null = null;
 
   async sendMessage(payload: Record<string, unknown>) {
     this.sends.push(payload);
@@ -36,6 +37,9 @@ class FakeTelegram {
   }
 
   async editMessageText(payload: Record<string, unknown>) {
+    if (this.editError) {
+      throw this.editError;
+    }
     this.edits.push(payload);
   }
 
@@ -89,5 +93,31 @@ describe("single-screen helpers", () => {
     expect(repo.session.mode).toBe("idle");
     expect(repo.session.stack).toEqual([]);
     expect(repo.session.context).toEqual({ screenMessageId: 99 });
+  });
+
+  it("falls back to send + stale screen cleanup when inline edit fails", async () => {
+    const repo = new FakeRepo();
+    repo.session.context.screenMessageId = 55;
+    const telegram = new FakeTelegram();
+    telegram.editError = new Error("Telegram API editMessageText returned ok=false: Bad Request: message to edit not found");
+    const service = new BotService(repo as never, telegram as never) as unknown as {
+      currentUserId: number | null;
+      sendMessage: (payload: Record<string, unknown>) => Promise<void>;
+    };
+
+    service.currentUserId = 1;
+
+    await service.sendMessage({
+      chat_id: "1",
+      text: "<b>финансы</b>\n\nоперации",
+      reply_markup: {
+        inline_keyboard: [[{ text: "главная", callback_data: "a=nav%3Ahome" }]]
+      }
+    });
+
+    expect(telegram.edits).toHaveLength(0);
+    expect(telegram.sends).toHaveLength(1);
+    expect(telegram.deletes).toContainEqual({ chatId: "1", messageId: 55 });
+    expect(repo.session.context.screenMessageId).toBe(777);
   });
 });

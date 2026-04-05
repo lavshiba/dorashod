@@ -217,12 +217,6 @@ export class BotService {
       return;
       }
 
-      if (session.mode === "search" && session.context.awaiting === "query") {
-      await this.saveSessionKeepingScreen(user.id, { ...session, context: { ...session.context, query: text, awaiting: undefined } });
-      await this.showSearchResults(user, text, 0);
-      return;
-    }
-
     if (session.mode === "categories" && session.context.awaiting === "new-category") {
       await this.handleCategoryCreate(user, String(session.context.type) as EntryType, text);
       return;
@@ -352,6 +346,7 @@ export class BotService {
       }
 
       const parsed = parseEntryAttempt(text);
+      const looksLikeSignedEntry = /^[-+]\d/.test(text.trim());
       if (parsed.isBatch) {
       for (const line of parsed.lines) {
         const item = parseEntryAttempt(line);
@@ -377,7 +372,7 @@ export class BotService {
       return;
       }
 
-      if (session.mode === "search") {
+      if (session.mode === "search" && looksLikeSignedEntry) {
       await this.sendMessage({
         chat_id: user.chatId,
         text:
@@ -394,6 +389,12 @@ export class BotService {
       await this.saveSessionKeepingScreen(user.id, { ...session, context: { ...session.context, pendingText: text } });
       return;
       }
+
+      if (session.mode === "search" && session.context.awaiting === "query") {
+      await this.saveSessionKeepingScreen(user.id, { ...session, context: { ...session.context, query: text, awaiting: undefined } });
+      await this.showSearchResults(user, text, 0);
+      return;
+    }
 
       if (parsed.missing.length === 0 && parsed.type && parsed.amountMinor && parsed.category) {
       await this.repo.createEntry({
