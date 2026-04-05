@@ -39,6 +39,24 @@ Telegram и health:
 
 - `POST_DEPLOY_BASE_URL`
 
+## Что Блокирует Полный GitHub Actions Cycle
+
+Для полного прохождения workflow `deploy` нужны все четыре GitHub значения:
+
+- secret `CLOUDFLARE_API_TOKEN`
+- secret `CLOUDFLARE_ACCOUNT_ID`
+- secret `TELEGRAM_BOT_TOKEN`
+- secret `TELEGRAM_WEBHOOK_SECRET`
+- secret `HEALTH_TOKEN`
+- variable `POST_DEPLOY_BASE_URL`
+
+Если чего-то из этого нет, workflow обрывается по месту:
+
+- без `CLOUDFLARE_API_TOKEN` или `CLOUDFLARE_ACCOUNT_ID` не проходят remote migrations и `Deploy Worker`;
+- без `TELEGRAM_BOT_TOKEN` или `TELEGRAM_WEBHOOK_SECRET` падает `Configure Telegram webhook`;
+- без `POST_DEPLOY_BASE_URL` не могут завершиться `Configure Telegram webhook` и `Run post-deploy smoke`;
+- без `HEALTH_TOKEN` не завершается полный `Run post-deploy smoke` для `/diagnostics`.
+
 ## Что Делается Вручную
 
 Если deploy workflow не используется, оператор выполняет:

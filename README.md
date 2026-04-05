@@ -83,6 +83,7 @@ GitHub Actions workflow `deploy` делает шаги 1-6 автоматиче�
 
 Подробная операционная инструкция лежит в [`docs/operations.md`](docs/operations.md).
 Там отдельно разделено, что выполняется автоматически через GitHub Actions, а что остаётся ручным шагом.
+Текущий verification snapshot зафиксирован в [`docs/verification-report.md`](docs/verification-report.md).
 
 ## Как обновлять
 
