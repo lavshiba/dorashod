@@ -31,10 +31,24 @@
   Кнопки, заголовок и onboarding-тексты, которые используются кодом.
 - `src/ui/keyboard.ts`
   Сборка inline keyboard.
-- `src/utils/*`
-  Парсинг, даты, callback encoding, CSV serialization и вспомогательные функции.
+- `src/utils/callback.ts`
+  Кодирование и декодирование callback payload.
+- `src/utils/csv.ts`
+  Сериализация CSV для экспорта записей.
+- `src/utils/dates.ts`
+  Парсинг и вычисление дат и периодов.
+- `src/utils/entry-parser.ts`
+  Разбор пользовательского ввода записи.
+- `src/utils/money.ts`
+  Форматирование и работа с суммами.
+- `src/utils/normalize.ts`
+  Нормализация строк и безопасный вывод.
+- `src/utils/telegram-text.ts`
+  Форматирование экранного текста под Telegram.
+- `src/utils/timezone.ts`
+  Работа с timezone через город и геопозицию.
 
-В проекте нет слоёв `src/bot` или `src/infra`; старые упоминания таких каталогов считаются устаревшими.
+В проекте нет каталогов `src/bot` и `src/infra`. Architecture должна описывать только файлы и директории, которые реально существуют в `src`.
 
 ## Данные В D1
 

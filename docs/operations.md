@@ -13,6 +13,15 @@
 
 Это работает только если в GitHub заданы нужные secrets и vars.
 
+Автоматически через workflow делается только:
+
+- установка зависимостей;
+- `lint`, `build`, `test`;
+- remote migrations;
+- `wrangler deploy`;
+- настройка webhook через `npm run telegram:webhook:set`;
+- post-deploy smoke.
+
 ## Что Требует Secrets
 
 Cloudflare:
@@ -41,6 +50,13 @@ Telegram и health:
 5. `npm run telegram:webhook:set`
 6. `npm run postdeploy:smoke`
 
+Вручную остаются:
+
+- `wrangler login` при первом входе в окружение;
+- создание D1 и заполнение `database_id` в `wrangler.jsonc`;
+- задание secrets в Cloudflare;
+- ручной Telegram check после deploy.
+
 ## Первый Запуск
 
 1. `wrangler login`
@@ -55,6 +71,16 @@ Telegram и health:
 7. `npm run deploy`
 8. `npm run telegram:webhook:set`
 9. `npm run postdeploy:smoke`
+
+Если нужно поставить webhook вручную без npm-скрипта, корректный пример такой:
+
+```bash
+curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"url\": \"${POST_DEPLOY_BASE_URL%/}/webhook/telegram/${TELEGRAM_WEBHOOK_SECRET}\"
+  }"
+```
 
 ## Webhook
 
@@ -77,6 +103,14 @@ Worker route:
 - вызывает `setWebhook`;
 - затем проверяет `getWebhookInfo`;
 - падает, если Telegram вернул другой URL.
+
+Корректный webhook URL для этого проекта всегда выглядит так:
+
+- `https://<worker-domain>/webhook/telegram/<TELEGRAM_WEBHOOK_SECRET>`
+
+Пример:
+
+- `https://finance-bot.shiaboi.workers.dev/webhook/telegram/<secret>`
 
 ## Health И Diagnostics
 
@@ -110,6 +144,8 @@ Remote:
 - `npm run d1:migrate:remote`
 
 Перед production deploy миграции должны быть применены отдельно и успешно.
+
+`npm run d1:migrate:remote` реально использует `wrangler d1 migrations apply DB --remote`, то есть требует рабочую Cloudflare авторизацию или `CLOUDFLARE_API_TOKEN`.
 
 ## Post-Deploy Checks
 

@@ -67,6 +67,7 @@ Repo-local source of truth по пользовательским текстам 
 GitHub Actions workflow `deploy` делает шаги 1-6 автоматически, если заданы нужные secrets и vars.
 
 Подробная операционная инструкция лежит в [`docs/operations.md`](docs/operations.md).
+Там отдельно разделено, что выполняется автоматически через GitHub Actions, а что остаётся ручным шагом.
 
 ## Как обновлять
 
