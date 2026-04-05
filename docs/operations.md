@@ -91,9 +91,9 @@ Telegram и health:
 8. `npm run telegram:webhook:set`
 9. `npm run postdeploy:smoke`
 
-Если нужно поставить webhook вручную без npm-скрипта, использовать нужно только этот production pattern:
+Если нужно поставить webhook вручную без npm-скрипта, использовать нужно только этот production webhook URL pattern:
 
-- `https://<worker-domain>/webhook/telegram/<TELEGRAM_WEBHOOK_SECRET>`
+- `https://finance-bot.shiaboi.workers.dev/webhook/telegram/<TELEGRAM_WEBHOOK_SECRET>`
 
 Ручной пример установки:
 
@@ -129,7 +129,7 @@ Worker route:
 
 Корректный production webhook URL для этого проекта:
 
-- `https://finance-bot.shiaboi.workers.dev/webhook/telegram/<secret>`
+- `https://finance-bot.shiaboi.workers.dev/webhook/telegram/<TELEGRAM_WEBHOOK_SECRET>`
 
 ## Health И Diagnostics
 

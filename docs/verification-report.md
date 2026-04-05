@@ -9,7 +9,7 @@
 - `npm run test`
 - `npm run d1:migrate:local`
 - `npm run d1:migrate:remote`
-- частичный `npm run postdeploy:smoke` по `POST_DEPLOY_BASE_URL`
+- полный `npm run postdeploy:smoke`
 - unit coverage для:
   - frozen source of truth по 12 разделам;
   - CSV export/import;
@@ -22,32 +22,26 @@
 
 - `GET /health` отвечает `ok: true`
 - GitHub `origin/main` совпадает с локальным `HEAD`
-- workflow `deploy` доходит до успешного шага `Deploy Worker`
+- GitHub Actions workflow `deploy` проходит полностью до конца
 - новый production deployment появился в Cloudflare:
-  - run id: `24007051320`
-  - run url: `https://github.com/lavshiba/dorashod/actions/runs/24007051320`
-  - deployment created: `2026-04-05T17:49:50.960Z`
+  - run id: `24009316914`
+  - run url: `https://github.com/lavshiba/dorashod/actions/runs/24009316914`
+  - workflow status: `success`
+  - steps confirmed: `Sync Worker secrets`, `Deploy Worker`, `Configure Telegram webhook`, `Run post-deploy smoke`
+  - deployment created: `2026-04-05T20:00:35.520Z`
 
-## Что Блокирует Полный DoD
+## GitHub Actions State
 
-Полный GitHub Actions cycle пока не закрыт до конца.
+Полный deploy cycle больше не заблокирован.
 
 Что уже заведено в GitHub:
 
 - secret `CLOUDFLARE_API_TOKEN`
 - secret `CLOUDFLARE_ACCOUNT_ID`
-- variable `POST_DEPLOY_BASE_URL`
-
-Чего не хватает:
-
 - secret `TELEGRAM_BOT_TOKEN`
 - secret `TELEGRAM_WEBHOOK_SECRET`
 - secret `HEALTH_TOKEN`
-
-Что именно из-за этого не проходит:
-
-- `Configure Telegram webhook` падает без `TELEGRAM_BOT_TOKEN` и `TELEGRAM_WEBHOOK_SECRET`
-- полный `Run post-deploy smoke` не может быть завершён без `HEALTH_TOKEN`
+- variable `POST_DEPLOY_BASE_URL`
 
 ## Frozen Source Of Truth
 
@@ -55,6 +49,12 @@
 - код и документация выровнены под repo-local frozen source of truth
 - в последних targeted/final verification проходах найденное и исправленное расхождение:
   - search prompt больше не перехватывает `новую запись` и `пачку новых записей` как обычный поисковый запрос
+
+## Что Было Исправлено В Pipeline
+
+- runtime secrets Cloudflare Worker теперь синхронизируются из GitHub secrets до publish новой версии Worker;
+- `Configure Telegram webhook` и `Run post-deploy smoke` теперь проверяют production уже с актуальными runtime secrets;
+- GitHub Actions обновлены до `actions/checkout@v6` и `actions/setup-node@v6`.
 
 ## Что Остаётся Только Для Ручной Проверки В Telegram
 
