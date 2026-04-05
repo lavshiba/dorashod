@@ -38,6 +38,30 @@ describe("frozen ui text", () => {
     expect(frozenText).toContain("кнопки:\n[сохранить в файл]\n[загрузить из файла]");
   });
 
+  it("covers all main frozen sections", () => {
+    expect(frozenText).toContain("1. onboarding");
+    expect(frozenText).toContain("2. главная");
+    expect(frozenText).toContain("3. добавление записей");
+    expect(frozenText).toContain("4. черновик и новые записи");
+    expect(frozenText).toContain("5. операции");
+    expect(frozenText).toContain("6. поиск");
+    expect(frozenText).toContain("7. выбор нескольких и массовые действия");
+    expect(frozenText).toContain("8. отчёты");
+    expect(frozenText).toContain("9. категории и подкатегории");
+    expect(frozenText).toContain("10. настройки");
+    expect(frozenText).toContain("11. данные");
+    expect(frozenText).toContain("12. короткие статусы и словарь");
+  });
+
+  it("keeps key flow screens for queue, edit, settings and data", () => {
+    expect(frozenText).toContain("исправить импорт");
+    expect(frozenText).toContain("очистить всё — шаг 1");
+    expect(frozenText).toContain("подтверждение сброса настроек");
+    expect(frozenText).toContain("карточка записи");
+    expect(frozenText).toContain("изменить запись");
+    expect(frozenText).toContain("главный экран настроек");
+  });
+
   it("matches onboarding copy against the frozen source", () => {
     for (const screen of ONBOARDING_TEXTS) {
       expect(frozenText).toContain(screen);

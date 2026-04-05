@@ -1767,7 +1767,7 @@ export class BotService {
           text:
             `<b>${BOT_TITLE}</b>\n\n` +
             "файл готов\n\n" +
-            "это csv-файл с записями\n" +
+            "это таблица с записями\n" +
             "для других приложений",
           reply_markup: kb([[{ text: BUTTONS.back, action: "data:other-apps" }, { text: BUTTONS.main, action: "nav:home" }]])
         });
