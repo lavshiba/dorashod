@@ -108,7 +108,7 @@ Worker route:
 - затем проверяет `getWebhookInfo`;
 - падает, если Telegram вернул другой URL.
 
-Корректный webhook URL для этого проекта:
+Корректный production webhook URL для этого проекта:
 
 - `https://finance-bot.shiaboi.workers.dev/webhook/telegram/<secret>`
 
@@ -121,7 +121,7 @@ Worker route:
 
 `GET /diagnostics`
 
-- требует `Authorization: Bearer <HEALTH_TOKEN>`;
+- требует заголовок `Authorization: Bearer YOUR_HEALTH_TOKEN`;
 - возвращает счётчики и последние `cron_runs`.
 
 ## Cron

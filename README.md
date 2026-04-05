@@ -35,7 +35,7 @@ Telegram-бот для учёта доходов и расходов. Runtime ж
 - база: один D1 binding `DB`;
 - webhook: `POST /webhook/telegram/:secret`;
 - health: `GET /health`;
-- diagnostics: `GET /diagnostics` c `Authorization: Bearer <HEALTH_TOKEN>`;
+- diagnostics: `GET /diagnostics` c заголовком `Authorization: Bearer YOUR_HEALTH_TOKEN`;
 - cron: scheduled handler для housekeeping.
 
 Подробности по структуре лежат в [`docs/architecture.md`](docs/architecture.md).
