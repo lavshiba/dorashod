@@ -72,7 +72,11 @@ Telegram и health:
 8. `npm run telegram:webhook:set`
 9. `npm run postdeploy:smoke`
 
-Если нужно поставить webhook вручную без npm-скрипта, корректный пример такой:
+Если нужно поставить webhook вручную без npm-скрипта, использовать нужно только этот production pattern:
+
+- `https://<worker-domain>/webhook/telegram/<TELEGRAM_WEBHOOK_SECRET>`
+
+Ручной пример установки:
 
 ```bash
 curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
@@ -104,11 +108,7 @@ Worker route:
 - затем проверяет `getWebhookInfo`;
 - падает, если Telegram вернул другой URL.
 
-Корректный webhook URL для этого проекта всегда выглядит так:
-
-- `https://<worker-domain>/webhook/telegram/<TELEGRAM_WEBHOOK_SECRET>`
-
-Пример:
+Корректный webhook URL для этого проекта:
 
 - `https://finance-bot.shiaboi.workers.dev/webhook/telegram/<secret>`
 
