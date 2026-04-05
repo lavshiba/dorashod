@@ -2,7 +2,7 @@
 
 Telegram-бот для учёта доходов и расходов. Runtime живёт в Cloudflare Workers, данные хранятся в Cloudflare D1, входящие update от Telegram приходят только через webhook.
 
-Repo-local source of truth по пользовательским текстам и экранной логике:
+Единственный source of truth по пользовательским текстам и экранной логике живёт внутри репозитория:
 
 - [`docs/frozen/ui-texts.txt`](docs/frozen/ui-texts.txt)
 

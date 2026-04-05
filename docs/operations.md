@@ -50,7 +50,7 @@ Telegram и health:
 5. `npm run telegram:webhook:set`
 6. `npm run postdeploy:smoke`
 
-Вручную остаются:
+Даже при наличии workflow вручную остаются:
 
 - `wrangler login` при первом входе в окружение;
 - создание D1 и заполнение `database_id` в `wrangler.jsonc`;
