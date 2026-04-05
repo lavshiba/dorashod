@@ -3,7 +3,12 @@ const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
 const baseUrl = process.env.POST_DEPLOY_BASE_URL;
 
 if (!token || !webhookSecret || !baseUrl) {
-  throw new Error("TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET and POST_DEPLOY_BASE_URL are required");
+  const missing = [
+    !token ? "TELEGRAM_BOT_TOKEN" : null,
+    !webhookSecret ? "TELEGRAM_WEBHOOK_SECRET" : null,
+    !baseUrl ? "POST_DEPLOY_BASE_URL" : null
+  ].filter(Boolean);
+  throw new Error(`Missing required env: ${missing.join(", ")}`);
 }
 
 const normalizedBaseUrl = baseUrl.replace(/\/+$/, "");
