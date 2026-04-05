@@ -23,6 +23,7 @@
 - `GET /health` отвечает `ok: true`
 - GitHub `origin/main` совпадает с локальным `HEAD`
 - GitHub Actions workflow `deploy` проходит полностью до конца
+- deploy / webhook / smoke automation tail закрыт
 - новый production deployment появился в Cloudflare:
   - текущий successful run id: `24009518700`
   - run url: `https://github.com/lavshiba/dorashod/actions/runs/24009518700`
@@ -33,6 +34,7 @@
 ## GitHub Actions State
 
 Полный deploy cycle больше не заблокирован.
+Недостающих secrets и vars, которые мешали бы workflow, сейчас нет.
 
 Что уже заведено в GitHub:
 

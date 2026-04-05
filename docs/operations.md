@@ -40,7 +40,7 @@ Telegram и health:
 
 - `POST_DEPLOY_BASE_URL`
 
-## Что Блокирует Полный GitHub Actions Cycle
+## Что Нужно Для Полного GitHub Actions Cycle
 
 Для полного прохождения workflow `deploy` нужны все четыре GitHub значения:
 
@@ -91,7 +91,7 @@ Telegram и health:
 8. `npm run telegram:webhook:set`
 9. `npm run postdeploy:smoke`
 
-Если нужно поставить webhook вручную без npm-скрипта, использовать нужно только этот production webhook URL pattern:
+Если нужно поставить webhook вручную без npm-скрипта, использовать нужно тот же production webhook URL, который ожидает проект:
 
 - `https://finance-bot.shiaboi.workers.dev/webhook/telegram/<TELEGRAM_WEBHOOK_SECRET>`
 
@@ -127,7 +127,7 @@ Worker route:
 - затем проверяет `getWebhookInfo`;
 - падает, если Telegram вернул другой URL.
 
-Корректный production webhook URL для этого проекта:
+Корректный production webhook URL для этого проекта совпадает с ручным pattern выше:
 
 - `https://finance-bot.shiaboi.workers.dev/webhook/telegram/<TELEGRAM_WEBHOOK_SECRET>`
 
