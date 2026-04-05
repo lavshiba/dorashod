@@ -19,6 +19,7 @@
 - `lint`, `build`, `test`;
 - remote migrations;
 - `wrangler deploy`;
+- синхронизация production secrets в Cloudflare Worker из GitHub secrets;
 - настройка webhook через `npm run telegram:webhook:set`;
 - post-deploy smoke.
 
