@@ -24,6 +24,7 @@
 - GitHub `origin/main` совпадает с локальным `HEAD`
 - GitHub Actions workflow `deploy` проходит полностью до конца
 - deploy / webhook / smoke automation tail закрыт
+- старые failure snapshot и старые run id вроде `24007051320` больше не актуальны для текущего состояния
 - новый production deployment появился в Cloudflare:
   - текущий successful run id: `24009518700`
   - run url: `https://github.com/lavshiba/dorashod/actions/runs/24009518700`
@@ -35,6 +36,7 @@
 
 Полный deploy cycle больше не заблокирован.
 Недостающих secrets и vars, которые мешали бы workflow, сейчас нет.
+`TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` и `HEALTH_TOKEN` больше не считаются блокером для deploy workflow.
 
 Что уже заведено в GitHub:
 
