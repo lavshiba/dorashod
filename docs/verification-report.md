@@ -24,11 +24,11 @@
 - GitHub `origin/main` совпадает с локальным `HEAD`
 - GitHub Actions workflow `deploy` проходит полностью до конца
 - новый production deployment появился в Cloudflare:
-  - run id: `24009316914`
-  - run url: `https://github.com/lavshiba/dorashod/actions/runs/24009316914`
+  - текущий successful run id: `24009518700`
+  - run url: `https://github.com/lavshiba/dorashod/actions/runs/24009518700`
   - workflow status: `success`
   - steps confirmed: `Sync Worker secrets`, `Deploy Worker`, `Configure Telegram webhook`, `Run post-deploy smoke`
-  - deployment created: `2026-04-05T20:00:35.520Z`
+  - deployment created: `2026-04-05T20:11:42.496Z`
 
 ## GitHub Actions State
 
