@@ -20,6 +20,7 @@ Unit и integration tests сейчас покрывают:
 - parsing CSV/JSON импорта;
 - исправление проблемных строк импорта;
 - repo-local frozen source file и ключевые frozen-тексты;
+- полное frozen coverage по 12 главным разделам интерфейса;
 - CSV export serialization;
 - round-trip `CSV export -> CSV import`;
 - housekeeping queries для cron;
