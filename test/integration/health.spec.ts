@@ -34,7 +34,6 @@ describe("health endpoint", () => {
       TELEGRAM_BOT_TOKEN: "x",
       TELEGRAM_WEBHOOK_SECRET: "secret",
       HEALTH_TOKEN: "health",
-      BACKUP_SIGNING_KEY: "backup",
       DB: new FakeDb() as unknown as D1Database
     });
     expect(response.status).toBe(200);

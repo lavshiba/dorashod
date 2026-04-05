@@ -4,6 +4,7 @@ import type { TelegramApi } from "@/telegram/api";
 import { BUTTONS, BOT_TITLE, ONBOARDING_TEXTS, onboardingProgress } from "@/ui/text";
 import { kb } from "@/ui/keyboard";
 import { decodeCallback } from "@/utils/callback";
+import { serializeEntriesCsv } from "@/utils/csv";
 import { parseCustomPeriodInput, parseQuickPeriod, splitNowForUser } from "@/utils/dates";
 import { parseEntryAttempt } from "@/utils/entry-parser";
 import { formatAmountFromMinor } from "@/utils/money";
@@ -100,7 +101,13 @@ export class BotService {
   }
 
   async runCron(controllerName: string): Promise<void> {
-    await this.repo.createCronRun(controllerName, "ok", "cron completed");
+    const result = await this.repo.runCronHousekeeping();
+    const summary =
+      `expired_callback_locks=${result.expiredCallbackLocks}; ` +
+      `expired_user_update_locks=${result.expiredUserUpdateLocks}; ` +
+      `stale_imports=${result.staleImports}; ` +
+      `stale_cron_runs=${result.staleCronRuns}`;
+    await this.repo.createCronRun(controllerName, "ok", summary);
   }
 
   private async handleMessage(fromId: number | undefined, chatId: number, text: string, messageId?: number): Promise<void> {
@@ -1742,12 +1749,13 @@ export class BotService {
             "это может занять немного времени",
           reply_markup: kb([[{ text: BUTTONS.main, action: "nav:home" }]])
         });
-        const snapshot = await this.repo.exportEntriesSnapshot(user.id);
+        const csv = serializeEntriesCsv(await this.repo.listEntriesExportRows(user.id));
         const messageId = await this.telegram.sendDocument({
           chat_id: user.chatId,
-          filename: "finance-bot-entries.json",
-          content: JSON.stringify(snapshot, null, 2),
-          caption: "записи для других приложений"
+          filename: "finance-bot-entries.csv",
+          content: csv,
+          caption: "записи для других приложений",
+          mimeType: "text/csv"
         });
         await this.saveSessionKeepingScreen(user.id, {
           mode: "data",
@@ -1759,7 +1767,7 @@ export class BotService {
           text:
             `<b>${BOT_TITLE}</b>\n\n` +
             "файл готов\n\n" +
-            "это таблица с записями\n" +
+            "это csv-файл с записями\n" +
             "для других приложений",
           reply_markup: kb([[{ text: BUTTONS.back, action: "data:other-apps" }, { text: BUTTONS.main, action: "nav:home" }]])
         });

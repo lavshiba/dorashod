@@ -20,6 +20,16 @@ type CategoryTransferRow = {
   subcategoryNormalizedName: string | null;
 };
 
+type EntriesExportRow = {
+  date: string | null;
+  time: string | null;
+  amountMinor: number;
+  type: EntryType;
+  category: string;
+  subcategory: string | null;
+  description: string | null;
+};
+
 export type CategoryTransferPlan = {
   updates: Array<{ entryId: number; targetSubcategoryId: number | null }>;
   movedCount: number;
@@ -1531,6 +1541,27 @@ export class Repository {
     await this.db.prepare("INSERT INTO cron_runs (job_name, status, summary) VALUES (?, ?, ?)").bind(jobName, status, summary).run();
   }
 
+  async runCronHousekeeping(): Promise<{
+    expiredCallbackLocks: number;
+    expiredUserUpdateLocks: number;
+    staleImports: number;
+    staleCronRuns: number;
+  }> {
+    const [expiredCallbackLocks, expiredUserUpdateLocks, staleImports, staleCronRuns] = await this.db.batch([
+      this.db.prepare("DELETE FROM callback_locks WHERE created_at < datetime('now', '-1 day')"),
+      this.db.prepare("DELETE FROM user_update_locks WHERE created_at < datetime('now', '-1 day')"),
+      this.db.prepare("DELETE FROM imports WHERE updated_at < datetime('now', '-7 days')"),
+      this.db.prepare("DELETE FROM cron_runs WHERE created_at < datetime('now', '-30 days')")
+    ]);
+
+    return {
+      expiredCallbackLocks: Number(expiredCallbackLocks.meta.changes ?? 0),
+      expiredUserUpdateLocks: Number(expiredUserUpdateLocks.meta.changes ?? 0),
+      staleImports: Number(staleImports.meta.changes ?? 0),
+      staleCronRuns: Number(staleCronRuns.meta.changes ?? 0)
+    };
+  }
+
   async updateCategorySortModeOverride(userId: number, categoryId: number, mode: string | null): Promise<void> {
     await this.db
       .prepare("UPDATE categories SET sort_mode_override = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND id = ?")
@@ -1588,7 +1619,7 @@ export class Repository {
     };
   }
 
-  async exportEntriesSnapshot(userId: number): Promise<Record<string, unknown>> {
+  async listEntriesExportRows(userId: number): Promise<EntriesExportRow[]> {
     const entries = await this.db
       .prepare(
         `
@@ -1608,12 +1639,17 @@ export class Repository {
       `
       )
       .bind(userId)
-      .all();
+      .all<Record<string, D1Value>>();
 
-    return {
-      exported_at: new Date().toISOString(),
-      entries: entries.results ?? []
-    };
+    return (entries.results ?? []).map((row) => ({
+      date: row.date ? String(row.date) : null,
+      time: row.time ? String(row.time) : null,
+      amountMinor: Number(row.amount_minor ?? 0),
+      type: String(row.type) as EntryType,
+      category: String(row.category ?? ""),
+      subcategory: row.subcategory ? String(row.subcategory) : null,
+      description: row.description ? String(row.description) : null
+    }));
   }
 
   async clearAllUserData(userId: number): Promise<void> {
@@ -1627,7 +1663,30 @@ export class Repository {
       this.db.prepare("DELETE FROM ui_sessions WHERE user_id = ?").bind(userId),
       this.db.prepare("DELETE FROM saved_views WHERE user_id = ?").bind(userId),
       this.db.prepare("DELETE FROM imports WHERE user_id = ?").bind(userId),
-      this.db.prepare("UPDATE users SET onboarding_step = 0, onboarding_completed_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(userId)
+      this.db
+        .prepare(
+          `
+          UPDATE users
+          SET
+            onboarding_step = 0,
+            onboarding_completed_at = NULL,
+            onboarding_dismissed_at = NULL,
+            timezone_name = 'Europe/Moscow',
+            timezone_source = 'default',
+            currency_code = 'RUB',
+            currency_label = '₽',
+            subcategories_enabled = 1,
+            quick_access_mode_expense = 'automatically',
+            quick_access_mode_income = 'automatically',
+            quick_access_mode_subcategories = 'automatically',
+            sort_mode_expense = 'usage',
+            sort_mode_income = 'usage',
+            sort_mode_subcategories = 'usage',
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `
+        )
+        .bind(userId)
     ]);
   }
 

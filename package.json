@@ -19,6 +19,7 @@
     "format": "prettier --write .",
     "lint": "eslint .",
     "postdeploy:smoke": "vitest run test/integration/post-deploy.spec.ts",
+    "telegram:webhook:set": "node ./scripts/set-telegram-webhook.mjs",
     "test": "vitest run --coverage",
     "test:watch": "vitest watch"
   },

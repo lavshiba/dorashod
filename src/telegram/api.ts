@@ -59,7 +59,7 @@ export class TelegramApi {
     formData.set(
       "document",
       new File([payload.content], payload.filename, {
-        type: "application/json"
+        type: payload.mimeType ?? "application/json"
       })
     );
 

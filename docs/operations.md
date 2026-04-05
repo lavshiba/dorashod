@@ -1,171 +1,170 @@
 # Operations
 
-## Секреты
+## Что Делается Автоматически
 
-Секреты задаются только через Cloudflare:
-
-- `wrangler secret put TELEGRAM_BOT_TOKEN`
-- `wrangler secret put TELEGRAM_WEBHOOK_SECRET`
-- `wrangler secret put HEALTH_TOKEN`
-- `wrangler secret put BACKUP_SIGNING_KEY`
-
-Они не должны попадать в git, код или README как реальные значения.
-
-## Первый запуск
+Через GitHub Actions workflow `deploy`:
 
 1. `npm install`
-2. `wrangler login`
-3. `wrangler d1 create finance-bot-db`
-4. Вставить выданный `database_id` в [wrangler.jsonc](/home/abihsgelo/Документы/dorashod/wrangler.jsonc)
-5. Задать secrets
+2. `npm run check`
+3. `npm run d1:migrate:remote`
+4. `npm run deploy`
+5. `npm run telegram:webhook:set`
+6. `npm run postdeploy:smoke`
+
+Это работает только если в GitHub заданы нужные secrets и vars.
+
+## Что Требует Secrets
+
+Cloudflare:
+
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_ACCOUNT_ID`
+
+Telegram и health:
+
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_WEBHOOK_SECRET`
+- `HEALTH_TOKEN`
+
+Локально для ручной настройки webhook и smoke:
+
+- `POST_DEPLOY_BASE_URL`
+
+## Что Делается Вручную
+
+Если deploy workflow не используется, оператор выполняет:
+
+1. `npm install`
+2. `npm run check`
+3. `npm run d1:migrate:remote`
+4. `npm run deploy`
+5. `npm run telegram:webhook:set`
+6. `npm run postdeploy:smoke`
+
+## Первый Запуск
+
+1. `wrangler login`
+2. `npm install`
+3. `npm run d1:create`
+4. обновить `database_id` в `wrangler.jsonc`
+5. задать Cloudflare secrets:
+   - `wrangler secret put TELEGRAM_BOT_TOKEN`
+   - `wrangler secret put TELEGRAM_WEBHOOK_SECRET`
+   - `wrangler secret put HEALTH_TOKEN`
 6. `npm run d1:migrate:remote`
 7. `npm run deploy`
-8. Установить webhook:
+8. `npm run telegram:webhook:set`
+9. `npm run postdeploy:smoke`
 
-```bash
-curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "url": "https://<worker-domain>/webhook/telegram/<webhook-secret>"
-  }'
-```
+## Webhook
 
-Фактическое прод-состояние:
+Worker route:
 
-- GitHub repo: `https://github.com/lavshiba/dorashod`
-- Worker URL: `https://finance-bot.shiaboi.workers.dev`
-- Health: `https://finance-bot.shiaboi.workers.dev/health`
-- D1 database id: `0ce605f9-e138-4f30-8c1a-cf8073cc2bbe`
-- Telegram bot username: `@dorashodbot`
-- Webhook установлен на production URL
+- `POST /webhook/telegram/:secret`
 
-Поведение `/start`:
+Автоматическая установка webhook делается скриптом:
 
-- Worker старается удалить сообщение с самой командой `/start`
-- затем старается удалить прошлый экран бота
-- после этого создаёт один новый стартовый экран, чтобы не плодить несколько главных подряд
+- `npm run telegram:webhook:set`
 
-Поведение входящих пользовательских сообщений:
+Скрипт требует:
 
-- после обработанного текстового ввода бот старается удалить само пользовательское сообщение
-- то же правило теперь применяется к геопозиции и к загруженному файлу
-- если Telegram отказывает в удалении старого или уже исчезнувшего сообщения, сценарий всё равно продолжается
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_WEBHOOK_SECRET`
+- `POST_DEPLOY_BASE_URL`
 
-## Миграции
+Он:
 
-- Все миграции лежат в `migrations/`.
-- После каждой миграции нужно прогонять schema checks.
-- Повторный деплой не должен ломать базу.
+- вызывает `setWebhook`;
+- затем проверяет `getWebhookInfo`;
+- падает, если Telegram вернул другой URL.
 
-Команды:
+## Health И Diagnostics
 
-- `npm run d1:migrate:local`
-- `npm run d1:migrate:remote`
+`GET /health`
+
+- публичный endpoint;
+- проверяет, что Worker жив и D1 отвечает.
+
+`GET /diagnostics`
+
+- требует `Authorization: Bearer <HEALTH_TOKEN>`;
+- возвращает счётчики и последние `cron_runs`.
 
 ## Cron
 
-Используются только реальные полезные задачи:
+Текущие cron schedules в `wrangler.jsonc`:
 
-- `*/10 * * * *`: лёгкая обработка очередей и напоминаний
-- `0 4 * * *`: ежедневная диагностика и housekeeping
+- `*/10 * * * *`
+- `0 4 * * *`
 
-Обе cron schedule зарегистрированы в production.
+Они запускают housekeeping, а не продуктовые напоминания.
 
-## Health / diagnostics / observability
+## Миграции
 
-### `GET /health`
+Локально:
 
-Отвечает кратким JSON:
+- `npm run d1:migrate:local`
 
-- статус worker
-- статус базы
-- версия приложения
-- текущее время
+Remote:
 
-### `GET /diagnostics`
+- `npm run d1:migrate:remote`
 
-Требует `Authorization: Bearer <HEALTH_TOKEN>`. Возвращает:
+Перед production deploy миграции должны быть применены отдельно и успешно.
 
-- worker status
-- D1 check
-- cron registration summary
-- базовую статистику по пользователям, записям и очередям
+## Post-Deploy Checks
 
-### Логи
+Автоматический smoke:
 
-- ошибки логируются через `console.error`
-- cron runs пишутся в таблицу `cron_runs`
-- критические исключения не должны падать молча
+- `npm run postdeploy:smoke`
 
-## Backup / restore
+Проверяет:
 
-### Полная копия
+- `GET /health`
+- `GET /diagnostics`
+- доступность webhook path
 
-Включает:
+### Ограничение
 
-- записи
-- категории
-- подкатегории
-- настройки
-- черновик
-- новые записи
+Автоматический smoke не подтверждает, что Telegram прислал живой update и пользовательский сценарий дошёл до конца внутри чата. Это остаётся ручной проверкой.
 
-Поток:
+## Backup И Restore
 
-1. `сохранить в файл`
-2. получить JSON-файл
-3. хранить файл вне Telegram дополнительно
-4. для восстановления использовать `загрузить из файла`
-5. посмотреть предварительный просмотр
-6. подтвердить замену текущих данных
+### Для Этого Бота
 
-### Записи для других приложений
+- экспорт: JSON-файл полной копии;
+- импорт: preview и подтверждение полной замены текущих данных.
 
-Включают только записи:
+### В Другие Приложения
 
-- дата
-- время
-- сумма
-- тип
-- категория
-- подкатегория
-- описание
+- экспорт: CSV;
+- импорт: CSV или JSON с preview;
+- колонки CSV:
+  - `date`
+  - `time`
+  - `amount`
+  - `type`
+  - `category`
+  - `subcategory`
+  - `description`
 
-После `загрузить из файла` доступны:
+## Аварийные Сценарии
 
-- `[объединить]`
-- `[добавить всё]`
+### Проблема С Deploy
 
-## Минимизация риска потери данных
+1. проверить `health`
+2. проверить `diagnostics`
+3. перепроверить миграции
+4. при необходимости задеплоить предыдущий commit
 
-- D1 как основной storage
-- SQL-миграции под версионным контролем
-- ограничения целостности и индексы
-- экспорт полной копии из интерфейса
-- возможности D1 restore использовать при реальном проде
-- аккуратный rollout с post-deploy checks
+### Проблема С Webhook
 
-Абсолютную гарантию `никогда не потерять ничего` дать нельзя. Это ограничение нужно честно учитывать.
+1. заново выполнить `npm run telegram:webhook:set`
+2. проверить `getWebhookInfo`
+3. проверить `POST_DEPLOY_BASE_URL`
+4. проверить, что `TELEGRAM_WEBHOOK_SECRET` совпадает с route
 
-## Аварийные сценарии
+### Проблема С Cron
 
-### Проблемный деплой
-
-1. Проверить `health`
-2. Проверить `diagnostics`
-3. При необходимости откатить код на предыдущий git commit
-4. Задеплоить предыдущую версию Worker
-5. Если проблема в миграции, остановить rollout и восстановить данные из полной копии / инструментов D1 restore
-
-### Проблема с webhook
-
-1. Проверить `getWebhookInfo`
-2. Проверить, что secret path совпадает
-3. Проверить доступность Worker URL
-4. Проверить логи Worker
-
-### Проблема с cron
-
-1. Проверить наличие cron в `wrangler.jsonc`
-2. Проверить deployed configuration
-3. Проверить записи в `cron_runs`
+1. проверить `wrangler.jsonc`
+2. проверить последние `cron_runs` через `/diagnostics`
+3. проверить, что scheduled handler не падает в логах Worker

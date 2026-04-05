@@ -32,6 +32,16 @@ export default [
     }
   },
   {
+    files: ["scripts/**/*.mjs"],
+    languageOptions: {
+      globals: {
+        process: "readonly",
+        console: "readonly",
+        fetch: "readonly"
+      }
+    }
+  },
+  {
     ignores: ["dist/**", "coverage/**", ".wrangler/**", ".wrangler-dist/**", ".wrangler-version-dist/**"]
   }
 ];

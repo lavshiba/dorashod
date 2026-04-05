@@ -151,6 +151,7 @@ export interface TelegramDocumentPayload {
   filename: string;
   content: string;
   caption?: string;
+  mimeType?: string;
 }
 
 export interface ImportRecord {

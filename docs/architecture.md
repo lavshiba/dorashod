@@ -1,204 +1,138 @@
 # Architecture
 
-## Общая схема
+## Runtime
 
-Проект построен как один Cloudflare Worker с несколькими HTTP-входами и scheduled handler:
+Проект разворачивается как один Cloudflare Worker.
 
-- `POST /webhook/telegram/:secret` для Telegram webhook updates
-- `GET /health` для health check
-- `GET /diagnostics` для защищённой диагностики
-- `scheduled()` для cron jobs
+Входы:
 
-## Слои приложения
+- `POST /webhook/telegram/:secret`
+- `GET /health`
+- `GET /diagnostics`
+- `scheduled()`
 
-- `src/app`: сборка приложения и маршрутов
-- `src/bot`: orchestration Telegram use cases
-- `src/config`: типизация окружения и feature flags
-- `src/db`: D1 access, SQL helpers, migrations checks
-- `src/domain`: доменные типы и инварианты
-- `src/infra`: cron, logging, diagnostics, backup hooks
-- `src/services`: сценарии продукта
-- `src/telegram`: Telegram API client и helpers
-- `src/ui`: экраны, кнопки, frozen dictionary
-- `src/utils`: парсинг, даты, нормализация, ids
+## Реальный Layout Исходников
 
-## Data model
+- `src/index.ts`
+  Точка входа Worker. Подключает `fetch` и `scheduled`.
+- `src/app/create-app.ts`
+  Hono routes для health, diagnostics и Telegram webhook.
+- `src/config/env.ts`
+  Валидация и типизация окружения.
+- `src/db/repository.ts`
+  D1 access layer и SQL-операции.
+- `src/domain/types.ts`
+  Доменные типы.
+- `src/services/bot-service.ts`
+  Основная продуктовая логика Telegram-бота и cron housekeeping orchestration.
+- `src/telegram/api.ts`
+  Тонкий клиент к Telegram Bot API.
+- `src/ui/text.ts`
+  Кнопки, заголовок и onboarding-тексты, которые используются кодом.
+- `src/ui/keyboard.ts`
+  Сборка inline keyboard.
+- `src/utils/*`
+  Парсинг, даты, callback encoding, CSV serialization и вспомогательные функции.
+
+В проекте нет слоёв `src/bot` или `src/infra`; старые упоминания таких каталогов считаются устаревшими.
+
+## Данные В D1
+
+Основные таблицы:
+
+- `users`
+- `categories`
+- `subcategories`
+- `entries`
+- `drafts`
+- `intake_queue`
+- `ui_sessions`
+- `saved_views`
+- `imports`
+- `import_rows`
+- `callback_locks`
+- `user_update_locks`
+- `cron_runs`
+
+## Что Хранится
 
 ### `users`
 
-- telegram_user_id
-- chat_id
-- onboarding_step
-- onboarding_completed_at
-- timezone_name: IANA timezone для города или фиксированный offset для геопозиции
-- timezone_source: default / city / location
-- currency_code
-- currency_label
-- subcategories_enabled
-- quick_access_mode_expense / quick_access_mode_income / quick_access_mode_subcategories
-- sort_mode_expense / sort_mode_income / sort_mode_subcategories
-- created_at
-- updated_at
-
-### `categories`
-
-- user_id
-- type: income / expense
-- name
-- normalized_name
-- hidden_at
-- sort_mode_override
-- quick_access_slot
-- usage_count_cache
-
-### `subcategories`
-
-- category_id
-- name
-- normalized_name
-- hidden_at
-- quick_access_slot
-- usage_count_cache
+- onboarding state;
+- timezone;
+- currency;
+- настройки подкатегорий;
+- режимы быстрого доступа;
+- режимы сортировки.
 
 ### `entries`
 
-- user_id
-- type
-- amount_minor
-- currency_label
-- category_id
-- subcategory_id nullable
-- description nullable
-- entry_date nullable
-- entry_time nullable
-- entry_datetime_sort nullable
-- is_time_auto
-- is_date_missing
-- source
-- external_hash nullable
-- created_at
-- updated_at
+- тип записи;
+- сумма в minor units;
+- категория и подкатегория;
+- описание;
+- дата и время;
+- признаки `is_time_auto` и `is_date_missing`;
+- источник записи.
 
-### `drafts`
+### `drafts` и `intake_queue`
 
-- user_id
-- payload_json
-- current_step
-- created_at
-- updated_at
-
-### `intake_queue`
-
-- user_id
-- source
-- raw_text
-- parsed_json
-- missing_fields_json
-- status
-- created_at
-- updated_at
+- незавершённый пошаговый ввод;
+- очередь `новые записи`.
 
 ### `ui_sessions`
 
-- user_id
-- mode
-- stack_json
-- context_json
-- updated_at
-
-`context_json` также хранит `screenMessageId` последнего актуального экранного сообщения бота.
-
-### `saved_views`
-
-- user_id
-- view_type
-- params_json
-- result_ids_json
-- cursor
-- updated_at
+- активный режим;
+- стек;
+- контекст текущего экрана, включая `screenMessageId`.
 
 ### `imports`
 
-- user_id
-- import_type
-- status
-- preview_json
-- created_at
-- updated_at
+- preview данных перед импортом;
+- промежуточные результаты исправления проблемных строк.
 
-### `callback_locks`
+### `callback_locks` и `user_update_locks`
 
-- user_id
-- message_id
-- callback_data
-- created_at
-
-Используется для дедупликации повторных callback-нажатий Telegram. Если одна и та же кнопка на том же сообщении нажата повторно, Worker обрабатывает только первое нажатие.
-
-Callback-data дополнительно кодируется в компактном виде: payload-ключи и часть значений сжимаются, а длинный `query` при необходимости не кладётся в callback и восстанавливается из UI-session. Это уменьшает риск упереться в лимит Telegram по длине callback-data.
-
-### `user_update_locks`
-
-- user_id
-- lock_token
-- created_at
-
-Используется для последовательной обработки update’ов одного пользователя. Это снижает гонки между быстрыми сериями нажатий, офлайн-доставкой нескольких сообщений и параллельными переходами внутри одной UI-сессии.
-
-### `import_rows`
-
-- import_id
-- raw_json
-- parsed_json
-- status
-- failure_reason
+- дедупликация повторных callback;
+- последовательная обработка update одного пользователя.
 
 ### `cron_runs`
 
-- job_name
-- status
-- summary
-- created_at
+- журнал результатов cron housekeeping.
 
-## Bindings и secrets
+## Bindings И Secrets
 
 Bindings:
 
-- `DB: D1Database`
+- `DB`
 
 Secrets:
 
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_WEBHOOK_SECRET`
 - `HEALTH_TOKEN`
-- `BACKUP_SIGNING_KEY`
 
 Vars:
 
 - `APP_ENV`
 - `BOT_NAME`
 
-## Почему без ORM
+## Cron
 
-- меньше runtime overhead
-- проще контролировать SQL и индексы под free-план
-- легче проверять миграции и rollback strategy
-- прозрачнее поддержка через Codex
+Cron больше не является заглушкой.
 
-## Free-plan стратегия
+Текущая полезная работа scheduled handler:
 
-- 1-2 D1 запроса на быстрые экраны там, где возможно
-- пагинация по 6 элементов
-- кешированные usage counters для категорий и подкатегорий
-- queue-like обработка `новые записи` и импорта без тяжёлых циклов
-- cron только для полезных задач: диагностика, напоминания, housekeeping
+- чистит старые `callback_locks`;
+- чистит старые `user_update_locks`;
+- удаляет застаревшие import preview;
+- удаляет старые записи `cron_runs`;
+- пишет итог в `cron_runs`.
 
-## Точки расширения
+## Free-Plan Подход
 
-### Картинка графика для отчётов
-
-Под это зарезервирован сервисный слой `reports renderer`. Сейчас отчёты текстовые, позже можно добавить отдельный renderer, который получает уже готовый агрегированный report snapshot.
-
-### Backup provider
-
-Под это зарезервирован интерфейс `backup sink`. Сейчас backup/restore работает через файлы Telegram и D1, позже можно добавить внешний provider без переписывания доменной логики.
+- без ORM;
+- SQL под прямым контролем;
+- пагинация списков;
+- минимизация лишних Telegram-сообщений через редактирование экрана;
+- cron только для лёгкого housekeeping.

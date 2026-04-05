@@ -1,5 +1,7 @@
 export const BOT_TITLE = "финансы";
 
+export const REPO_LOCAL_UI_SOURCE = "docs/frozen/ui-texts.txt";
+
 export const BUTTONS = {
   start: "начать",
   skip: "пропустить",
