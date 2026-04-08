@@ -12,6 +12,9 @@
 - `очистить всё` теперь сбрасывает и данные, и пользовательские настройки;
 - cron больше не заглушка и делает housekeeping;
 - deploy workflow теперь настраивает webhook и запускает post-deploy smoke;
+- webhook защищён вторым слоем через `X-Telegram-Bot-Api-Secret-Token`, а deploy/smoke учитывают это;
+- импорт `в другие приложения` стал терпимее к внешним CSV-шапкам, `null` и датам с секундами;
+- import/data helpers вынесены из giant `bot-service` в отдельный модуль;
 - мёртвый секрет `BACKUP_SIGNING_KEY` удалён из env/schema/examples;
 - README и `docs/*` переписаны под фактическое состояние проекта.
 
@@ -20,6 +23,7 @@
 - Пройти живой ручной check production-бота в Telegram после следующего deploy.
 - Проверить вживую:
   - экспорт CSV и повторный импорт через реальный Telegram document;
+  - import preview при неполной или частично распознанной внешней CSV-шапке;
   - `очистить всё` на production-копии;
   - webhook после реального deploy;
   - cron housekeeping по данным `/diagnostics`.

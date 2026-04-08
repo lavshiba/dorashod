@@ -34,6 +34,7 @@ Telegram и health:
 
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_WEBHOOK_SECRET`
+- `TELEGRAM_WEBHOOK_TOKEN`
 - `HEALTH_TOKEN`
 
 Локально для ручной настройки webhook и smoke:
@@ -42,19 +43,20 @@ Telegram и health:
 
 ## Что Нужно Для Полного GitHub Actions Cycle
 
-Для полного прохождения workflow `deploy` нужны все четыре GitHub значения:
+Для полного прохождения workflow `deploy` нужны все production secrets и vars:
 
 - secret `CLOUDFLARE_API_TOKEN`
 - secret `CLOUDFLARE_ACCOUNT_ID`
 - secret `TELEGRAM_BOT_TOKEN`
 - secret `TELEGRAM_WEBHOOK_SECRET`
+- secret `TELEGRAM_WEBHOOK_TOKEN`
 - secret `HEALTH_TOKEN`
 - variable `POST_DEPLOY_BASE_URL`
 
 Если чего-то из этого нет, workflow обрывается по месту:
 
 - без `CLOUDFLARE_API_TOKEN` или `CLOUDFLARE_ACCOUNT_ID` не проходят remote migrations и `Deploy Worker`;
-- без `TELEGRAM_BOT_TOKEN` или `TELEGRAM_WEBHOOK_SECRET` падает `Configure Telegram webhook`;
+- без `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` или `TELEGRAM_WEBHOOK_TOKEN` падает `Configure Telegram webhook`;
 - без `POST_DEPLOY_BASE_URL` не могут завершиться `Configure Telegram webhook` и `Run post-deploy smoke`;
 - без `HEALTH_TOKEN` не завершается полный `Run post-deploy smoke` для `/diagnostics`.
 
@@ -85,6 +87,7 @@ Telegram и health:
 5. задать Cloudflare secrets:
    - `wrangler secret put TELEGRAM_BOT_TOKEN`
    - `wrangler secret put TELEGRAM_WEBHOOK_SECRET`
+   - `wrangler secret put TELEGRAM_WEBHOOK_TOKEN`
    - `wrangler secret put HEALTH_TOKEN`
 6. `npm run d1:migrate:remote`
 7. `npm run deploy`
@@ -101,7 +104,8 @@ Telegram и health:
 curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
   -H "Content-Type: application/json" \
   -d "{
-    \"url\": \"${POST_DEPLOY_BASE_URL%/}/webhook/telegram/${TELEGRAM_WEBHOOK_SECRET}\"
+    \"url\": \"${POST_DEPLOY_BASE_URL%/}/webhook/telegram/${TELEGRAM_WEBHOOK_SECRET}\",
+    \"secret_token\": \"$TELEGRAM_WEBHOOK_TOKEN\"
   }"
 ```
 
@@ -119,13 +123,16 @@ Worker route:
 
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_WEBHOOK_SECRET`
+- `TELEGRAM_WEBHOOK_TOKEN`
 - `POST_DEPLOY_BASE_URL`
 
 Он:
 
 - вызывает `setWebhook`;
+- передаёт `secret_token`;
 - затем проверяет `getWebhookInfo`;
-- падает, если Telegram вернул другой URL.
+- падает, если Telegram вернул другой URL;
+- не логирует полный webhook URL с секретом.
 
 Других production pattern для webhook в этом проекте нет:
 
@@ -136,7 +143,8 @@ Worker route:
 `GET /health`
 
 - публичный endpoint;
-- проверяет, что Worker жив и D1 отвечает.
+- возвращает только безопасный минимум `ok` и `service`;
+- если D1 не отвечает, даёт `503`.
 
 `GET /diagnostics`
 
@@ -176,7 +184,9 @@ Remote:
 
 - `GET /health`
 - `GET /diagnostics`
-- доступность webhook path
+- auth на `GET /diagnostics`
+- доступность webhook path c валидным `X-Telegram-Bot-Api-Secret-Token`
+- отклонение webhook без `X-Telegram-Bot-Api-Secret-Token`
 
 ### Ограничение
 
@@ -193,6 +203,7 @@ Remote:
 
 - экспорт: CSV;
 - импорт: CSV или JSON с preview;
+- импорт CSV понимает русские и английские шапки, `null` и `(null)`, даты с секундами и decimal comma/dot;
 - колонки CSV:
   - `date`
   - `time`

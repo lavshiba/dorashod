@@ -14,6 +14,32 @@ import { splitNowForUser } from "@/utils/dates";
 import { normalizeName } from "@/utils/normalize";
 
 type D1Value = string | number | null;
+type UserUpdatableField =
+  | "currency_code"
+  | "currency_label"
+  | "quick_access_mode_expense"
+  | "quick_access_mode_income"
+  | "quick_access_mode_subcategories"
+  | "sort_mode_expense"
+  | "sort_mode_income"
+  | "sort_mode_subcategories"
+  | "subcategories_enabled"
+  | "timezone_name"
+  | "timezone_source";
+
+const USER_UPDATABLE_FIELDS = new Set<UserUpdatableField>([
+  "currency_code",
+  "currency_label",
+  "quick_access_mode_expense",
+  "quick_access_mode_income",
+  "quick_access_mode_subcategories",
+  "sort_mode_expense",
+  "sort_mode_income",
+  "sort_mode_subcategories",
+  "subcategories_enabled",
+  "timezone_name",
+  "timezone_source"
+]);
 
 type CategoryTransferRow = {
   id: number;
@@ -1585,10 +1611,15 @@ export class Repository {
     };
   }
 
-  async updateUserFields(userId: number, updates: Record<string, string | number | null>): Promise<void> {
+  async updateUserFields(userId: number, updates: Partial<Record<UserUpdatableField, string | number | null>>): Promise<void> {
     const entries = Object.entries(updates);
     if (entries.length === 0) {
       return;
+    }
+    for (const [field] of entries) {
+      if (!USER_UPDATABLE_FIELDS.has(field as UserUpdatableField)) {
+        throw new Error(`Unsupported user field update: ${field}`);
+      }
     }
     const setSql = entries.map(([field]) => `${field} = ?`).join(", ");
     const values = entries.map(([, value]) => value);

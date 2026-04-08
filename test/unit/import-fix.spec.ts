@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { stageImportFixPreview } from "@/services/bot-service";
+import { stageImportFixPreview } from "@/services/data-import";
 
 describe("stageImportFixPreview", () => {
   it("moves a corrected line into preview entries", () => {
@@ -18,6 +18,7 @@ describe("stageImportFixPreview", () => {
     expect(staged.status).toBe("saved");
     expect(staged.preview.errors).toHaveLength(0);
     expect(staged.preview.entries).toHaveLength(1);
+    expect(staged.preview.meta.validRows).toBe(1);
     expect(staged.preview.entries[0]).toMatchObject({
       type: "expense",
       amountMinor: 45000,
@@ -46,5 +47,6 @@ describe("stageImportFixPreview", () => {
     expect(staged.status).toBe("missing");
     expect(staged.preview.errors).toHaveLength(1);
     expect(staged.preview.entries).toHaveLength(0);
+    expect(staged.preview.meta.invalidRows).toBe(1);
   });
 });

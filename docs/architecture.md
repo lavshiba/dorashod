@@ -11,6 +11,11 @@
 - `GET /diagnostics`
 - `scheduled()`
 
+Webhook защищён в два слоя:
+
+- секретный path;
+- заголовок `X-Telegram-Bot-Api-Secret-Token`.
+
 ## Реальный Layout Исходников
 
 - `src/index.ts`
@@ -25,6 +30,8 @@
   Доменные типы.
 - `src/services/bot-service.ts`
   Основная продуктовая логика Telegram-бота и cron housekeeping orchestration.
+- `src/services/data-import.ts`
+  Разбор full backup и импорт записей из CSV/JSON, включая preview, fix-flow и dedup helpers.
 - `src/telegram/api.ts`
   Тонкий клиент к Telegram Bot API.
 - `src/ui/text.ts`
@@ -122,6 +129,7 @@ Secrets:
 
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_WEBHOOK_SECRET`
+- `TELEGRAM_WEBHOOK_TOKEN`
 - `HEALTH_TOKEN`
 
 Vars:
@@ -147,4 +155,5 @@ Cron больше не является заглушкой.
 - SQL под прямым контролем;
 - пагинация списков;
 - минимизация лишних Telegram-сообщений через редактирование экрана;
-- cron только для лёгкого housekeeping.
+- cron только для лёгкого housekeeping;
+- публичный `/health` отдаёт только безопасный минимум, а подробности остаются в защищённом `/diagnostics`.

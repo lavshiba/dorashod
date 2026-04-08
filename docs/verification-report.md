@@ -1,6 +1,7 @@
 # Verification Report
 
-Снимок состояния после финального verification tail от `2026-04-05`.
+Снимок состояния после verification tail от `2026-04-05`.
+После правок от `2026-04-08` этот документ обновлён только по факту кода и автотестов; новый production tail и живой Telegram check ещё нужно пройти отдельно.
 
 ## Что Подтверждено Автоматически
 
@@ -13,8 +14,10 @@
 - unit coverage для:
   - frozen source of truth по 12 разделам;
   - CSV export/import;
+  - внешние CSV-фикстуры и tolerant import;
   - cron housekeeping;
   - reset / clear all;
+  - webhook auth по path и secret token;
   - single-screen / inline-first;
   - search conflicts.
 
@@ -28,15 +31,17 @@
 - новый production deployment появился в Cloudflare:
   - текущий successful run id: `24009518700`
   - run url: `https://github.com/lavshiba/dorashod/actions/runs/24009518700`
-  - workflow status: `success`
-  - steps confirmed: `Sync Worker secrets`, `Deploy Worker`, `Configure Telegram webhook`, `Run post-deploy smoke`
-  - deployment created: `2026-04-05T20:11:42.496Z`
+- workflow status: `success`
+- steps confirmed: `Sync Worker secrets`, `Deploy Worker`, `Configure Telegram webhook`, `Run post-deploy smoke`
+- deployment created: `2026-04-05T20:11:42.496Z`
+
+После текущих изменений production smoke и live verification нужно повторить уже с новым secret `TELEGRAM_WEBHOOK_TOKEN`.
 
 ## GitHub Actions State
 
 Полный deploy cycle больше не заблокирован.
 Недостающих secrets и vars, которые мешали бы workflow, сейчас нет.
-`TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` и `HEALTH_TOKEN` больше не считаются блокером для deploy workflow.
+`TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_WEBHOOK_TOKEN` и `HEALTH_TOKEN` больше не должны считаться блокером для deploy workflow после их синхронизации в GitHub и Cloudflare.
 
 Что уже заведено в GitHub:
 
@@ -44,6 +49,7 @@
 - secret `CLOUDFLARE_ACCOUNT_ID`
 - secret `TELEGRAM_BOT_TOKEN`
 - secret `TELEGRAM_WEBHOOK_SECRET`
+- secret `TELEGRAM_WEBHOOK_TOKEN`
 - secret `HEALTH_TOKEN`
 - variable `POST_DEPLOY_BASE_URL`
 

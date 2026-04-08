@@ -1,6 +1,15 @@
 import type { CategoryRecord, DraftPayload, EntryRecord, EntryType, SubcategoryRecord, UiSession, UserRecord } from "@/domain/types";
 import type { Repository } from "@/db/repository";
 import type { TelegramApi } from "@/telegram/api";
+import {
+  makeEntryDedupKey,
+  parseEntriesImport,
+  parseFixCandidate,
+  parseFullSnapshot,
+  parseImportedDate,
+  parseImportedTime,
+  stageImportFixPreview
+} from "@/services/data-import";
 import { BUTTONS, BOT_TITLE, ONBOARDING_TEXTS, onboardingProgress } from "@/ui/text";
 import { kb } from "@/ui/keyboard";
 import { decodeCallback } from "@/utils/callback";
@@ -36,6 +45,19 @@ interface TelegramUpdate {
     };
   };
 }
+
+type UserSettingField =
+  | "currency_code"
+  | "currency_label"
+  | "quick_access_mode_expense"
+  | "quick_access_mode_income"
+  | "quick_access_mode_subcategories"
+  | "sort_mode_expense"
+  | "sort_mode_income"
+  | "sort_mode_subcategories"
+  | "subcategories_enabled"
+  | "timezone_name"
+  | "timezone_source";
 
 export class BotService {
   private callbackContext: { chatId: string; messageId: number } | null = null;
@@ -5258,18 +5280,33 @@ export class BotService {
     const previewErrors = Array.isArray(pendingImport.previewJson.errors)
       ? (pendingImport.previewJson.errors as Array<Record<string, unknown>>)
       : [];
+    const previewMeta = typeof pendingImport.previewJson.meta === "object" && pendingImport.previewJson.meta
+      ? (pendingImport.previewJson.meta as Record<string, unknown>)
+      : {};
     const existingEntryCount = await this.repo.getEntryCount(user.id);
     const reasonLines = summarizeImportErrorReasons(previewErrors);
+    const recognizedColumns = Array.isArray(previewMeta.recognizedColumns)
+      ? (previewMeta.recognizedColumns as string[])
+      : [];
+    const missingRequiredColumns = Array.isArray(previewMeta.missingRequiredColumns)
+      ? (previewMeta.missingRequiredColumns as string[])
+      : [];
+    const totalRows = typeof previewMeta.totalRows === "number" ? previewMeta.totalRows : previewEntries.length + previewErrors.length;
+    const recognizedColumnsText = recognizedColumns.length > 0
+      ? recognizedColumns.map(formatImportColumnLabel).join("\n")
+      : "ничего не распознано";
+    const missingColumnsText = missingRequiredColumns.map(formatImportColumnLabel).join("\n");
 
-    const topBlock =
-      previewErrors.length > 0
+    const topBlock = missingRequiredColumns.length > 0
+      ? `загрузить из файла\n\nне удалось подготовить файл\n\nпрочитано строк:\n${totalRows}\n\nраспознаны колонки:\n${recognizedColumnsText}\n\nне распознаны обязательные колонки:\n${missingColumnsText}`
+      : previewErrors.length > 0
         ? `добавить всё из файла\n\nбудет добавлено:\n${previewEntries.length} записей\n\nне удалось прочитать:\n${previewErrors.length} строк` +
           (reasonLines ? `\n\nчаще всего:\n${reasonLines}` : "")
         : `файл загружен\n\nнашёл:\n${previewEntries.length} записей\n\nиз файла будут взяты:\nсумма, тип, категория,\nподкатегория, описание,\nдата и время\n\nтекущие данные пока не меняются` +
           (previewEntries.length > 0 ? `\n\nчто сделать?` : "");
     const text = `${notice ? `${notice}\n\n` : ""}${topBlock}`;
 
-    const rows: Array<Array<{ text: string; action: string; payload?: Record<string, string | number | undefined> }>> = previewErrors.length > 0
+    const rows: Array<Array<{ text: string; action: string; payload?: Record<string, string | number | undefined> }>> = previewErrors.length > 0 || missingRequiredColumns.length > 0
       ? []
       : previewEntries.length > 0
         ? existingEntryCount > 0
@@ -5280,7 +5317,7 @@ export class BotService {
           : [[{ text: BUTTONS.addAll, action: "data:import-entries-add-all", payload: { importId } }]]
         : [];
 
-    if (previewErrors.length > 0) {
+    if (missingRequiredColumns.length === 0 && previewErrors.length > 0) {
       if (previewEntries.length > 0) {
         rows.push([{ text: `${BUTTONS.addNoun} ${previewEntries.length}`, action: "data:import-entries-add-all", payload: { importId } }]);
       }
@@ -6303,7 +6340,13 @@ export class BotService {
     return "description";
   }
 
-  private async updateUserSetting(userId: number, field: string, value: string | number, secondField?: string, secondValue?: string | number): Promise<void> {
+  private async updateUserSetting(
+    userId: number,
+    field: UserSettingField,
+    value: string | number,
+    secondField?: UserSettingField,
+    secondValue?: string | number
+  ): Promise<void> {
     if (secondField) {
       await this.repo.updateUserFields(userId, {
         [field]: value,
@@ -6443,7 +6486,7 @@ function formatSortingMode(mode: string): string {
 function summarizeImportErrorReasons(errors: Array<Record<string, unknown>>): string {
   const counts = new Map<string, number>();
   for (const item of errors) {
-    const reason = String(item.reason ?? "не удалось прочитать строку");
+    const reason = normalizeImportReasonLabel(String(item.reason ?? "не удалось прочитать строку"));
     counts.set(reason, (counts.get(reason) ?? 0) + 1);
   }
   return [...counts.entries()]
@@ -6451,6 +6494,31 @@ function summarizeImportErrorReasons(errors: Array<Record<string, unknown>>): st
     .slice(0, 3)
     .map(([reason, count]) => `${reason} — ${count}`)
     .join("\n");
+}
+
+function normalizeImportReasonLabel(reason: string): string {
+  if (reason === "пустая сумма") {
+    return "нет суммы";
+  }
+  if (reason === "сумма не читается") {
+    return "сумма не читается";
+  }
+  if (reason === "нет категории") {
+    return "нет категории";
+  }
+  if (reason === "неизвестный тип") {
+    return "неизвестный тип";
+  }
+  if (reason === "не распознана колонка суммы") {
+    return "не распознана колонка суммы";
+  }
+  if (reason === "не распознана колонка категории") {
+    return "не распознана колонка категории";
+  }
+  if (reason === "не распознана колонка даты") {
+    return "не распознана колонка даты";
+  }
+  return reason;
 }
 
 function buildQuickAccessModeRows(
@@ -6513,6 +6581,26 @@ function formatCurrencySettingLabel(user: UserRecord): string {
   return user.currencyLabel;
 }
 
+function summarizeFullSnapshot(raw: Record<string, unknown>): {
+  entries: number;
+  expenseCategories: number;
+  incomeCategories: number;
+  hasDraft: boolean;
+  queue: number;
+} {
+  return {
+    entries: Array.isArray(raw.entries) ? raw.entries.length : 0,
+    expenseCategories: Array.isArray(raw.categories)
+      ? raw.categories.filter((item) => typeof item === "object" && item && (item as { type?: unknown }).type === "expense").length
+      : 0,
+    incomeCategories: Array.isArray(raw.categories)
+      ? raw.categories.filter((item) => typeof item === "object" && item && (item as { type?: unknown }).type === "income").length
+      : 0,
+    hasDraft: Boolean(raw.draft),
+    queue: Array.isArray(raw.intake_queue) ? raw.intake_queue.length : 0
+  };
+}
+
 function formatTimezoneSettingLabel(timezone: string): string {
   if (timezone === "Europe/Moscow") {
     return "мск";
@@ -6552,400 +6640,6 @@ function buildPageRow(
     });
   }
   return row;
-}
-
-function summarizeFullSnapshot(raw: Record<string, unknown>): {
-  entries: number;
-  expenseCategories: number;
-  incomeCategories: number;
-  hasDraft: boolean;
-  queue: number;
-} {
-  return {
-    entries: Array.isArray(raw.entries) ? raw.entries.length : 0,
-    expenseCategories: Array.isArray(raw.categories)
-      ? raw.categories.filter((item) => typeof item === "object" && item && (item as { type?: unknown }).type === "expense").length
-      : 0,
-    incomeCategories: Array.isArray(raw.categories)
-      ? raw.categories.filter((item) => typeof item === "object" && item && (item as { type?: unknown }).type === "income").length
-      : 0,
-    hasDraft: Boolean(raw.draft),
-    queue: Array.isArray(raw.intake_queue) ? raw.intake_queue.length : 0
-  };
-}
-
-function parseFullSnapshot(content: string):
-  | {
-      raw: Record<string, unknown>;
-      categories: number;
-      expenseCategories: number;
-      incomeCategories: number;
-      subcategories: number;
-      entries: number;
-      hasDraft: boolean;
-      queue: number;
-    }
-  | null {
-  try {
-    const raw = JSON.parse(content) as Record<string, unknown>;
-    if (!raw || typeof raw !== "object") {
-      return null;
-    }
-    const summary = summarizeFullSnapshot(raw);
-    return {
-      raw,
-      categories: Array.isArray(raw.categories) ? raw.categories.length : 0,
-      expenseCategories: summary.expenseCategories,
-      incomeCategories: summary.incomeCategories,
-      subcategories: Array.isArray(raw.subcategories) ? raw.subcategories.length : 0,
-      entries: summary.entries,
-      hasDraft: summary.hasDraft,
-      queue: summary.queue
-    };
-  } catch {
-    return null;
-  }
-}
-
-export function parseEntriesImport(content: string): {
-  entries: Array<Record<string, unknown>>;
-  errors: Array<Record<string, unknown>>;
-} {
-  const jsonParsed = parseEntriesImportJson(content);
-  if (jsonParsed) {
-    return jsonParsed;
-  }
-  const csvParsed = parseEntriesImportCsv(content);
-  if (csvParsed) {
-    return csvParsed;
-  }
-  return { entries: [], errors: [{ rawText: "", reason: "файл не удалось прочитать" }] };
-}
-
-function parseEntriesImportJson(content: string):
-  | {
-      entries: Array<Record<string, unknown>>;
-      errors: Array<Record<string, unknown>>;
-    }
-  | null {
-  try {
-    const raw = JSON.parse(content) as Record<string, unknown>;
-    const items = Array.isArray(raw.entries) ? raw.entries : Array.isArray(raw) ? raw : [];
-    const entries: Array<Record<string, unknown>> = [];
-    const errors: Array<Record<string, unknown>> = [];
-
-    for (const item of items) {
-      const parsed = parseImportedEntry(item as Record<string, unknown>);
-      if ("error" in parsed) {
-        errors.push({
-          rawText: stringifyImportRow(item as Record<string, unknown>),
-          reason: parsed.error
-        });
-      } else {
-        entries.push(parsed.entry);
-      }
-    }
-
-    return { entries, errors };
-  } catch {
-    return null;
-  }
-}
-
-function parseEntriesImportCsv(content: string):
-  | {
-      entries: Array<Record<string, unknown>>;
-      errors: Array<Record<string, unknown>>;
-    }
-  | null {
-  const lines = content
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (lines.length < 2) {
-    return null;
-  }
-
-  const delimiter = detectCsvDelimiter(lines[0]);
-  const headers = splitCsvLine(lines[0], delimiter).map(normalizeImportHeader);
-  const hasCoreField = headers.includes("type") || headers.includes("amount") || headers.includes("category") || headers.includes("datetime") || headers.includes("date");
-  if (!hasCoreField) {
-    return null;
-  }
-
-  const entries: Array<Record<string, unknown>> = [];
-  const errors: Array<Record<string, unknown>> = [];
-
-  for (const line of lines.slice(1)) {
-    const cells = splitCsvLine(line, delimiter);
-    const row: Record<string, unknown> = {};
-    headers.forEach((header, index) => {
-      row[header] = normalizeImportValue(cells[index] ?? "");
-    });
-
-    const parsed = parseImportedEntry(row);
-    if ("error" in parsed) {
-      errors.push({
-        rawText: line,
-        reason: parsed.error
-      });
-    } else {
-      entries.push(parsed.entry);
-    }
-  }
-
-  return { entries, errors };
-}
-
-function parseImportedEntry(
-  item: Record<string, unknown>
-): { entry: Record<string, unknown> } | { error: string } {
-  const rawAmountMinor = item.amount_minor;
-  const rawAmount = item.amount;
-  const inferredType = parseImportedType(item.type ?? item.kind ?? item.direction ?? rawAmountMinor ?? rawAmount);
-  const amountMinor = rawAmountMinor !== undefined && rawAmountMinor !== null && String(rawAmountMinor).trim() !== ""
-    ? parseImportedMinorAmount(rawAmountMinor)
-    : parseImportedAmount(rawAmount);
-  const categoryParts = splitImportedCategoryPath(
-    String(item.category ?? item.categoryName ?? item.categoryPath ?? "").trim(),
-    String(item.subcategory ?? item.subcategoryName ?? "").trim()
-  );
-  const categoryName = categoryParts.categoryName;
-  const subcategoryName = categoryParts.subcategoryName;
-  const description = String(item.description ?? item.comment ?? item.note ?? "").trim();
-  const dateSource = item.datetime ?? item.date ?? item.entryDate ?? item.createdAt ?? "";
-  const timeSource = item.time ?? item.entryTime ?? item.datetime ?? item.createdAt ?? "";
-  const parsedDate = parseImportedDate(String(dateSource));
-  const parsedTime = parseImportedTime(String(timeSource));
-
-  if (!inferredType) {
-    return { error: "не удалось понять тип" };
-  }
-  if (amountMinor === null) {
-    return { error: "не удалось понять сумму" };
-  }
-  if (!categoryName) {
-    return { error: "не удалось понять категорию" };
-  }
-
-  return {
-    entry: {
-      type: inferredType,
-      amountMinor,
-      categoryName,
-      subcategoryName: subcategoryName || null,
-      description: description || null,
-      entryDate: parsedDate.readable ? parsedDate.value : null,
-      entryTime: parsedTime,
-      isTimeAuto: !parsedTime,
-      isDateMissing: !parsedDate.readable
-    }
-  };
-}
-
-function parseFixCandidate(rawText: string): {
-  type?: EntryType;
-  amountMinor?: number;
-  category?: string;
-  subcategory?: string;
-  description?: string;
-  entryDate?: string | null;
-  entryTime?: string | null;
-  isDateMissing: boolean;
-  isTimeAuto: boolean;
-  missing: string[];
-} {
-  const parsed = parseEntryAttempt(rawText);
-  const inferredType = parsed.type ?? inferImportTextType(rawText) ?? undefined;
-  const categoryParts = splitImportedCategoryPath(parsed.category ?? "", parsed.subcategory ?? "");
-  const extractedDate = extractDateFromText(rawText);
-  const extractedTime = extractTimeFromText(rawText);
-  const missing: string[] = parsed.missing.filter((item) => item !== "type");
-  if (!inferredType) {
-    missing.unshift("type");
-  }
-  if (!categoryParts.categoryName && !missing.includes("category")) {
-    missing.push("category");
-  }
-  return {
-    type: inferredType,
-    amountMinor: parsed.amountMinor,
-    category: categoryParts.categoryName || undefined,
-    subcategory: categoryParts.subcategoryName || undefined,
-    description: parsed.description,
-    entryDate: extractedDate,
-    entryTime: extractedTime,
-    isDateMissing: !extractedDate,
-    isTimeAuto: !extractedTime,
-    missing
-  };
-}
-
-export function stageImportFixPreview(
-  preview: {
-    entries: Array<Record<string, unknown>>;
-    errors: Array<Record<string, unknown>>;
-  },
-  index: number
-):
-  | {
-      status: "saved";
-      preview: {
-        entries: Array<Record<string, unknown>>;
-        errors: Array<Record<string, unknown>>;
-      };
-    }
-  | {
-      status: "missing";
-      preview: {
-        entries: Array<Record<string, unknown>>;
-        errors: Array<Record<string, unknown>>;
-      };
-    } {
-  const errors = [...preview.errors];
-  const entries = [...preview.entries];
-  const current = errors[index];
-  if (!current) {
-    return {
-      status: "missing",
-      preview: { entries, errors }
-    };
-  }
-
-  const parsed = parseFixCandidate(String(current.rawText ?? ""));
-  if (!(parsed.type && parsed.amountMinor && parsed.category)) {
-    return {
-      status: "missing",
-      preview: { entries, errors }
-    };
-  }
-
-  entries.push({
-    type: parsed.type,
-    amountMinor: parsed.amountMinor,
-    categoryName: parsed.category,
-    subcategoryName: parsed.subcategory ?? null,
-    description: parsed.description ?? null,
-    entryDate: parsed.entryDate ?? null,
-    entryTime: parsed.entryTime ?? null,
-    isTimeAuto: parsed.isTimeAuto,
-    isDateMissing: parsed.isDateMissing
-  });
-  errors.splice(index, 1);
-
-  return {
-    status: "saved",
-    preview: { entries, errors }
-  };
-}
-
-function extractDateFromText(rawText: string): string | null {
-  const isoMatch = rawText.match(/\b\d{4}-\d{2}-\d{2}\b/);
-  if (isoMatch) {
-    const parsed = parseImportedDate(isoMatch[0]);
-    return parsed.readable ? parsed.value : null;
-  }
-  const dottedMatch = rawText.match(/\b\d{1,2}\.\d{1,2}\.\d{4}\b/);
-  if (dottedMatch) {
-    const parsed = parseImportedDate(dottedMatch[0]);
-    return parsed.readable ? parsed.value : null;
-  }
-  const slashMatch = rawText.match(/\b\d{4}\/\d{1,2}\/\d{1,2}\b/);
-  if (slashMatch) {
-    const parsed = parseImportedDate(slashMatch[0]);
-    return parsed.readable ? parsed.value : null;
-  }
-  return null;
-}
-
-function extractTimeFromText(rawText: string): string | null {
-  const timeMatch = rawText.match(/\b\d{1,2}:\d{2}(?::\d{2})?\b/);
-  if (!timeMatch) {
-    return null;
-  }
-  return parseImportedTime(timeMatch[0]);
-}
-
-function parseImportedAmount(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return Math.round(Math.abs(value) * 100);
-  }
-  const raw = String(value ?? "")
-    .trim()
-    .replace(/\(null\)/gi, "")
-    .replace(/\s+/g, "")
-    .replace(/[^0-9,.\-+]/g, "");
-  if (!raw) {
-    return null;
-  }
-  const normalized = normalizeImportNumber(raw);
-  const numeric = Number(normalized);
-  if (!Number.isFinite(numeric)) {
-    return null;
-  }
-  return Math.round(Math.abs(numeric) * 100);
-}
-
-function parseImportedMinorAmount(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return Math.round(Math.abs(value));
-  }
-  const raw = String(value ?? "")
-    .trim()
-    .replace(/\(null\)/gi, "")
-    .replace(/\s+/g, "")
-    .replace(/[^0-9,.\-+]/g, "");
-  if (!raw) {
-    return null;
-  }
-  const normalized = normalizeImportNumber(raw);
-  const numeric = Number(normalized);
-  if (!Number.isFinite(numeric)) {
-    return null;
-  }
-  return Math.round(Math.abs(numeric));
-}
-
-function parseImportedDate(value: string): { readable: boolean; value: string | null } {
-  const raw = value.trim();
-  if (!raw || raw.toLowerCase() === "(null)") {
-    return { readable: false, value: null };
-  }
-  const normalized = raw.replace(/\s+/g, " ").trim();
-  const isoMatch = normalized.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (isoMatch) {
-    return { readable: true, value: `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}` };
-  }
-  const dottedMatch = normalized.match(/^(\d{1,2})[./](\d{1,2})[./](\d{4})/);
-  if (dottedMatch) {
-    const day = dottedMatch[1].padStart(2, "0");
-    const month = dottedMatch[2].padStart(2, "0");
-    const year = dottedMatch[3];
-    return { readable: true, value: `${year}-${month}-${day}` };
-  }
-  const slashYearFirst = normalized.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})/);
-  if (slashYearFirst) {
-    const month = slashYearFirst[2].padStart(2, "0");
-    const day = slashYearFirst[3].padStart(2, "0");
-    return { readable: true, value: `${slashYearFirst[1]}-${month}-${day}` };
-  }
-  const parsed = new Date(normalized.replace(" ", "T"));
-  if (Number.isNaN(parsed.getTime())) {
-    return { readable: false, value: null };
-  }
-  return { readable: true, value: parsed.toISOString().slice(0, 10) };
-}
-
-function parseImportedTime(value: string): string | null {
-  const raw = value.trim();
-  if (!raw || raw.toLowerCase() === "(null)") {
-    return null;
-  }
-  const match = raw.match(/(\d{1,2}):(\d{2})(?::\d{2})?/);
-  if (!match) {
-    return null;
-  }
-  return `${match[1].padStart(2, "0")}:${match[2]}`;
 }
 
 function parseEditableDate(value: string): { entryDate: string | null; isDateMissing: boolean } | null {
@@ -7023,199 +6717,33 @@ function parseEditableDateTime(
   };
 }
 
-function makeEntryDedupKey(entry: {
-  type: EntryType;
-  amountMinor: number;
-  entryDate: string | null;
-  entryTime: string | null;
-  categoryName: string;
-  subcategoryName: string | null;
-  description: string | null;
-}): string {
-  return [
-    entry.type,
-    String(entry.amountMinor),
-    entry.entryDate ?? "",
-    entry.entryTime ?? "",
-    normalizeName(entry.categoryName),
-    normalizeName(entry.subcategoryName ?? ""),
-    String(entry.description ?? "").trim().toLowerCase()
-  ].join("|");
-}
-
-function stringifyImportRow(row: Record<string, unknown>): string {
-  return Object.entries(row)
-    .map(([key, value]) => `${key}: ${String(value ?? "")}`)
-    .join(", ");
-}
-
-function splitCsvLine(line: string, delimiter = ","): string[] {
-  const result: string[] = [];
-  let current = "";
-  let inQuotes = false;
-
-  for (let index = 0; index < line.length; index += 1) {
-    const char = line[index];
-    if (char === '"') {
-      inQuotes = !inQuotes;
-      continue;
-    }
-    if (char === delimiter && !inQuotes) {
-      result.push(current.trim());
-      current = "";
-      continue;
-    }
-    current += char;
+function formatImportColumnLabel(field: string): string {
+  if (field === "amount" || field === "amount_minor") {
+    return "сумма";
   }
-  result.push(current.trim());
-  return result;
-}
-
-function detectCsvDelimiter(headerLine: string): string {
-  const delimiters = [",", ";", "\t"];
-  let best = ",";
-  let bestCount = -1;
-  for (const delimiter of delimiters) {
-    const count = headerLine.split(delimiter).length;
-    if (count > bestCount) {
-      best = delimiter;
-      bestCount = count;
-    }
+  if (field === "category") {
+    return "категория";
   }
-  return best;
-}
-
-function normalizeImportHeader(value: string): string {
-  const raw = normalizeName(value).replace(/[^a-zа-я0-9]+/g, " ").trim();
-  const map: Record<string, string> = {
-    type: "type",
-    тип: "type",
-    direction: "type",
-    kind: "type",
-    operation: "type",
-    "transaction type": "type",
-    amount: "amount",
-    "amount minor": "amount_minor",
-    amountminor: "amount_minor",
-    сумма: "amount",
-    value: "amount",
-    money: "amount",
-    date: "date",
-    дата: "date",
-    day: "date",
-    datetime: "datetime",
-    "date time": "datetime",
-    "дата время": "datetime",
-    "created at": "datetime",
-    created: "datetime",
-    "время операции": "datetime",
-    time: "time",
-    время: "time",
-    category: "category",
-    категория: "category",
-    "category name": "category",
-    "category path": "category",
-    "категория подкатегория": "category",
-    subcategory: "subcategory",
-    подкатегория: "subcategory",
-    "sub category": "subcategory",
-    note: "description",
-    notes: "description",
-    comment: "description",
-    description: "description",
-    описание: "description"
-  };
-  return map[raw] ?? raw;
-}
-
-function normalizeImportValue(value: string): string {
-  const trimmed = value.trim().replace(/^"(.*)"$/, "$1").trim();
-  if (trimmed.toLowerCase() === "(null)") {
-    return "";
+  if (field === "subcategory") {
+    return "подкатегория";
   }
-  return trimmed;
-}
-
-function parseImportedType(value: unknown): EntryType | null {
-  const raw = String(value ?? "").trim().toLowerCase();
-  if (!raw) {
-    return null;
+  if (field === "description") {
+    return "описание";
   }
-  if (["income", "доход", "+", "in", "credit", "deposit"].includes(raw)) {
-    return "income";
+  if (field === "date" || field === "datetime") {
+    return "дата";
   }
-  if (["expense", "расход", "-", "out", "debit", "withdrawal"].includes(raw)) {
-    return "expense";
+  if (field === "time") {
+    return "время";
   }
-  if (raw.startsWith("+")) {
-    return "income";
+  if (field === "type") {
+    return "тип";
   }
-  if (raw.startsWith("-")) {
-    return "expense";
-  }
-  const numeric = Number(normalizeImportNumber(raw.replace(/\s+/g, "").replace(/[^0-9,.\-+]/g, "")));
-  if (Number.isFinite(numeric)) {
-    return numeric < 0 ? "expense" : "income";
-  }
-  return null;
-}
-
-function inferImportTextType(rawText: string): EntryType | null {
-  const firstToken = rawText.trim().split(/\s+/)[0] ?? "";
-  if (!firstToken) {
-    return null;
-  }
-  const parsed = parseImportedType(firstToken);
-  return parsed;
-}
-
-function splitImportedCategoryPath(
-  categoryRaw: string,
-  subcategoryRaw: string
-): { categoryName: string; subcategoryName: string | null } {
-  const categoryName = categoryRaw.trim();
-  const explicitSubcategory = subcategoryRaw.trim();
-  if (!categoryName) {
-    return { categoryName: "", subcategoryName: explicitSubcategory || null };
-  }
-  if (explicitSubcategory) {
-    return { categoryName, subcategoryName: explicitSubcategory };
-  }
-
-  for (const separator of ["→", ">", "|", "/", ";", ",", ":"]) {
-    if (!categoryName.includes(separator)) {
-      continue;
-    }
-    const parts = categoryName
-      .split(separator)
-      .map((item) => item.trim())
-      .filter(Boolean);
-    if (parts.length >= 2) {
-      return {
-        categoryName: parts[0] ?? "",
-        subcategoryName: parts.slice(1).join(" / ") || null
-      };
-    }
-  }
-
-  return { categoryName, subcategoryName: null };
-}
-
-function normalizeImportNumber(raw: string): string {
-  const commas = (raw.match(/,/g) ?? []).length;
-  const dots = (raw.match(/\./g) ?? []).length;
-  if (commas > 0 && dots > 0) {
-    if (raw.lastIndexOf(",") > raw.lastIndexOf(".")) {
-      return raw.replace(/\./g, "").replace(",", ".");
-    }
-    return raw.replace(/,/g, "");
-  }
-  if (commas > 0) {
-    return raw.replace(",", ".");
-  }
-  return raw;
+  return field;
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+export { makeEntryDedupKey, parseEntriesImport, parseFullSnapshot, stageImportFixPreview };

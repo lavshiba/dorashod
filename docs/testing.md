@@ -18,7 +18,9 @@ Unit и integration tests сейчас покрывают:
 - custom period parsing;
 - parsing одиночной записи;
 - parsing CSV/JSON импорта;
+- внешние CSV-фикстуры с русскими и английскими шапками, `null`/`(null)`, decimal comma и датой с секундами;
 - исправление проблемных строк импорта;
+- webhook auth: секретный path и `X-Telegram-Bot-Api-Secret-Token`;
 - repo-local frozen source file и ключевые frozen-тексты;
 - полное frozen coverage по 12 главным разделам интерфейса;
 - CSV export serialization;
@@ -38,13 +40,16 @@ Unit и integration tests сейчас покрывают:
 
 - `POST_DEPLOY_BASE_URL`
 - `POST_DEPLOY_WEBHOOK_SECRET`
+- `POST_DEPLOY_WEBHOOK_TOKEN`
 - `POST_DEPLOY_HEALTH_TOKEN`
 
 Smoke проверяет:
 
 - `health`;
 - `diagnostics`;
-- доступность webhook path.
+- auth на `diagnostics`;
+- доступность webhook path c валидным `X-Telegram-Bot-Api-Secret-Token`;
+- отклонение webhook без `X-Telegram-Bot-Api-Secret-Token`.
 
 ## Что Пока Не Автоматизировано Полностью
 

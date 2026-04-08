@@ -64,4 +64,12 @@ describe("Repository maintenance", () => {
       staleCronRuns: 4
     });
   });
+
+  it("rejects unknown dynamic user fields", async () => {
+    const db = new FakeDb();
+    const repo = new Repository(db as unknown as D1Database);
+
+    await expect(repo.updateUserFields(7, { timezone_name: "Europe/Moscow" })).resolves.toBeUndefined();
+    await expect(repo.updateUserFields(7, { evil_field: "boom" } as never)).rejects.toThrow("Unsupported user field update");
+  });
 });

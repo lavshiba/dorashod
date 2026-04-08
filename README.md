@@ -109,7 +109,8 @@ GitHub Actions workflow `deploy` делает шаги 1-6 автоматиче�
 
 - `GET /health`
 - `GET /diagnostics`
-- доступность webhook path
+- auth на `GET /diagnostics`
+- доступность webhook path только с валидным `X-Telegram-Bot-Api-Secret-Token`
 
 ## Как восстанавливать
 
@@ -126,6 +127,14 @@ GitHub Actions workflow `deploy` делает шаги 1-6 автоматиче�
 2. `сохранить в файл`
 3. бот отдаст CSV c колонками `date,time,amount,type,category,subcategory,description`
 4. этот же CSV можно вернуть через `загрузить из файла`
+
+Импорт записей дополнительно поддерживает частые внешние варианты:
+
+- русские и английские шапки;
+- `null` и `(null)` как пустые значения;
+- даты с секундами;
+- decimal dot и decimal comma;
+- нормализацию категорий и подкатегорий без учёта регистра, лишних пробелов и различий `е/ё`.
 
 ## Ограничения free-плана
 

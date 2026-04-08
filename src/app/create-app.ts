@@ -10,6 +10,7 @@ type Bindings = {
   BOT_NAME: string;
   TELEGRAM_BOT_TOKEN: string;
   TELEGRAM_WEBHOOK_SECRET: string;
+  TELEGRAM_WEBHOOK_TOKEN: string;
   HEALTH_TOKEN: string;
   DB: D1Database;
 };
@@ -21,13 +22,13 @@ export function createApp() {
     const env = parseEnv(c.env);
     const repo = new Repository(env.DB);
     const dbOk = await repo.healthCheck();
-    return c.json({
-      ok: true,
-      appEnv: env.APP_ENV,
-      botName: env.BOT_NAME,
-      dbOk,
-      time: new Date().toISOString()
-    });
+    return c.json(
+      {
+        ok: dbOk,
+        service: "finance-bot"
+      },
+      dbOk ? 200 : 503
+    );
   });
 
   app.get("/diagnostics", async (c) => {
@@ -48,6 +49,9 @@ export function createApp() {
     const env = parseEnv(c.env);
     if (c.req.param("secret") !== env.TELEGRAM_WEBHOOK_SECRET) {
       return c.json({ ok: false }, 403);
+    }
+    if (c.req.header("x-telegram-bot-api-secret-token") !== env.TELEGRAM_WEBHOOK_TOKEN) {
+      return c.json({ ok: false }, 401);
     }
     const update = await c.req.json();
     const bot = new BotService(new Repository(env.DB), new TelegramApi(env.TELEGRAM_BOT_TOKEN));

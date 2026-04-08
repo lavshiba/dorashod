@@ -32,12 +32,14 @@ jobs:
         run: |
           printf '%s' "$TELEGRAM_BOT_TOKEN" | npx wrangler secret put TELEGRAM_BOT_TOKEN
           printf '%s' "$TELEGRAM_WEBHOOK_SECRET" | npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
+          printf '%s' "$TELEGRAM_WEBHOOK_TOKEN" | npx wrangler secret put TELEGRAM_WEBHOOK_TOKEN
           printf '%s' "$HEALTH_TOKEN" | npx wrangler secret put HEALTH_TOKEN
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_WEBHOOK_SECRET: ${{ secrets.TELEGRAM_WEBHOOK_SECRET }}
+          TELEGRAM_WEBHOOK_TOKEN: ${{ secrets.TELEGRAM_WEBHOOK_TOKEN }}
           HEALTH_TOKEN: ${{ secrets.HEALTH_TOKEN }}
       - name: Deploy Worker
         run: npm run deploy
@@ -49,10 +51,12 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_WEBHOOK_SECRET: ${{ secrets.TELEGRAM_WEBHOOK_SECRET }}
+          TELEGRAM_WEBHOOK_TOKEN: ${{ secrets.TELEGRAM_WEBHOOK_TOKEN }}
           POST_DEPLOY_BASE_URL: ${{ vars.POST_DEPLOY_BASE_URL }}
       - name: Run post-deploy smoke
         run: npm run postdeploy:smoke
         env:
           POST_DEPLOY_BASE_URL: ${{ vars.POST_DEPLOY_BASE_URL }}
           POST_DEPLOY_WEBHOOK_SECRET: ${{ secrets.TELEGRAM_WEBHOOK_SECRET }}
+          POST_DEPLOY_WEBHOOK_TOKEN: ${{ secrets.TELEGRAM_WEBHOOK_TOKEN }}
           POST_DEPLOY_HEALTH_TOKEN: ${{ secrets.HEALTH_TOKEN }}

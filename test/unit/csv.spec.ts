@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseEntriesImport } from "@/services/bot-service";
+import { parseEntriesImport } from "@/services/data-import";
 import { serializeEntriesCsv } from "@/utils/csv";
 
 describe("serializeEntriesCsv", () => {

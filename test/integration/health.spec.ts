@@ -26,19 +26,20 @@ class FakeDb {
 }
 
 describe("health endpoint", () => {
-  it("returns worker and db status", async () => {
+  it("returns minimal safe payload", async () => {
     const app = createApp();
     const response = await app.request("http://local/health", {}, {
       APP_ENV: "test",
       BOT_NAME: "финансы",
       TELEGRAM_BOT_TOKEN: "x",
       TELEGRAM_WEBHOOK_SECRET: "secret",
+      TELEGRAM_WEBHOOK_TOKEN: "webhook-token",
       HEALTH_TOKEN: "health",
       DB: new FakeDb() as unknown as D1Database
     });
     expect(response.status).toBe(200);
-    const body = (await response.json()) as { ok: boolean; dbOk: boolean };
+    const body = (await response.json()) as { ok: boolean; service: string };
     expect(body.ok).toBe(true);
-    expect(body.dbOk).toBe(true);
+    expect(body.service).toBe("finance-bot");
   });
 });
