@@ -170,6 +170,29 @@ export class Repository {
     await this.db.prepare("DELETE FROM ui_sessions WHERE user_id = ?").bind(userId).run();
   }
 
+  async getBotSetting(key: string): Promise<string | null> {
+    const row = await this.db
+      .prepare("SELECT value FROM bot_settings WHERE key = ?")
+      .bind(key)
+      .first<Record<string, D1Value>>();
+    return row ? String(row.value) : null;
+  }
+
+  async setBotSetting(key: string, value: string): Promise<void> {
+    await this.db
+      .prepare(
+        `
+        INSERT INTO bot_settings (key, value, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(key) DO UPDATE SET
+          value = excluded.value,
+          updated_at = CURRENT_TIMESTAMP
+      `
+      )
+      .bind(key, value)
+      .run();
+  }
+
   async tryAcquireCallbackLock(userId: number, messageId: number, callbackData: string): Promise<boolean> {
     await this.db
       .prepare(

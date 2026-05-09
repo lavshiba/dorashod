@@ -1,0 +1,33 @@
+export const FINANCE_BOT_TITLE = "финансики";
+
+export const FINANCE_BUTTONS = {
+  income: "доход",
+  expense: "расход",
+  transfer: "перевод",
+  creditPayment: "погашение кредитки",
+  more: "ещё",
+  balance: "сверка",
+  accounts: "счета",
+  categories: "категории",
+  subcategories: "подкатегории",
+  webApp: "ссылка web app",
+  webAppKeep: "оставить текущую",
+  webAppChange: "изменить ссылку",
+  refresh: "обновить данные",
+  back: "назад",
+  cancel: "отмена",
+  confirm: "подтвердить",
+  edit: "изменить",
+  now: "сейчас",
+  today: "сегодня",
+  yesterday: "вчера",
+  tomorrow: "завтра",
+  manual: "изменить вручную",
+  withoutSubcategory: "без подкатегории",
+  ordinary: "обычные",
+  credit: "кредитки",
+  crypto: "крипта",
+  prev: "◀",
+  next: "▶",
+  menu: "в меню"
+} as const;
