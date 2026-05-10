@@ -14,8 +14,14 @@ interface TelegramUpdate {
   message?: {
     message_id: number;
     text?: string;
+    caption?: string;
     chat: { id: number };
     from?: { id: number };
+    document?: {
+      file_id: string;
+      file_name?: string;
+      mime_type?: string;
+    };
   };
   callback_query?: {
     id: string;
@@ -101,15 +107,19 @@ export class SheetsBotService {
         return;
       }
 
-      if (update.message?.text) {
-        await this.handleMessage(user, update.message.text);
+      if (update.message) {
+        await this.handleMessage(user, update.message);
       }
     } finally {
       await this.repo.releaseUserUpdateLock(user.id, lockToken);
     }
   }
 
-  private async handleMessage(user: { id: number; chatId: string; onboardingCompletedAt: string | null; timezoneName: string }, text: string): Promise<void> {
+  private async handleMessage(
+    user: { id: number; chatId: string; onboardingCompletedAt: string | null; timezoneName: string },
+    message: TelegramUpdate["message"]
+  ): Promise<void> {
+    const text = (message?.text ?? message?.caption ?? "").trim();
     const session = await this.loadSession(user.id);
     if (text === "/start") {
       await this.repo.completeOnboarding(user.id);
@@ -128,6 +138,10 @@ export class SheetsBotService {
     }
 
     if (session.context.awaiting === "apps_script_url") {
+      if (!text) {
+        await this.renderError(user, session, "пришли url web app текстом, не файлом");
+        return;
+      }
       await this.handleAppsScriptUrlInput(user, session, text);
       return;
     }
