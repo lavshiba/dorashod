@@ -117,7 +117,7 @@ export class SheetsBotService {
         await this.renderAppsScriptSetup(user, session);
         return;
       }
-      const configuredUrl = await this.resolveAppsScriptUrl(session);
+      const configuredUrl = await this.resolveAppsScriptUrl(user.id, session);
       if (!configuredUrl) {
         await this.renderAppsScriptSetup(user, session);
         return;
@@ -172,7 +172,7 @@ export class SheetsBotService {
           break;
         }
         case "sheet:webapp-keep": {
-          const configuredUrl = await this.resolveAppsScriptUrl(session);
+          const configuredUrl = await this.resolveAppsScriptUrl(user.id, session);
           if (!configuredUrl) {
             await this.renderAppsScriptSetup(user, session);
             break;
@@ -309,7 +309,7 @@ export class SheetsBotService {
     session: { mode: string; stack: string[]; context: Record<string, unknown> },
     bootstrap?: AppsScriptBootstrapData
   ): Promise<void> {
-    const configuredUrl = await this.resolveAppsScriptUrl(session);
+    const configuredUrl = await this.resolveAppsScriptUrl(user.id, session);
     if (!configuredUrl) {
       await this.renderAppsScriptSetup(user, session);
       return;
@@ -351,7 +351,7 @@ export class SheetsBotService {
     user: { id: number; chatId: string; timezoneName: string },
     session: { mode: string; stack: string[]; context: Record<string, unknown> }
   ): Promise<void> {
-    const configuredUrl = await this.resolveAppsScriptUrl(session);
+    const configuredUrl = await this.resolveAppsScriptUrl(user.id, session);
     if (!configuredUrl) {
       await this.renderAppsScriptSetup(user, session);
       return;
@@ -371,7 +371,7 @@ export class SheetsBotService {
       }
     });
     await this.saveSession(user.id, nextSession);
-    const current = await this.resolveAppsScriptUrl(session);
+    const current = await this.resolveAppsScriptUrl(user.id, session);
     const webAppButton = current ? { text: FINANCE_BUTTONS.webAppChange, action: "sheet:webapp-change" } : { text: FINANCE_BUTTONS.webApp, action: "sheet:webapp" };
     const text = `${FINANCE_BOT_TITLE}\n\nслужебные действия`;
     const reply_markup = kb([
@@ -394,7 +394,7 @@ export class SheetsBotService {
     user: { id: number; chatId: string; timezoneName: string },
     session: { mode: string; stack: string[]; context: Record<string, unknown> }
   ): Promise<void> {
-    const current = await this.resolveAppsScriptUrl(session);
+    const current = await this.resolveAppsScriptUrl(user.id, session);
     const nextSession = this.mergeSession(session, {
       mode: "idle",
       stack: ["setup"],
@@ -452,6 +452,7 @@ export class SheetsBotService {
       return;
     }
 
+    await this.repo.setBotSetting(this.appsScriptUrlKey(user.id), parsed.toString());
     const nextSession = this.mergeSession(session, {
       context: {
         ...session.context,
@@ -470,7 +471,7 @@ export class SheetsBotService {
     session: { mode: string; stack: string[]; context: Record<string, unknown> },
     overrideText?: string
   ): Promise<void> {
-    const configuredUrl = await this.resolveAppsScriptUrl(session);
+    const configuredUrl = await this.resolveAppsScriptUrl(user.id, session);
     if (!configuredUrl) {
       await this.renderAppsScriptSetup(user, session);
       return;
@@ -508,7 +509,7 @@ export class SheetsBotService {
     session: { mode: string; stack: string[]; context: Record<string, unknown> },
     kind: "accounts" | "categories" | "subcategories"
   ): Promise<void> {
-    const configuredUrl = await this.resolveAppsScriptUrl(session);
+    const configuredUrl = await this.resolveAppsScriptUrl(user.id, session);
     if (!configuredUrl) {
       await this.renderAppsScriptSetup(user, session);
       return;
@@ -906,7 +907,7 @@ export class SheetsBotService {
     const payload = (session.context.payload as Record<string, unknown> | undefined) ?? {};
     const requestId = `${flow}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
     const requestPayload = { ...payload, client_request_id: requestId };
-    const appsScript = await this.getAppsScriptClient(session);
+    const appsScript = await this.getAppsScriptClient(user.id, session);
     if (!appsScript) {
       await this.renderAppsScriptSetup(user, session);
       return;
@@ -1106,7 +1107,7 @@ export class SheetsBotService {
       return cached;
     }
 
-    const appsScript = await this.getAppsScriptClient(session);
+    const appsScript = await this.getAppsScriptClient(userId, session);
     if (!appsScript) {
       throw new Error("apps script url is not configured");
     }
@@ -1122,14 +1123,29 @@ export class SheetsBotService {
     return bootstrap;
   }
 
-  private async resolveAppsScriptUrl(session?: { context: Record<string, unknown> }): Promise<string | null> {
+  private appsScriptUrlKey(userId: number): string {
+    return `apps_script_url:${userId}`;
+  }
+
+  private async resolveAppsScriptUrl(
+    userId: number,
+    session?: { context: Record<string, unknown> }
+  ): Promise<string | null> {
     const stored = session?.context?.appsScriptUrl as string | undefined;
-    const url = (stored ?? "").trim();
+    const sessionUrl = (stored ?? "").trim();
+    if (sessionUrl) {
+      return sessionUrl;
+    }
+    const persisted = await this.repo.getBotSetting(this.appsScriptUrlKey(userId));
+    const url = (persisted ?? "").trim();
     return url || null;
   }
 
-  private async getAppsScriptClient(session?: { context: Record<string, unknown> }): Promise<AppsScriptClient | null> {
-    const url = await this.resolveAppsScriptUrl(session);
+  private async getAppsScriptClient(
+    userId: number,
+    session?: { context: Record<string, unknown> }
+  ): Promise<AppsScriptClient | null> {
+    const url = await this.resolveAppsScriptUrl(userId, session);
     if (!url) {
       return null;
     }
@@ -1156,7 +1172,7 @@ export class SheetsBotService {
     session: { mode: string; stack: string[]; context: Record<string, unknown> },
     step: SheetsStep
   ): Promise<void> {
-    const configuredUrl = await this.resolveAppsScriptUrl(session);
+    const configuredUrl = await this.resolveAppsScriptUrl(user.id, session);
     if (!configuredUrl) {
       await this.renderAppsScriptSetup(user, session);
       return;
