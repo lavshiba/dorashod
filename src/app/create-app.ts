@@ -14,7 +14,6 @@ type Bindings = {
   TELEGRAM_WEBHOOK_SECRET: string;
   TELEGRAM_WEBHOOK_TOKEN: string;
   HEALTH_TOKEN: string;
-  APPS_SCRIPT_URL: string;
   APPS_SCRIPT_AUTH_TOKEN: string;
   DB: D1Database;
 };
@@ -22,7 +21,7 @@ type Bindings = {
 function makeBot(env: Bindings, repo: Repository) {
   const telegram = new TelegramApi(env.TELEGRAM_BOT_TOKEN);
   if (env.BOT_MODE === "sheets") {
-    return new SheetsBotService(repo, telegram, env.APPS_SCRIPT_URL, env.APPS_SCRIPT_AUTH_TOKEN);
+    return new SheetsBotService(repo, telegram, env.APPS_SCRIPT_AUTH_TOKEN);
   }
   return new BotService(repo, telegram);
 }

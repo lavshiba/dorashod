@@ -68,7 +68,6 @@ export class SheetsBotService {
   constructor(
     private readonly repo: Repository,
     private readonly telegram: TelegramApi,
-    private readonly appsScriptUrlFallback: string,
     private readonly appsScriptAuthToken: string
   ) {}
 
@@ -115,6 +114,11 @@ export class SheetsBotService {
     if (text === "/start") {
       await this.repo.completeOnboarding(user.id);
       if (!session.context.appsScriptUrlConfirmedAt) {
+        await this.renderAppsScriptSetup(user, session);
+        return;
+      }
+      const configuredUrl = await this.resolveAppsScriptUrl(session);
+      if (!configuredUrl) {
         await this.renderAppsScriptSetup(user, session);
         return;
       }
@@ -168,6 +172,11 @@ export class SheetsBotService {
           break;
         }
         case "sheet:webapp-keep": {
+          const configuredUrl = await this.resolveAppsScriptUrl(session);
+          if (!configuredUrl) {
+            await this.renderAppsScriptSetup(user, session);
+            break;
+          }
           const nextSession = this.mergeSession(session, {
             context: {
               ...session.context,
@@ -268,6 +277,9 @@ export class SheetsBotService {
           break;
         }
       }
+    } catch (error) {
+      console.error("telegram callback failed", error);
+      await this.renderError(user, session, error instanceof Error ? error.message : "ошибка обработки кнопки");
     } finally {
       await this.telegram.answerCallbackQuery(callbackQueryId).catch(() => undefined);
     }
@@ -292,7 +304,7 @@ export class SheetsBotService {
     await this.renderFlow(user, nextSession);
   }
 
-  private async renderMain(
+   private async renderMain(
     user: { id: number; chatId: string; timezoneName: string },
     session: { mode: string; stack: string[]; context: Record<string, unknown> },
     bootstrap?: AppsScriptBootstrapData
@@ -339,6 +351,11 @@ export class SheetsBotService {
     user: { id: number; chatId: string; timezoneName: string },
     session: { mode: string; stack: string[]; context: Record<string, unknown> }
   ): Promise<void> {
+    const configuredUrl = await this.resolveAppsScriptUrl(session);
+    if (!configuredUrl) {
+      await this.renderAppsScriptSetup(user, session);
+      return;
+    }
     const nextSession = this.mergeSession(session, {
       mode: "idle",
       stack: ["more"],
@@ -354,6 +371,8 @@ export class SheetsBotService {
       }
     });
     await this.saveSession(user.id, nextSession);
+    const current = await this.resolveAppsScriptUrl(session);
+    const webAppButton = current ? { text: FINANCE_BUTTONS.webAppChange, action: "sheet:webapp-change" } : { text: FINANCE_BUTTONS.webApp, action: "sheet:webapp" };
     const text = `${FINANCE_BOT_TITLE}\n\nслужебные действия`;
     const reply_markup = kb([
       [
@@ -364,7 +383,7 @@ export class SheetsBotService {
         { text: FINANCE_BUTTONS.categories, action: "sheet:categories" },
         { text: FINANCE_BUTTONS.subcategories, action: "sheet:subcategories" }
       ],
-      [{ text: FINANCE_BUTTONS.webAppChange, action: "sheet:webapp-change" }],
+      [webAppButton],
       [{ text: FINANCE_BUTTONS.refresh, action: "sheet:refresh" }],
       [{ text: FINANCE_BUTTONS.back, action: "sheet:main" }]
     ]);
@@ -398,7 +417,7 @@ export class SheetsBotService {
         FINANCE_BOT_TITLE,
         "",
         "нужна ссылка на web app таблицы",
-        current ? `текущая: ${current}` : "ссылка пока не задана",
+        current ? "ссылка уже настроена" : "ссылка пока не задана",
         "",
         "пришли url web app одним сообщением"
       ].join("\n")
@@ -1105,7 +1124,7 @@ export class SheetsBotService {
 
   private async resolveAppsScriptUrl(session?: { context: Record<string, unknown> }): Promise<string | null> {
     const stored = session?.context?.appsScriptUrl as string | undefined;
-    const url = (stored ?? this.appsScriptUrlFallback ?? "").trim();
+    const url = (stored ?? "").trim();
     return url || null;
   }
 
@@ -1137,6 +1156,11 @@ export class SheetsBotService {
     session: { mode: string; stack: string[]; context: Record<string, unknown> },
     step: SheetsStep
   ): Promise<void> {
+    const configuredUrl = await this.resolveAppsScriptUrl(session);
+    if (!configuredUrl) {
+      await this.renderAppsScriptSetup(user, session);
+      return;
+    }
     const nextSession = this.mergeSession(session, { context: { ...session.context, step } });
     await this.saveSession(user.id, nextSession);
   }

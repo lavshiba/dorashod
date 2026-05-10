@@ -8,7 +8,6 @@ const envSchema = z.object({
   TELEGRAM_WEBHOOK_SECRET: z.string().min(1),
   TELEGRAM_WEBHOOK_TOKEN: z.string().min(1),
   HEALTH_TOKEN: z.string().min(1),
-  APPS_SCRIPT_URL: z.string().default(""),
   APPS_SCRIPT_AUTH_TOKEN: z.string().default(""),
   DB: z.custom<D1Database>()
 });

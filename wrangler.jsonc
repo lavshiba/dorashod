@@ -11,7 +11,6 @@
     "APP_ENV": "production",
     "BOT_NAME": "финансы",
     "BOT_MODE": "sheets",
-    "APPS_SCRIPT_URL": "https://script.google.com/macros/s/AKfycbzNRbijzogicAGHgZfXcvtKCib141Ao4eOSGwgSvfdOHCwoXZU3eoSxxH5WbAgWvZ57Mg/exec"
   },
   "d1_databases": [
     {
